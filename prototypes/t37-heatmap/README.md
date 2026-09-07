@@ -10,7 +10,12 @@ annidata sotto i sei gruppi: sei righe che si aprono una per volta, invece di
 23 righe piatte. Il menu e' `details`/`summary`, HTML nativo, quindi la
 revisione non costa una riga di JavaScript.
 
-Resta un blocco fuori dal design: la **provenienza dell'anatomia** (in fondo).
+Poi #40 ha tolto di mezzo l'anatomia: Lorenzo non ricorda se l'abbia disegnata
+lui, quindi si tratta come materiale di terzi e `_corpo.svg` non si pubblica.
+Nasce cosi' la **variante D**, `_corpo_schema.svg`, disegnata in
+`build_schema_svg.py`: stesso contratto, stessi 23 codici, 7,5 KB invece di 51,
+e nessuna licenza da ricostruire. Quale delle due figure spedire e' la
+decisione aperta in #40.
 
 ## Avvio
 
@@ -25,6 +30,7 @@ Poi <http://127.0.0.1:8000/heatmap/>. Frecce &larr; &rarr; o `?variant=A|B|C`.
 | **A** | Barre per gruppo | Il ripiego a costo zero, gia' in `dashboard_a.html` |
 | **B** | Figura anatomica, 6 gruppi | Poche regioni, tutte accendibili |
 | **C** | Figura anatomica, 23 muscoli | Precisa; 4 regioni spente per come e' fatto il catalogo |
+| **D** | Figura schematica, 23 muscoli | Disegnata da noi (#40); 7,5 KB, nessun asset di terzi |
 
 ## La cosa che ha cambiato la domanda
 
