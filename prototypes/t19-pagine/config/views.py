@@ -112,6 +112,93 @@ def _contesto(request):
     }
 
 
+# --- la sitemap, dopo la scelta della variante A ----------------------------
+#
+# A tiene cinque voci nell'header, contro le undici in sidebar di B. Le voci
+# che B mostrava per esteso non spariscono: si annidano. Questa struttura e'
+# la risposta all'obiezione di Lorenzo — «schede della community o gli stalli
+# devono comunque esistere, magari se entro in esercizi vedro' lo stallo».
+
+SITEMAP = [
+    {
+        "voce": "Dashboard",
+        "url": "/",
+        "nota": "Le sei analisi di #16 come widget; ognuna e' un varco verso la pagina che la approfondisce.",
+        "figlie": [
+            {"url": "/", "cosa": "Volume, gruppi, costanza, PR, percentile, avviso di stallo", "crud": ""},
+        ],
+    },
+    {
+        "voce": "Schede",
+        "url": "/schede/",
+        "nota": "Ospita il CRUD completo su Routine, e la parte sociale.",
+        "figlie": [
+            {"url": "/schede/", "cosa": "Le mie schede", "crud": "R"},
+            {"url": "/schede/nuova/", "cosa": "Crea scheda", "crud": "C"},
+            {"url": "/schede/&lt;id&gt;/", "cosa": "Dettaglio, esercizi ordinati", "crud": "R"},
+            {"url": "/schede/&lt;id&gt;/modifica/", "cosa": "Modifica scheda ed esercizi", "crud": "U"},
+            {"url": "/schede/&lt;id&gt;/elimina/", "cosa": "Elimina scheda", "crud": "D"},
+            {"url": "/schede/&lt;id&gt;/pubblica/", "cosa": "Pubblica o ritira dalla community", "crud": "U"},
+            {"url": "/schede/pubbliche/", "cosa": "<b>Schede della community</b> &mdash; la voce di B", "crud": "R"},
+            {"url": "/schede/pubbliche/&lt;id&gt;/", "cosa": "Dettaglio pubblico, voto e commento", "crud": "CUD su Vote"},
+        ],
+    },
+    {
+        "voce": "Storico",
+        "url": "/allenamenti/",
+        "nota": "CRUD completo su Workout e sulle sue serie. E' qui che si registra un allenamento.",
+        "figlie": [
+            {"url": "/allenamenti/", "cosa": "Elenco allenamenti, con filtri", "crud": "R"},
+            {"url": "/allenamenti/nuovo/", "cosa": "Registra allenamento (anche <code>?scheda=</code>, che precompila)", "crud": "C"},
+            {"url": "/allenamenti/&lt;id&gt;/", "cosa": "Dettaglio, tutte le serie", "crud": "R"},
+            {"url": "/allenamenti/&lt;id&gt;/modifica/", "cosa": "Correggi allenamento", "crud": "U"},
+            {"url": "/allenamenti/&lt;id&gt;/elimina/", "cosa": "Elimina allenamento", "crud": "D"},
+            {"url": "/allenamenti/&lt;id&gt;/serie/nuova/", "cosa": "Aggiungi una serie", "crud": "C su WorkoutSet"},
+        ],
+    },
+    {
+        "voce": "Esercizi",
+        "url": "/esercizi/",
+        "nota": "Catalogo globale, in sola lettura (ADR-0001). <b>E' qui che vive lo stallo</b>: la pagina di un esercizio e' la sua storia.",
+        "figlie": [
+            {"url": "/esercizi/", "cosa": "Catalogo, filtri per muscolo e attrezzo", "crud": "R"},
+            {"url": "/esercizi/&lt;slug&gt;/", "cosa": "<b>Progressione del massimale, stato di stallo, PR, percentile</b>", "crud": "R"},
+        ],
+    },
+    {
+        "voce": "Classifiche",
+        "url": "/classifiche/",
+        "nota": "Le due classifiche di natura diversa decise nella mappa. Il taglio esatto e' il ticket #33.",
+        "figlie": [
+            {"url": "/classifiche/forza/", "cosa": "Percentile di forza relativa sulla popolazione", "crud": "R"},
+            {"url": "/classifiche/schede/", "cosa": "Schede pubbliche piu' votate", "crud": "R"},
+        ],
+    },
+    {
+        "voce": "Account (menu utente)",
+        "url": "/profilo/",
+        "nota": "Le voci che in B stavano in fondo alla sidebar: scendono nel menu, non nell'header.",
+        "figlie": [
+            {"url": "/profilo/", "cosa": "Profilo, peso corporeo, preferenze", "crud": "RU"},
+            {"url": "/importa/", "cosa": "Import CSV, passo 1: carica i due file", "crud": "C"},
+            {"url": "/importa/anteprima/", "cosa": "Passo 2: anteprima, abbinamento esercizi, errori", "crud": ""},
+            {"url": "/importa/conferma/", "cosa": "Passo 3: conferma atomica", "crud": "C"},
+            {"url": "/accounts/login/", "cosa": "Accesso", "crud": ""},
+            {"url": "/registrazione/", "cosa": "Registrazione", "crud": "C su User"},
+            {"url": "/accounts/logout/", "cosa": "Uscita", "crud": ""},
+        ],
+    },
+]
+
+
+def mappa(request):
+    """PROTOTIPO — la sitemap completa nel guscio della variante A."""
+    contesto = _contesto(request)
+    contesto["variante"] = "A"
+    contesto["sitemap"] = SITEMAP
+    return render(request, "prototype/mappa.html", contesto)
+
+
 def dashboard(request):
     contesto = _contesto(request)
     return render(

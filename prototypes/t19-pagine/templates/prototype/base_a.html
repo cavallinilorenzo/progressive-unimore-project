@@ -64,7 +64,19 @@ title / extra_head / header / content / footer / scripts.
     </nav>
     <div class="ms-auto d-flex align-items-center gap-3">
       <a href="/allenamenti/nuovo/" class="btn btn-volt btn-sm px-3">Inizia allenamento</a>
-      <a href="/profilo/" style="color:var(--t2)">{{ utente }}</a>
+      {# Le voci che nella variante B stavano in sidebar non spariscono: quelle
+         che riguardano l'account scendono qui, le altre si annidano nelle
+         cinque sezioni. La mappa completa e' in /mappa/. #}
+      <div class="dropdown">
+        <a href="#" class="dropdown-toggle" data-bs-toggle="dropdown" style="color:var(--t2)">{{ utente }}</a>
+        <ul class="dropdown-menu dropdown-menu-end">
+          <li><a class="dropdown-item" href="/profilo/">Profilo</a></li>
+          <li><a class="dropdown-item" href="/importa/">Importa storico</a></li>
+          <li><hr class="dropdown-divider"></li>
+          <li><a class="dropdown-item" href="/mappa/">Mappa del sito (prototipo)</a></li>
+          <li><a class="dropdown-item" href="/accounts/logout/">Esci</a></li>
+        </ul>
+      </div>
     </div>
   </div>
 </header>
