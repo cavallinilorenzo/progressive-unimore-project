@@ -50,6 +50,39 @@ La tassonomia è tenuta **identica a `reporting.muscle_taxonomy` di Overload** �
 
 Bilanciere, manubri, macchina, cavi, corpo libero. Serve a filtrare e raggruppare il catalogo, e porta il peso a vuoto dell'attrezzo (`default_bar_weight_kg`): il peso del bilanciere è una proprietà **dell'attrezzo**, non del singolo esercizio.
 
+## Il coach
+
+### Coach — «Coach»
+
+La parte di `Progressive` che **dice cosa fare**, in opposizione al motore analitico che mostra cosa è successo. Non è un modello Django e non persiste nulla: è il servizio `analytics/coach.py`, che a ogni richiesta calcola i consigli dalle serie già registrate. Il coach non prescrive fisiologia — non cambia esercizio, non tocca la frequenza — perché ogni sua affermazione deve poggiare su una query e sui dati che il modello possiede davvero. Vedi [ADR-0007](docs/adr/0007-il-coach-dice-una-cosa-sola.md).
+
+### Advice — «Consiglio»
+
+Una raccomandazione **azionabile**: dice cosa fare il prossimo allenamento, e ha dietro **una** query. Un'osservazione che non si traduce in un'azione («stai trascurando le gambe») non è un consiglio e resta nel motore analitico: è la distinzione che impedisce al coach di ridiventare un cruscotto.
+
+Ogni consiglio ha un **tipo**, e il tipo porta con sé una **priorità** costante — non un punteggio calcolato. In ordine decrescente:
+
+1. **Costanza** — meno di 2 allenamenti in 14 giorni, e solo per chi ne ha già almeno 4. Se non ci si allena, nessun altro consiglio conta.
+2. **Squilibrio** — un gruppo muscolare con zero serie di lavoro negli ultimi 28 giorni, in un periodo con almeno 8 allenamenti. La soglia è di **assenza**, non di proporzione: «non hai allenato le gambe in un mese» è un fatto, «le tue spalle sono al 9% invece che al 15%» richiederebbe una ripartizione ideale inventata.
+3. **Stallo** — vedi *Stato di progressione*.
+4. **Carico** — la doppia progressione, sotto.
+
+Dove i consigli si mostrano è parte della loro definizione: **uno solo**, quello a priorità più alta, nel riquadro della dashboard; nella pagina di dettaglio esercizio soltanto il consiglio di carico e, se rilevato, lo stallo. Non esiste una pagina che li elenca tutti — un coach che dice cinque cose non dice niente.
+
+### Doppia progressione — «Doppia progressione»
+
+La regola con cui il coach suggerisce il carico della prossima sessione, e l'unica: prima salgono le **ripetizioni**, poi il **carico**. Finché le ripetizioni non hanno raggiunto l'estremo alto del target di scheda su **tutte** le serie di lavoro, il consiglio è stesso carico e una ripetizione in più; quando lo raggiungono, il carico sale di un **incremento dell'attrezzo** (`Equipment.load_increment_kg`) e le ripetizioni ripartono dal minimo del range.
+
+L'incremento è **fisso per attrezzo**, mai una percentuale del massimale: la percentuale produce carichi che non esistono come dischi (83,7 kg) e andrebbe comunque arrotondata. Sul **corpo libero** l'incremento è zero e il coach consiglia ripetizioni, non carico.
+
+Il target viene dalla scheda dell'**ultimo allenamento** che ha registrato quell'esercizio — l'allenamento è un log immutabile e conserva la scheda da cui è nato, quindi con lo stesso esercizio in più schede non serve nessuna regola di precedenza. Per un allenamento **libero**, senza scheda e quindi senza target, il carico sale quando lo stesso carico è stato ripetuto due volte con ripetizioni uguali o crescenti.
+
+### Deload — «Scarico»
+
+L'unica azione che il coach propone in risposta a uno **stallo**: una singola sessione al **90% del massimo di finestra**, arrotondato all'incremento dell'attrezzo, dopo la quale si torna alla doppia progressione da quel carico. La base è il massimo di finestra e non l'ultimo carico, che potrebbe essere già una giornata storta.
+
+Il deload è **proposto, mai rilevato**: [ADR-0004](docs/adr/0004-ground-truth-dello-stallo-dal-futuro-della-finestra.md) ha escluso di riconoscere un deload dai dati, perché recupero e durata delle sessioni sono inaffidabili. Nel modello non esiste nulla che rappresenti un ciclo di scarico di più settimane: sarebbe un piano di allenamento, e non abbiamo né il modello per descriverlo né i dati per validarlo.
+
 ## Termini da non confondere
 
 - **Carico** — il peso sollevato in una serie. Mai «peso» da solo.
@@ -57,6 +90,7 @@ Bilanciere, manubri, macchina, cavi, corpo libero. Serve a filtrare e raggruppar
 - **Volume** — carico × ripetizioni, sommato sulle sole serie di lavoro.
 - **Massimale** — l'1RM *stimato* a partire da carico e ripetizioni. Non è mai un massimale realmente testato.
 - **Stallo** — l'assenza di progressione su un esercizio nel tempo. In codice si chiama `plateau`, che è il termine tecnico inglese.
+- **Aderenza al piano** — quanto delle serie previste è stato davvero chiuso. Non è un'analisi: le analisi scartano le serie non completate (sono il 19% dei dati reali). Diventa un consiglio in un caso solo — se *tutte* le serie di lavoro di un esercizio sono rimaste incomplete, il coach non fa salire niente e dice di riprovare lo stesso carico.
 
 ## Confini del dominio
 
