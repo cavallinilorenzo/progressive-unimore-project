@@ -85,6 +85,17 @@ Risultato misurato: **tutti e 22** gli esercizi del core superano la soglia (min
 utenti, mediana 78), e la coda resta sotto — il che è utile, non un difetto: all'orale la
 riga «percentile non disponibile» si può mostrare accanto a una che funziona.
 
+### La classifica composita resta fuori, e ora si sa perché
+
+La mappa teneva in nebbia una **classifica di forza generale** sui tre fondamentali, stile
+«total», e ne faceva dipendere il ritorno da una misura che toccava a questo ticket:
+panca, squat e stacco sono comuni a quasi tutti, o escluderebbero mezza popolazione?
+
+Misurato: panca 78 utenti, squat 84, stacco 82 — ma **tutti e tre insieme solo 55 su
+100**. Una classifica composita ne escluderebbe **45**. La misura conferma la decisione
+già presa in #33 di scartarla, e questa volta con un numero invece che con un'intuizione.
+La nebbia si chiude: la voce esce dalla mappa e va fra le cose fuori scopo.
+
 ### 5. Riscaldamenti e serie non completate
 
 Il 19% delle serie risulta non completato, esattamente come nello storico reale, e il
@@ -166,9 +177,13 @@ invece che su file.
 | schede (di cui pubbliche) | 187 (55) |
 | voti | 438 |
 
-I voti hanno distribuzione **a coda lunga** — la scheda più votata ne ha 93, la mediana
-fra quelle votate è 4, cinque schede pubbliche ne hanno zero — perché una classifica
-sociale in cui tutti hanno lo stesso punteggio non ordina niente.
+I voti hanno distribuzione **a coda lunga con un livello di fondo**: la scheda più votata
+ne ha 43, la **mediana è 10**, dieci schede pubbliche ne hanno zero. La mediana non è
+estetica — [#33](https://github.com/cavallinilorenzo/progetto-django-uni/issues/33) ne
+chiede **almeno 8**, perché sotto quella soglia la media bayesiana con `C = 3` è dominata
+dal prior e la classifica sociale finisce per ordinare il rumore. Le schede a zero voti
+restano lo stesso: una scheda pubblicata ieri non ne ha, ed è il caso che la media
+bayesiana deve saper gestire.
 
 Le **299.367 serie** sono il numero che la mappa aspettava per decidere se materializzare
 i valori derivati: quella scelta resta aperta e resta subordinata a una misura vera delle

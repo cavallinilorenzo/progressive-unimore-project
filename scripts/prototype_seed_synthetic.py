@@ -538,10 +538,17 @@ def make_routines_and_votes(users, exercises, rng):
                          target_sets=rng.randint(3, 4), target_reps=rng.choice([5, 8, 10, 12]))
                 )
 
-    # popolarità a coda lunga: il rango decide quanti voti arrivano
+    # Popolarità a coda lunga, ma con un livello di fondo: #33 chiede una **mediana di
+    # almeno 8 voti** per scheda pubblica, perché sotto quella soglia la media bayesiana
+    # con `C = 3` è dominata dal prior e la classifica sociale ordina il rumore. Le
+    # schede a zero voti restano (una scheda pubblicata ieri non ha voti), ma sono una
+    # minoranza dichiarata invece che il caso tipico.
     rng.shuffle(public)
     for rank, (routine_id, owner) in enumerate(public, start=1):
-        n = max(0, round(rng.expovariate(1 / 6.0) * (1.6 / math.sqrt(rank)) * 3))
+        if rng.random() < 0.15:
+            n = 0  # pubblicata da poco, o semplicemente ignorata
+        else:
+            n = max(1, round(rng.lognormvariate(math.log(13), 0.75)))
         voters = [u for u in users if u["id"] != owner]
         for voter in rng.sample(voters, min(n, len(voters))):
             vid += 1
@@ -718,6 +725,21 @@ def report(users, exercises, workouts, sets, routines, votes, phases):
     print(f"  esercizi totali sopra soglia {above:>3} su {len(counts)}   "
           f"(la coda resta sotto: serve a mostrare il percentile che tace)")
 
+    # La mappa (#11) teneva in nebbia una **classifica di forza generale** sui tre
+    # fondamentali, e la faceva dipendere da una misura che tocca a questo ticket:
+    # sono comuni a quasi tutti, o escluderebbero mezza popolazione?
+    big3 = ["Panca piana con bilanciere", "Squat con bilanciere",
+            "Stacco da terra con bilanciere"]
+    sets_by_user = defaultdict(set)
+    for s2 in working:
+        sets_by_user[wk[s2["workout_id"]]].add(s2["exercise_name"])
+    all3 = sum(1 for v in sets_by_user.values() if all(b in v for b in big3))
+    print("  i tre fondamentali (domanda che la mappa aveva lasciato in nebbia):")
+    for b in big3:
+        print(f"    {b:<34} {counts.get(b, 0):>3} utenti")
+    print(f"    tutti e tre insieme          {all3:>3} su {len(sets_by_user)} utenti attivi"
+          f"   -> una classifica composita ne escluderebbe {len(sets_by_user) - all3}")
+
     # --- 4. coerenza interna -----------------------------------------------------
     print("\n4. COERENZA INTERNA — i rapporti fra esercizi")
     pr = defaultdict(dict)
@@ -755,11 +777,13 @@ def report(users, exercises, workouts, sets, routines, votes, phases):
     pub = [r for r in routines if r["is_public"] == "true"]
     vc = Counter(v["routine_id"] for v in votes)
     top = sorted(vc.values(), reverse=True)
-    print("\n6. CLASSIFICA SOCIALE — schede pubbliche e voti")
+    print("\n6. CLASSIFICA SOCIALE — requisito consegnato da #33")
+    all_counts = [vc.get(r["id"], 0) for r in pub]
+    med = statistics.median(all_counts) if all_counts else 0
     print(f"  schede pubbliche {len(pub)} su {len(routines)}; con almeno un voto {len(vc)}")
+    print(f"  mediana voti per scheda pubblica  {med:>5.1f}   (richiesta ≥ 8)   {_ok(med >= 8)}")
     if top:
-        print(f"  voti per scheda: max {top[0]}, mediana fra le votate "
-              f"{statistics.median(top):.0f}, schede a zero voti {len(pub) - len(vc)}")
+        print(f"  voti per scheda: max {top[0]}, schede a zero voti {len(pub) - len(vc)}")
 
     # --- 7. l'utente della demo ---------------------------------------------------
     # #17 vuole che la pagina dello stallo si dimostri su un utente sintetico
@@ -778,9 +802,10 @@ def report(users, exercises, workouts, sets, routines, votes, phases):
         n, u = cands[0]
         print(f"  -> scelto: {u['username']} ({u['display_name']})")
 
-    verdict = ok_n and ok_pct and all(v >= 20 for v in core.values()) and absurd == 0
+    verdict = (ok_n and ok_pct and all(v >= 20 for v in core.values())
+               and absurd == 0 and med >= 8)
     print("\n" + "=" * 78)
-    print(("VERDETTO: la popolazione soddisfa i requisiti di #16 e #17."
+    print(("VERDETTO: la popolazione soddisfa i requisiti di #16, #17 e #33."
            if verdict else "VERDETTO: requisiti NON soddisfatti — vanno tarati i parametri."))
     print("=" * 78 + "\n")
     return verdict

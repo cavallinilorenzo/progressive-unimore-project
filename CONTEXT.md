@@ -52,7 +52,7 @@ Bilanciere, manubri, macchina, cavi, corpo libero. Serve a filtrare e raggruppar
 
 ### Utente sintetico — «Utente dimostrativo»
 
-Uno dei ~100 utenti generati, riconoscibile da `is_synthetic`. Esiste perché percentili e classifiche hanno bisogno di una popolazione che un progetto d'esame non ha. Non è un utente di prova nascosto: entra nelle statistiche come tutti gli altri **ed è dichiarato nell'interfaccia**. Vedi [ADR-0007](docs/adr/0007-la-popolazione-sintetica-si-dichiara.md).
+Uno dei ~100 utenti generati, riconoscibile da `is_synthetic`. Esiste perché percentili e classifiche hanno bisogno di una popolazione che un progetto d'esame non ha. Non è un utente di prova nascosto: entra nelle statistiche come tutti gli altri **ed è dichiarato nell'interfaccia**. Vedi [ADR-0009](docs/adr/0009-la-popolazione-sintetica-si-dichiara.md).
 
 ### Archetipo — «Archetipo»
 
