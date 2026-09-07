@@ -1,3 +1,8 @@
+# Dati reali di allenamento esportati da Overload (Supabase).
+# Fuori dal versionamento: sono dati personali, e il repo d'esame è pubblico.
+# Rigenerabili con `python3 scripts/export_overload.py` — vedi docs/overload-export.md
+data/
+
 # Python
 __pycache__/
 *.py[cod]
