@@ -1,0 +1,24 @@
+{% comment %}
+PROTOTIPO #19 — impalcatura, non design. Barra flottante per saltare fra le
+varianti; e' l'unico JavaScript del prototipo e muore con esso.
+{% endcomment %}
+<div style="position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:9999;
+            display:flex;align-items:center;gap:.5rem;background:#111;color:#fff;
+            border:1px solid #444;border-radius:999px;padding:.4rem .5rem;
+            box-shadow:0 8px 30px rgba(0,0,0,.45);font:600 13px/1 system-ui">
+  <a href="?variant={{ variante_prec }}" style="color:#fff;text-decoration:none;
+     padding:.35rem .6rem;border-radius:999px;background:#262626">&larr;</a>
+  <span style="padding:0 .5rem;white-space:nowrap">
+    {{ variante }} — {{ variante_nome }}
+  </span>
+  <a href="?variant={{ variante_succ }}" style="color:#fff;text-decoration:none;
+     padding:.35rem .6rem;border-radius:999px;background:#262626">&rarr;</a>
+</div>
+<script>
+  document.addEventListener('keydown', function (e) {
+    var t = e.target.tagName;
+    if (t === 'INPUT' || t === 'TEXTAREA' || e.target.isContentEditable) return;
+    if (e.key === 'ArrowLeft')  location.search = '?variant={{ variante_prec }}';
+    if (e.key === 'ArrowRight') location.search = '?variant={{ variante_succ }}';
+  });
+</script>

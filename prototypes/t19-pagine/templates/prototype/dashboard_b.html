@@ -1,0 +1,147 @@
+{% extends "prototype/base_b.html" %}
+{% comment %}
+VARIANTE B — «Coach». Rovescia la gerarchia di A: la pagina si apre con il
+verdetto e l'azione consigliata, e i numeri arrivano dopo, come prove a
+sostegno. La domanda che mette in gioco: Progressive e' un cruscotto che
+guardi, o qualcosa che ti dice cosa fare?
+{% endcomment %}
+
+{% block title %}Dashboard — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-baseline justify-content-between mb-3">
+  <h1 class="h4 fw-bold mb-0">Ciao, {{ utente }}</h1>
+  <span class="text-secondary small">Settimana 1 &ndash; 7 settembre 2026</span>
+</div>
+
+{# --- il verdetto: e' questa la pagina --- #}
+<div class="verdetto p-4 mb-3">
+  <div class="d-flex align-items-start justify-content-between gap-4">
+    <div>
+      <span class="badge rounded-pill" style="background:var(--accento-soft);color:var(--accento)">
+        Stallo rilevato &middot; confidenza {{ coach.confidenza }}
+      </span>
+      <h2 class="h5 fw-bold mt-2 mb-1">{{ coach.titolo }}</h2>
+      <p class="text-secondary mb-3" style="max-width:56ch">{{ coach.dettaglio }}</p>
+      <div class="d-flex align-items-center gap-2">
+        <strong class="small">Cosa fare:</strong>
+        <span class="small">{{ coach.azione }}</span>
+      </div>
+    </div>
+    <div class="text-end flex-shrink-0">
+      <a href="/analisi/stallo/" class="btn btn-acc btn-sm mb-2 d-block">Applica alla scheda</a>
+      <a href="/esercizi/panca-piana/" class="btn btn-outline-secondary btn-sm d-block">Vedi la curva</a>
+    </div>
+  </div>
+</div>
+
+{# --- gli altri consigli, in fila --- #}
+<div class="row g-3 mb-4">
+  {% for s in coach.secondari %}
+  <div class="col-md-4">
+    <div class="scheda p-3 h-100 d-flex align-items-start gap-2">
+      <span class="fs-5" style="line-height:1">
+        {% if s.tono == 'positivo' %}&#10003;{% else %}&#9888;{% endif %}
+      </span>
+      <span class="small">{{ s.testo }}</span>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+
+{# --- il prossimo allenamento, l'unica altra azione --- #}
+<div class="scheda p-3 mb-4 d-flex align-items-center justify-content-between">
+  <div>
+    <div class="text-secondary small">Prossimo allenamento consigliato</div>
+    <div class="fw-bold">{{ prossimo.scheda }}</div>
+    <div class="text-secondary small">
+      {{ prossimo.esercizi }} esercizi &middot; {{ prossimo.serie }} serie &middot;
+      svolto l'ultima volta {{ prossimo.ultimo_svolto }}
+    </div>
+  </div>
+  <a href="/allenamenti/nuovo/?scheda=upper-a" class="btn btn-acc">Inizia</a>
+</div>
+
+<h2 class="h6 fw-bold text-secondary text-uppercase mb-3" style="letter-spacing:.07em">
+  Le prove
+</h2>
+
+<div class="row g-3">
+  <div class="col-lg-7">
+    <div class="scheda p-3 h-100">
+      <div class="fw-semibold mb-1">Volume settimanale</div>
+      <div class="text-secondary small mb-3">
+        <span class="num">{{ volume_settimana_kg }} kg</span> questa settimana,
+        +{{ volume_delta_pct }}% sulla precedente
+      </div>
+      {{ grafico_volume|json_script:"dati-volume" }}
+      <canvas id="grafico-volume" height="130"></canvas>
+    </div>
+  </div>
+  <div class="col-lg-5">
+    <div class="scheda p-3 h-100">
+      <div class="fw-semibold mb-3">Equilibrio fra i gruppi</div>
+      {{ grafico_gruppi|json_script:"dati-gruppi" }}
+      <canvas id="grafico-gruppi" height="200"></canvas>
+    </div>
+  </div>
+
+  <div class="col-lg-7">
+    <div class="scheda p-3">
+      <div class="fw-semibold mb-1">{{ progressione_esercizio }}</div>
+      <div class="text-secondary small mb-3">Massimale stimato, ultime 8 sedute</div>
+      {{ grafico_progressione|json_script:"dati-progressione" }}
+      <canvas id="grafico-progressione" height="150"></canvas>
+    </div>
+  </div>
+  <div class="col-lg-5">
+    <div class="scheda p-3">
+      <div class="fw-semibold mb-3">Dove sei rispetto agli altri</div>
+      {% for p in percentili %}
+      <div class="d-flex justify-content-between small mb-1">
+        <span>{{ p.esercizio }}</span>
+        <span class="num">{{ p.percentile }}&deg; percentile</span>
+      </div>
+      <div class="barra mb-1"><i style="width:{{ p.percentile }}%"></i></div>
+      <div class="text-secondary mb-3" style="font-size:.78rem">{{ p.rapporto }}</div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const acc = '#3F6E00';
+  Chart.defaults.font.family = 'system-ui';
+  Chart.defaults.color = '#6B7280';
+
+  const v = JSON.parse(document.getElementById('dati-volume').textContent);
+  new Chart(document.getElementById('grafico-volume'), {
+    type: 'line',
+    data: { labels: v.labels, datasets: [{ data: v.valori, borderColor: acc,
+             backgroundColor: 'rgba(63,110,0,.08)', fill: true, tension: .3, pointRadius: 3 }] },
+    options: { plugins: { legend: { display: false } },
+      scales: { x: { grid: { display: false } }, y: { border: { display: false } } } }
+  });
+
+  const g = JSON.parse(document.getElementById('dati-gruppi').textContent);
+  new Chart(document.getElementById('grafico-gruppi'), {
+    type: 'radar',
+    data: { labels: g.labels, datasets: [{ data: g.valori, borderColor: acc,
+             backgroundColor: 'rgba(63,110,0,.14)', pointBackgroundColor: acc }] },
+    options: { plugins: { legend: { display: false } },
+      scales: { r: { beginAtZero: true, ticks: { display: false } } } }
+  });
+
+  const p = JSON.parse(document.getElementById('dati-progressione').textContent);
+  new Chart(document.getElementById('grafico-progressione'), {
+    type: 'line',
+    data: { labels: p.labels, datasets: [{ data: p.valori, borderColor: acc, tension: .3, pointRadius: 3 }] },
+    options: { plugins: { legend: { display: false } },
+      scales: { x: { grid: { display: false } }, y: { border: { display: false } } } }
+  });
+</script>
+{% endblock %}

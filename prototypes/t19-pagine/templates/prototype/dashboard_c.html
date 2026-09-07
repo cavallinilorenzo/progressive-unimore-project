@@ -1,0 +1,155 @@
+{% extends "prototype/base_c.html" %}
+{% comment %}
+VARIANTE C — «Console». Bootstrap crudo, densita' alta, tabelle al posto
+delle card dove si puo'. Nessuna identita' visiva: il valore e' la
+riconoscibilita' per il prof e il costo di costruzione quasi nullo.
+Serve da pavimento: se A o B non battono questa, non valgono il tempo.
+{% endcomment %}
+
+{% block title %}Dashboard — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h1 class="h3 mb-0">Dashboard</h1>
+  <a href="/allenamenti/nuovo/" class="btn btn-primary">Nuovo allenamento</a>
+</div>
+
+<div class="alert alert-warning d-flex justify-content-between align-items-center" role="alert">
+  <div>
+    <strong>{{ coach.titolo }}</strong> &mdash; {{ coach.dettaglio }}
+  </div>
+  <a href="/analisi/stallo/" class="btn btn-sm btn-outline-dark text-nowrap ms-3">Dettagli</a>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-6 col-md-3">
+    <div class="card"><div class="card-body">
+      <h6 class="card-subtitle text-secondary small mb-1">Volume settimanale</h6>
+      <p class="h4 mb-0">{{ volume_settimana_kg }} kg</p>
+      <span class="badge text-bg-success">+{{ volume_delta_pct }}%</span>
+    </div></div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card"><div class="card-body">
+      <h6 class="card-subtitle text-secondary small mb-1">Allenamenti settimana</h6>
+      <p class="h4 mb-0">{{ sessioni_settimana }}</p>
+      <span class="text-secondary small">{{ sessioni_totali }} in totale</span>
+    </div></div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card"><div class="card-body">
+      <h6 class="card-subtitle text-secondary small mb-1">Costanza</h6>
+      <p class="h4 mb-0">{{ costanza_pct }}%</p>
+      <span class="text-secondary small">{{ costanza_settimane }} settimane</span>
+    </div></div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="card"><div class="card-body">
+      <h6 class="card-subtitle text-secondary small mb-1">Esercizi usati</h6>
+      <p class="h4 mb-0">{{ esercizi_usati }}</p>
+      <span class="text-secondary small">{{ serie_totali }} serie registrate</span>
+    </div></div>
+  </div>
+</div>
+
+<div class="row g-3 mb-3">
+  <div class="col-lg-8">
+    <div class="card h-100">
+      <div class="card-header">Volume per settimana</div>
+      <div class="card-body">
+        {{ grafico_volume|json_script:"dati-volume" }}
+        <canvas id="grafico-volume" height="110"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-4">
+    <div class="card h-100">
+      <div class="card-header">Serie per gruppo muscolare</div>
+      <table class="table table-sm mb-0">
+        <thead><tr><th>Gruppo</th><th class="text-end">Serie</th><th class="text-end">%</th></tr></thead>
+        <tbody>
+        {% for g in gruppi %}
+          <tr>
+            <td>{{ g.nome }}</td>
+            <td class="text-end">{{ g.serie }}</td>
+            <td class="text-end">{{ g.pct }}%</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-lg-6">
+    <div class="card h-100">
+      <div class="card-header">Progressione &mdash; {{ progressione_esercizio }}</div>
+      <div class="card-body">
+        {{ grafico_progressione|json_script:"dati-progressione" }}
+        <canvas id="grafico-progressione" height="150"></canvas>
+      </div>
+    </div>
+  </div>
+  <div class="col-lg-6">
+    <div class="card mb-3">
+      <div class="card-header">Ultimi allenamenti</div>
+      <table class="table table-sm table-hover mb-0">
+        <thead><tr><th>Data</th><th>Scheda</th><th class="text-end">Serie</th>
+          <th class="text-end">Volume</th><th class="text-end">Durata</th></tr></thead>
+        <tbody>
+        {% for s in ultime_sessioni %}
+          <tr>
+            <td>{{ s.data }}</td>
+            <td><a href="/allenamenti/{{ forloop.counter }}/">{{ s.scheda }}</a></td>
+            <td class="text-end">{{ s.serie }}</td>
+            <td class="text-end">{{ s.volume }} kg</td>
+            <td class="text-end">{{ s.durata }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    <div class="card">
+      <div class="card-header">Record recenti e percentili</div>
+      <table class="table table-sm mb-0">
+        <tbody>
+        {% for pr in pr_recenti %}
+          <tr>
+            <td>{{ pr.esercizio }}</td>
+            <td class="text-end">{{ pr.valore }}</td>
+            <td class="text-end"><span class="badge text-bg-success">{{ pr.delta }}</span></td>
+          </tr>
+        {% endfor %}
+        {% for p in percentili %}
+          <tr class="table-light">
+            <td>{{ p.esercizio }} <span class="text-secondary small">({{ p.rapporto }})</span></td>
+            <td class="text-end" colspan="2">{{ p.percentile }}&deg; percentile</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const v = JSON.parse(document.getElementById('dati-volume').textContent);
+  new Chart(document.getElementById('grafico-volume'), {
+    type: 'bar',
+    data: { labels: v.labels, datasets: [{ label: 'kg', data: v.valori, backgroundColor: '#0d6efd' }] },
+    options: { plugins: { legend: { display: false } } }
+  });
+
+  const p = JSON.parse(document.getElementById('dati-progressione').textContent);
+  new Chart(document.getElementById('grafico-progressione'), {
+    type: 'line',
+    data: { labels: p.labels, datasets: [{ label: '1RM stimato', data: p.valori, borderColor: '#0d6efd', tension: .2 }] },
+    options: { plugins: { legend: { display: false } } }
+  });
+</script>
+{% endblock %}
