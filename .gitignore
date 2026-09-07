@@ -3,6 +3,13 @@
 # Rigenerabili con `python3 scripts/export_overload.py` — vedi docs/overload-export.md
 data/
 
+# Figura anatomica del prototipo #37, derivata dagli SVG di Overload.
+# Fuori dal versionamento finche' la provenienza di quegli SVG non e' accertata:
+# sono entrati in Overload nel commit iniziale senza licenza documentata, e
+# questo repo e' pubblico. Rigenerabile in un comando:
+#   node prototypes/t37-heatmap/build_body_svg.mjs
+prototypes/t19-pagine/templates/prototype/_corpo.svg
+
 # Python
 __pycache__/
 *.py[cod]

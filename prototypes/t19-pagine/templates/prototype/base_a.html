@@ -64,9 +64,14 @@ title / extra_head / header / content / footer / scripts.
     </nav>
     <div class="ms-auto d-flex align-items-center gap-3">
       <a href="/allenamenti/nuovo/" class="btn btn-volt btn-sm px-3">Inizia allenamento</a>
-      {# Le voci che nella variante B stavano in sidebar non spariscono: quelle
-         che riguardano l'account scendono qui, le altre si annidano nelle
-         cinque sezioni. La mappa completa e' in /mappa/. #}
+      {% comment %}
+        Le voci che nella variante B stavano in sidebar non spariscono: quelle
+        che riguardano l'account scendono qui, le altre si annidano nelle
+        cinque sezioni. La mappa completa e' in /mappa/.
+
+        NB: `{# ... #}` non e' multiriga in Django — la seconda riga in poi
+        finisce a schermo. Serve `{% comment %}`.
+      {% endcomment %}
       <div class="dropdown">
         <a href="#" class="dropdown-toggle" data-bs-toggle="dropdown" style="color:var(--t2)">{{ utente }}</a>
         <ul class="dropdown-menu dropdown-menu-end">

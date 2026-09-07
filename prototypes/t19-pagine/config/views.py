@@ -8,9 +8,16 @@ giudicata su dati inventati generosi mente sulla densita' che avra' davvero.
 """
 
 import json
+import sys
+from pathlib import Path
 
 from django.http import HttpResponse
 from django.shortcuts import render
+
+# Il ticket #37 vive nella sua cartella, non qui: e' un prototipo distinto che
+# prende in prestito questo guscio per essere giudicato in mezzo al resto.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "t37-heatmap"))
+from heatmap import VARIANTI_HM, contesto_heatmap  # noqa: E402
 
 VARIANTI = {
     "A": "Scoreboard — l'identita' di Overload",
@@ -204,6 +211,29 @@ def dashboard(request):
     return render(
         request, f"prototype/dashboard_{contesto['variante'].lower()}.html", contesto
     )
+
+
+def heatmap(request):
+    """PROTOTIPO — ticket #37: le tre risposte al si'/no sulla figura anatomica,
+    nel guscio della variante A vinta in #19. `?variant=` qui sceglie la
+    heatmap, non la dashboard."""
+    variante = request.GET.get("variant", "A").upper()
+    if variante not in VARIANTI_HM:
+        variante = "A"
+    chiavi = list(VARIANTI_HM)
+    i = chiavi.index(variante)
+
+    contesto = _contesto(request)
+    contesto.update(contesto_heatmap(variante))
+    contesto.update({
+        # Il guscio e' sempre quello di A (lo dice `{% extends %}` nel template);
+        # qui `variante` serve solo alla barra flottante, che commuta la heatmap.
+        "variante": variante,
+        "variante_nome": VARIANTI_HM[variante],
+        "variante_prec": chiavi[i - 1],
+        "variante_succ": chiavi[(i + 1) % len(chiavi)],
+    })
+    return render(request, "prototype/heatmap.html", contesto)
 
 
 def segnaposto(request, resto):
