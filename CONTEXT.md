@@ -53,10 +53,37 @@ Bilanciere, manubri, macchina, cavi, corpo libero. Serve a filtrare e raggruppar
 ## Termini da non confondere
 
 - **Carico** — il peso sollevato in una serie. Mai «peso» da solo.
-- **Peso corporeo** — il peso dell'utente. Serve alla **forza relativa**, cioè al massimale diviso il peso corporeo, che è il criterio con cui utenti di taglia diversa diventano confrontabili.
+- **Peso corporeo** — il peso dell'utente. È **un solo valore corrente**, non uno storico: lo stesso peso di oggi divide anche i massimali di mesi fa. Vedi [ADR-0008](docs/adr/0008-peso-corporeo-corrente-come-denominatore.md).
+- **Forza relativa** — il massimale diviso il peso corporeo. È il criterio con cui utenti di taglia diversa diventano confrontabili, e quindi l'unità di misura sia del percentile di forza sia della classifica di forza. Mai «forza» da sola.
 - **Volume** — carico × ripetizioni, sommato sulle sole serie di lavoro.
 - **Massimale** — l'1RM *stimato* a partire da carico e ripetizioni. Non è mai un massimale realmente testato.
 - **Stallo** — l'assenza di progressione su un esercizio nel tempo. In codice si chiama `plateau`, che è il termine tecnico inglese.
+
+## Le due classifiche
+
+Sono due graduatorie di **natura diversa**, e non vanno chiamate entrambe «classifica» senza aggettivo.
+
+### Classifica di forza — «Classifica di forza»
+
+Ordina gli **utenti** su **un singolo esercizio** per forza relativa decrescente. Non esiste una classifica di forza generale: esiste una classifica per ogni esercizio che abbia abbastanza gente sopra. Un utente vi compare solo se ha un peso corporeo dichiarato e almeno **due allenamenti distinti** con quell'esercizio, e la classifica stessa si mostra solo sopra la **soglia di popolazione** — la stessa che fa tacere il percentile.
+
+È una classifica di **record**, non di attività: il massimale che vi entra è quello di sempre, senza finestra temporale. Chi non si allena da un anno resta in graduatoria; a dire se qualcuno si allena c'è la costanza, che è un'altra cosa.
+
+### Classifica sociale — «Classifica sociale»
+
+Ordina le **schede pubbliche** per **punteggio sociale** decrescente. Il soggetto sono le schede, non gli utenti: è questo a renderla di natura diversa dalla prima.
+
+### Punteggio sociale
+
+Il numero che ordina la classifica sociale: **non** la media dei voti, ma una media **smorzata verso la media globale** di tutti i voti del database, tanto più quanto meno voti ha la scheda. Serve a impedire che una scheda con un solo 5 superi una scheda con cinquanta voti alti. La media grezza e il numero di voti restano mostrati accanto, perché il punteggio che ordina dev'essere ispezionabile.
+
+### Soglia di popolazione
+
+Il numero minimo di utenti su un esercizio sotto il quale un confronto fra utenti **non si mostra**: né percentile, né classifica. Sotto quella soglia la app dice **perché** tace, e non inventa una posizione.
+
+### Pari merito
+
+Due righe con lo stesso valore ordinatore condividono la **stessa posizione** — due primi, e il successivo è terzo. L'ordine *dentro* il pari merito resta comunque deterministico, così la pagina non si riordina a ogni ricarica.
 
 ## Confini del dominio
 
