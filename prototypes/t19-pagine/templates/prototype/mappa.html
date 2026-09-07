@@ -1,0 +1,63 @@
+{% extends "prototype/base_a.html" %}
+{% comment %}
+PROTOTIPO #19 — la sitemap completa nel guscio scelto (variante A).
+Serve a rendere verificabile, invece che promessa, l'obiezione di Lorenzo:
+le voci che nella variante B stavano tutte in sidebar esistono ancora,
+annidate sotto le cinque dell'header.
+{% endcomment %}
+
+{% block title %}Mappa del sito — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="mb-4">
+  <div class="eyebrow">Prototipo #19</div>
+  <h1 class="h4 fw-bold mb-2">Mappa del sito</h1>
+  <p style="color:var(--t2);max-width:70ch">
+    L'header ha <b>cinque voci</b>, non undici. Le altre non sono sparite: si sono
+    annidate. Le schede della community stanno dentro <b>Schede</b>, lo stallo dentro
+    la pagina del singolo <b>esercizio</b>, l'import nel <b>menu utente</b>.
+    La colonna a destra segna quale lettera del CRUD ogni pagina copre.
+  </p>
+</div>
+
+{% for sezione in sitemap %}
+<div class="card-ink p-3 mb-3">
+  <div class="d-flex align-items-baseline gap-3 mb-1">
+    <span class="fw-bold">{{ sezione.voce }}</span>
+    <code style="color:var(--volt);font-size:.82rem">{{ sezione.url }}</code>
+  </div>
+  <div style="color:var(--t2);font-size:.86rem" class="mb-3">{{ sezione.nota|safe }}</div>
+
+  <table class="table table-sm align-middle mb-0" style="--bs-table-bg:transparent;--bs-table-color:var(--t1)">
+    <tbody>
+    {% for f in sezione.figlie %}
+      <tr style="border-color:var(--surface-2)">
+        <td style="width:34%"><code style="color:var(--t2);font-size:.8rem">{{ f.url|safe }}</code></td>
+        <td style="font-size:.88rem">{{ f.cosa|safe }}</td>
+        <td class="text-end" style="width:14%">
+          {% if f.crud %}
+            <span class="delta delta-up">{{ f.crud }}</span>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endfor %}
+
+<div class="card-ink p-3 mb-3">
+  <div class="rail">
+    <div class="eyebrow mb-1" style="color:var(--volt)">Il punto da difendere all'orale</div>
+    <div style="color:var(--t2);font-size:.9rem;max-width:70ch">
+      Il CRUD completo che la traccia chiede sta su <b>Routine</b> e su <b>Workout</b>
+      (piu' le sue serie), e c'e' un terzo CRUD sul <b>Vote</b>. Il catalogo
+      <b>Exercise</b> e' deliberatamente in sola lettura: e' globale e scritto a mano
+      (ADR-0001), perche' un esercizio inventato da un utente sarebbe invisibile a
+      percentili e classifiche. E' una scelta, non una dimenticanza.
+    </div>
+  </div>
+</div>
+
+{% endblock %}

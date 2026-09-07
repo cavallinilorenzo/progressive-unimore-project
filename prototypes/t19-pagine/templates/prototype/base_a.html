@@ -1,0 +1,106 @@
+{% comment %}
+PROTOTIPO #19 — VARIANTE A: «Scoreboard».
+Candidato a `base.html`. Eredita l'identita' Pulse di Overload (ink + volt),
+navigazione orizzontale in alto, tipografia compressa e maiuscola.
+I cinque blocchi che la traccia impone piu' quelli utili:
+title / extra_head / header / content / footer / scripts.
+{% endcomment %}<!doctype html>
+<html lang="it" data-bs-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Progressive{% endblock %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    :root {
+      --ink: #0A0B0D; --surface: #15171B; --surface-2: #1F222A;
+      --volt: #C9FF3D; --on-volt: #0A0B0D; --gold: #FFC53D; --red: #FF4D4D;
+      --t1: #F4F6F2; --t2: #9DA3AC; --t3: #697079;
+    }
+    body { background: var(--ink); color: var(--t1);
+           font-family: -apple-system, "SF Pro Text", system-ui, sans-serif; }
+    .eyebrow { font-size: .7rem; font-weight: 600; text-transform: uppercase;
+               letter-spacing: .1em; color: var(--t2); }
+    .hero-num { font-size: 3.25rem; font-weight: 800; line-height: 1;
+                font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+    .card-ink { background: var(--surface); border: 1px solid var(--surface-2);
+                border-radius: 14px; }
+    .delta { display: inline-flex; align-items: center; gap: .25rem;
+             font-weight: 700; font-variant-numeric: tabular-nums;
+             padding: .1rem .5rem; border-radius: 6px; font-size: .85rem; }
+    .delta-up { background: rgba(201,255,61,.14); color: var(--volt); }
+    .delta-down { background: rgba(255,77,77,.14); color: var(--red); }
+    .nav-top { background: rgba(10,11,13,.92); border-bottom: 1px solid var(--surface-2);
+               backdrop-filter: blur(12px); }
+    .nav-top a { color: var(--t2); text-decoration: none; font-weight: 600;
+                 font-size: .82rem; text-transform: uppercase; letter-spacing: .06em; }
+    .nav-top a:hover { color: var(--t1); }
+    .nav-top a.attivo { color: var(--t1); box-shadow: inset 0 -2px 0 var(--volt); }
+    .wordmark { font-weight: 800; letter-spacing: -.03em; font-size: 1.15rem;
+                text-transform: uppercase; color: var(--t1); }
+    .btn-volt { background: var(--volt); color: var(--on-volt); font-weight: 700;
+                border: 0; text-transform: uppercase; letter-spacing: .04em;
+                font-size: .8rem; box-shadow: 0 0 24px rgba(201,255,61,.28); }
+    .btn-volt:hover { background: #d6ff63; color: var(--on-volt); }
+    .rail { border-left: 2px solid var(--volt); padding-left: .75rem; }
+    .barra { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+    .barra > i { display: block; height: 100%; background: var(--volt); }
+    footer { color: var(--t3); font-size: .8rem; border-top: 1px solid var(--surface-2); }
+  </style>
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+
+{% block header %}
+<header class="nav-top sticky-top">
+  <div class="container-xl d-flex align-items-center gap-4 py-3">
+    <span class="wordmark">Progressive<span style="color:var(--volt)">.</span></span>
+    <nav class="d-flex gap-4 ms-3">
+      <a href="/" class="attivo">Dashboard</a>
+      <a href="/schede/">Schede</a>
+      <a href="/allenamenti/">Storico</a>
+      <a href="/esercizi/">Esercizi</a>
+      <a href="/classifiche/">Classifiche</a>
+    </nav>
+    <div class="ms-auto d-flex align-items-center gap-3">
+      <a href="/allenamenti/nuovo/" class="btn btn-volt btn-sm px-3">Inizia allenamento</a>
+      {% comment %}
+        Le voci che nella variante B stavano in sidebar non spariscono: quelle
+        che riguardano l'account scendono qui, le altre si annidano nelle
+        cinque sezioni. La mappa completa e' in /mappa/.
+
+        NB: `{# ... #}` non e' multiriga in Django — la seconda riga in poi
+        finisce a schermo. Serve `{% comment %}`.
+      {% endcomment %}
+      <div class="dropdown">
+        <a href="#" class="dropdown-toggle" data-bs-toggle="dropdown" style="color:var(--t2)">{{ utente }}</a>
+        <ul class="dropdown-menu dropdown-menu-end">
+          <li><a class="dropdown-item" href="/profilo/">Profilo</a></li>
+          <li><a class="dropdown-item" href="/importa/">Importa storico</a></li>
+          <li><hr class="dropdown-divider"></li>
+          <li><a class="dropdown-item" href="/mappa/">Mappa del sito (prototipo)</a></li>
+          <li><a class="dropdown-item" href="/accounts/logout/">Esci</a></li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</header>
+{% endblock %}
+
+<main class="container-xl py-4">
+  {% block content %}{% endblock %}
+</main>
+
+{% block footer %}
+<footer class="container-xl py-4 mt-4 d-flex justify-content-between">
+  <span>Progressive — progetto d'esame IWC 2026</span>
+  <span>{{ sessioni_totali }} allenamenti · {{ serie_totali }} serie registrate</span>
+</footer>
+{% endblock %}
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+{% block scripts %}{% endblock %}
+{% include "prototype/_switcher.html" %}
+</body>
+</html>

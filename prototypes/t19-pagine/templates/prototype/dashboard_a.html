@@ -1,0 +1,161 @@
+{% extends "prototype/base_a.html" %}
+{% comment %}
+VARIANTE A — «Scoreboard». La gerarchia e' il numero: la riga di cifre hero
+apre la pagina, il resto la spiega. Lo stallo e' una riga sul rail volt, non
+un pannello: il coach qui e' un avviso, non il prodotto.
+{% endcomment %}
+
+{% block title %}Dashboard — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-baseline justify-content-between mb-4">
+  <div>
+    <div class="eyebrow">Settimana corrente</div>
+    <h1 class="h4 fw-bold mb-0">Ciao, {{ utente }}</h1>
+  </div>
+  <div class="eyebrow">1 &ndash; 7 settembre 2026</div>
+</div>
+
+{# --- la riga di cifre: e' questa la pagina --- #}
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="card-ink p-3 h-100">
+      <div class="eyebrow mb-2">Volume settimanale</div>
+      <div class="hero-num">{{ volume_settimana_kg }}<span style="font-size:1rem;color:var(--t2)"> kg</span></div>
+      <div class="mt-2"><span class="delta delta-up">&#9650; +{{ volume_delta_pct }}%</span></div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card-ink p-3 h-100">
+      <div class="eyebrow mb-2">Allenamenti</div>
+      <div class="hero-num">0{{ sessioni_settimana }}<span style="font-size:1rem;color:var(--t3)"> / 04</span></div>
+      <div class="mt-2"><span class="delta delta-up">Obiettivo raggiunto</span></div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card-ink p-3 h-100">
+      <div class="eyebrow mb-2">Costanza</div>
+      <div class="hero-num">{{ costanza_pct }}<span style="font-size:1rem;color:var(--t2)">%</span></div>
+      <div class="mt-2" style="color:var(--t2);font-size:.82rem">{{ costanza_settimane }} settimane di fila</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card-ink p-3 h-100">
+      <div class="eyebrow mb-2">Record del mese</div>
+      <div class="hero-num" style="color:var(--gold)">03</div>
+      <div class="mt-2" style="color:var(--t2);font-size:.82rem">Ultimo: stacco, 140 kg</div>
+    </div>
+  </div>
+</div>
+
+{# --- lo stallo, come avviso sul rail volt --- #}
+<div class="card-ink p-3 mb-4 d-flex align-items-center gap-3">
+  <div class="rail flex-grow-1">
+    <div class="eyebrow mb-1" style="color:var(--volt)">Il coach dice</div>
+    <div class="fw-bold">{{ coach.titolo }}</div>
+    <div style="color:var(--t2);font-size:.88rem">{{ coach.dettaglio }}</div>
+  </div>
+  <a href="/analisi/stallo/" class="btn btn-volt btn-sm px-3">Vedi il piano</a>
+</div>
+
+<div class="row g-3 mb-4">
+  {# --- volume nel tempo --- #}
+  <div class="col-lg-8">
+    <div class="card-ink p-3 h-100">
+      <div class="d-flex justify-content-between align-items-baseline mb-3">
+        <div class="eyebrow">Volume per settimana</div>
+        <div style="color:var(--t3);font-size:.78rem">ultime 8 settimane</div>
+      </div>
+      {{ grafico_volume|json_script:"dati-volume" }}
+      <canvas id="grafico-volume" height="120"></canvas>
+    </div>
+  </div>
+
+  {# --- heatmap muscolare come barre, non come figura umana --- #}
+  <div class="col-lg-4">
+    <div class="card-ink p-3 h-100">
+      <div class="eyebrow mb-3">Distribuzione sui gruppi</div>
+      {% for g in gruppi %}
+      <div class="d-flex justify-content-between align-items-baseline mb-1">
+        <span style="font-size:.85rem">{{ g.nome }}</span>
+        <span style="font-size:.8rem;color:var(--t2);font-variant-numeric:tabular-nums">
+          {{ g.serie }} serie · {{ g.pct }}%
+        </span>
+      </div>
+      <div class="barra mb-3"><i style="width:{{ g.pct }}%;opacity:{{ g.pct }}0%"></i></div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  {# --- progressione del carico --- #}
+  <div class="col-lg-7">
+    <div class="card-ink p-3 h-100">
+      <div class="eyebrow mb-1">Progressione del massimale</div>
+      <div class="fw-bold mb-3">{{ progressione_esercizio }}</div>
+      {{ grafico_progressione|json_script:"dati-progressione" }}
+      <canvas id="grafico-progressione" height="150"></canvas>
+    </div>
+  </div>
+
+  {# --- PR + percentili --- #}
+  <div class="col-lg-5">
+    <div class="card-ink p-3 mb-3">
+      <div class="eyebrow mb-3">Record recenti</div>
+      {% for pr in pr_recenti %}
+      <div class="d-flex justify-content-between align-items-center py-2"
+           style="border-bottom:1px solid var(--surface-2)">
+        <div>
+          <div style="font-size:.9rem;font-weight:600">{{ pr.esercizio }}</div>
+          <div style="font-size:.78rem;color:var(--t3)">{{ pr.quando }}</div>
+        </div>
+        <div class="text-end">
+          <div style="font-variant-numeric:tabular-nums;font-weight:700">{{ pr.valore }}</div>
+          <span class="delta delta-up">&#9650; {{ pr.delta }}</span>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    <div class="card-ink p-3">
+      <div class="eyebrow mb-3">Forza relativa &mdash; percentile</div>
+      {% for p in percentili %}
+      <div class="d-flex justify-content-between mb-1" style="font-size:.85rem">
+        <span>{{ p.esercizio }}</span>
+        <span style="font-variant-numeric:tabular-nums;color:var(--volt);font-weight:700">
+          {{ p.percentile }}&deg;
+        </span>
+      </div>
+      <div class="barra mb-3"><i style="width:{{ p.percentile }}%"></i></div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+  const volt = '#C9FF3D', griglia = 'rgba(255,255,255,.06)', etich = '#697079';
+  Chart.defaults.color = etich;
+  Chart.defaults.font.family = 'system-ui';
+
+  const v = JSON.parse(document.getElementById('dati-volume').textContent);
+  new Chart(document.getElementById('grafico-volume'), {
+    type: 'bar',
+    data: { labels: v.labels, datasets: [{ data: v.valori, backgroundColor: volt, borderRadius: 4 }] },
+    options: { plugins: { legend: { display: false } },
+      scales: { x: { grid: { display: false } }, y: { grid: { color: griglia }, border: { display: false } } } }
+  });
+
+  const p = JSON.parse(document.getElementById('dati-progressione').textContent);
+  new Chart(document.getElementById('grafico-progressione'), {
+    type: 'line',
+    data: { labels: p.labels, datasets: [{ data: p.valori, borderColor: volt, backgroundColor: 'rgba(201,255,61,.10)',
+             fill: true, tension: .3, pointBackgroundColor: volt, pointRadius: 3 }] },
+    options: { plugins: { legend: { display: false } },
+      scales: { x: { grid: { display: false } }, y: { grid: { color: griglia }, border: { display: false } } } }
+  });
+</script>
+{% endblock %}

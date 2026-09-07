@@ -1,0 +1,83 @@
+{% comment %}
+PROTOTIPO #19 — VARIANTE B: «Coach».
+Candidato a `base.html`. Chiaro, sidebar fissa a sinistra, un solo accento
+(verde scuro). La navigazione e' raggruppata per intenzione — Allenarsi /
+Capire / Confrontarsi — invece che per modello.
+{% endcomment %}<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Progressive{% endblock %}</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <style>
+    :root { --accento: #3F6E00; --accento-soft: #F0F7E2; --bordo: #E3E6DD; --canvas: #F7F8F4; }
+    body { background: var(--canvas); color: #1A1D21;
+           font-family: -apple-system, system-ui, sans-serif; }
+    .guscio { display: grid; grid-template-columns: 232px 1fr; min-height: 100vh; }
+    .lato { background: #fff; border-right: 1px solid var(--bordo); padding: 1.25rem 0; }
+    .lato .gruppo { font-size: .68rem; text-transform: uppercase; letter-spacing: .09em;
+                    color: #8A9098; font-weight: 700; padding: 1rem 1.25rem .35rem; }
+    .lato a { display: block; padding: .5rem 1.25rem; color: #3C4249;
+              text-decoration: none; font-size: .92rem; font-weight: 500; }
+    .lato a:hover { background: var(--accento-soft); color: var(--accento); }
+    .lato a.attivo { background: var(--accento-soft); color: var(--accento); font-weight: 700;
+                     box-shadow: inset 3px 0 0 var(--accento); }
+    .marchio { font-weight: 800; font-size: 1.1rem; padding: 0 1.25rem 0.5rem;
+               letter-spacing: -.02em; }
+    .verdetto { background: #fff; border: 1px solid var(--bordo); border-left: 5px solid var(--accento);
+                border-radius: 12px; }
+    .scheda { background: #fff; border: 1px solid var(--bordo); border-radius: 12px; }
+    .btn-acc { background: var(--accento); color: #fff; font-weight: 600; border: 0; }
+    .btn-acc:hover { background: #345900; color: #fff; }
+    .num { font-variant-numeric: tabular-nums; font-weight: 700; }
+    .barra { height: 6px; border-radius: 3px; background: #EDEFE8; overflow: hidden; }
+    .barra > i { display: block; height: 100%; background: var(--accento); }
+    footer { color: #8A9098; font-size: .82rem; border-top: 1px solid var(--bordo); }
+  </style>
+  {% block extra_head %}{% endblock %}
+</head>
+<body>
+<div class="guscio">
+
+  {% block header %}
+  <aside class="lato">
+    <div class="marchio">Progressive</div>
+    <a href="/allenamenti/nuovo/" class="btn btn-acc btn-sm mx-3 my-2 d-block">Inizia allenamento</a>
+    <div class="gruppo">Allenarsi</div>
+    <a href="/schede/">Le mie schede</a>
+    <a href="/allenamenti/">Storico</a>
+    <a href="/esercizi/">Esercizi</a>
+    <div class="gruppo">Capire</div>
+    <a href="/" class="attivo">Dashboard</a>
+    <a href="/analisi/progressione/">Progressione</a>
+    <a href="/analisi/stallo/">Stalli</a>
+    <div class="gruppo">Confrontarsi</div>
+    <a href="/classifiche/">Classifiche</a>
+    <a href="/schede/pubbliche/">Schede della community</a>
+    <div class="gruppo">Account</div>
+    <a href="/importa/">Importa storico</a>
+    <a href="/profilo/">{{ utente }}</a>
+  </aside>
+  {% endblock %}
+
+  <div class="d-flex flex-column">
+    <main class="p-4 flex-grow-1">
+      {% block content %}{% endblock %}
+    </main>
+
+    {% block footer %}
+    <footer class="px-4 py-3 d-flex justify-content-between">
+      <span>Progressive — progetto d'esame IWC 2026</span>
+      <span>{{ sessioni_totali }} allenamenti · {{ serie_totali }} serie</span>
+    </footer>
+    {% endblock %}
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+{% block scripts %}{% endblock %}
+{% include "prototype/_switcher.html" %}
+</body>
+</html>
