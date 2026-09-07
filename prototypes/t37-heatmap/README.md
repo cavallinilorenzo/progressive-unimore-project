@@ -10,10 +10,15 @@ annidata sotto i sei gruppi: sei righe che si aprono una per volta, invece di
 23 righe piatte. Il menu e' `details`/`summary`, HTML nativo, quindi la
 revisione non costa una riga di JavaScript.
 
-**Si spedisce C**, e l'anatomia resta quella. #40 ha chiuso cosi': gli SVG di
-Overload si trattano come materiale di terzi, quindi **`_corpo.svg` non entra
-nel versionamento** e si rigenera in locale con `build_body_svg.mjs`, che e'
-codice nostro — nel repo pubblico non finisce nessun disegno di terzi.
+**Si spedisce C**, e l'anatomia resta quella.
+
+`_corpo.svg` **e' versionato**. Era stato tenuto fuori dal repo finche' la
+provenienza non fosse chiara, ma il prezzo era che il progetto non girava piu'
+da un clone pulito — la heatmap restava vuota finche' qualcuno non lanciava il
+generatore puntato su un altro repo, per giunta privato. Per un progetto
+d'esame, che deve essere consegnato e fatto girare, e' un costo certo scambiato
+contro un rischio ipotetico: scambio sbagliato. Se un giorno si scoprisse che
+il disegno non e' ridistribuibile, si cancella un file.
 
 La **variante D** (`_corpo_schema.svg`, disegnata in `build_schema_svg.py`) era
 la terza strada, quando sembrava che l'anatomia fosse impubblicabile:
@@ -87,9 +92,22 @@ vuole la mappa.
    primari di quasi nessun esercizio comune, dato che il catalogo di #27 tagga
    un solo muscolo primario.
 
-## Il nodo aperto: la provenienza dell'SVG
+## Provenienza della figura — da dichiarare
 
-I sei SVG di gruppo di Overload sono entrati nel repo nel commit iniziale e
-**la loro provenienza non e' documentata da nessuna parte**. `Progressive` e'
-un repo pubblico: prima di committare `_corpo.svg` va accertato da dove
-vengono. Se non sono ridistribuibili, la variante A resta, ed e' gia' pronta.
+**`_corpo.svg` non e' un disegno nostro.** `build_body_svg.mjs` non ridisegna
+niente: legge i sei SVG di gruppo di Overload e ne copia ogni attributo `d`
+**identico**, aggiungendo solo le classi `g-<gruppo>` e `m-<muscolo>`. Sono gli
+stessi 154 contorni, la stessa geometria.
+
+Quei sei SVG sono entrati in Overload nel commit iniziale e **la loro origine
+non e' documentata da nessuna parte** — ne' in `documentation.md`, ne' negli
+spec, ne' in un file di crediti. Lorenzo non ricorda se li abbia disegnati lui
+(#40).
+
+Sta scritto qui perche' non venga dimenticato: la figura e' versionata, ma **non
+va spacciata per lavoro nostro**, ne' nel repo ne' all'orale. Quando il
+prototipo diventera' codice vero (#20), questa nota deve seguirlo — nel README
+del progetto o in un file di crediti, non restare sepolta qui.
+
+Se un giorno si accertasse che il disegno non e' ridistribuibile: si cancella
+`_corpo.svg` e si ripiega sulle barre della variante A, gia' scritte.
