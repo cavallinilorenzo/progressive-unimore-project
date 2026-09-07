@@ -26,6 +26,25 @@ in cui vivra', non su fondo bianco.
   .pastiglia { display: inline-block; width: 11px; height: 11px;
                border-radius: 3px; vertical-align: -1px; }
   .spento { color: var(--t3); }
+
+  /* --- il menu a gruppi: solo `<details>`, nessun JavaScript --- */
+  .gruppo { border-bottom: 1px solid var(--surface-2); }
+  .gruppo:last-of-type { border-bottom: 0; }
+  .gruppo > summary { display: flex; align-items: center; gap: .5rem;
+                      padding: .5rem .25rem; cursor: pointer; list-style: none;
+                      font-size: .88rem; }
+  .gruppo > summary::-webkit-details-marker { display: none; }
+  /* Il triangolino se lo disegna il CSS, cosi' ruota con lo stato aperto. */
+  .gruppo > summary::before { content: "›"; color: var(--t3); font-weight: 700;
+                              width: .6rem; transition: transform .12s ease; }
+  .gruppo[open] > summary::before { transform: rotate(90deg); }
+  .gruppo > summary:hover { background: var(--surface-2); border-radius: 6px; }
+  .gruppo > summary .nome { font-weight: 600; }
+  .gruppo > summary .conteggio { margin-left: auto; color: var(--t2);
+                                 font-size: .8rem; font-variant-numeric: tabular-nums; }
+  .gruppo table { padding-left: 1.1rem; }
+  .badge-spenti { font-size: .68rem; color: var(--t3); border: 1px solid var(--surface-2);
+                  border-radius: 999px; padding: .05rem .4rem; }
   .nota { font-size: .78rem; color: var(--t2); line-height: 1.45; }
 </style>
 {% endblock %}
@@ -111,8 +130,8 @@ in cui vivra', non su fondo bianco.
       <div class="eyebrow mb-3">
         {% if hm_variante == "B" %}I sei gruppi{% else %}I ventitre muscoli{% endif %}
       </div>
+      {% if hm_variante == "B" %}
       <table class="tabellina w-100">
-        {% if hm_variante == "B" %}
           {% for g in hm_gruppi %}
           <tr>
             <td><span class="pastiglia" style="background:{{ g.colore }}"></span></td>
@@ -120,16 +139,35 @@ in cui vivra', non su fondo bianco.
             <td class="text-end" style="color:var(--t2)">{{ g.serie }}</td>
           </tr>
           {% endfor %}
-        {% else %}
-          {% for m in hm_muscoli %}
+      </table>
+      {% endif %}
+
+      {% comment %}
+        I 23 muscoli annidati sotto i sei gruppi. `details`/`summary` e' HTML
+        nativo: il menu si apre e si chiude senza una riga di JavaScript, che
+        e' esattamente il vincolo della mappa.
+      {% endcomment %}
+      {% if hm_variante == "C" %}
+      {% for g in hm_annidati %}
+      <details class="gruppo"{% if hm_apri %} open{% endif %}>
+        <summary>
+          <span class="pastiglia" style="background:{{ g.colore }}"></span>
+          <span class="nome">{{ g.nome }}</span>
+          {% if g.spenti %}<span class="badge-spenti">{{ g.spenti }} a zero</span>{% endif %}
+          <span class="conteggio">{{ g.serie }} serie · {{ g.pct }}%</span>
+        </summary>
+        <table class="tabellina w-100 mt-1 mb-2">
+          {% for m in g.muscoli %}
           <tr{% if m.serie == 0 %} class="spento"{% endif %}>
             <td><span class="pastiglia" style="background:{{ m.colore }}"></span></td>
             <td class="w-100">{{ m.nome }}</td>
             <td class="text-end" style="color:var(--t2)">{{ m.serie }}</td>
           </tr>
           {% endfor %}
-        {% endif %}
-      </table>
+        </table>
+      </details>
+      {% endfor %}
+      {% endif %}
     </div>
   </div>
 

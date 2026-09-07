@@ -135,7 +135,26 @@ def contesto_heatmap(variante):
             f"  .corpo .m-{m['codice']} {{ fill: {m['colore']}; }}" for m in muscoli
         )
 
+    # I 23 muscoli annidati sotto i sei gruppi: e' la lista della variante C
+    # dopo la revisione di Lorenzo. Ogni gruppo si apre e si legge per conto
+    # suo, invece di scorrere 23 righe piatte.
+    #
+    # Il colore della riga di gruppo resta quello del gruppo (scala sui gruppi),
+    # quello delle righe dentro resta quello del muscolo (scala sui muscoli):
+    # sono due domande diverse — «quale gruppo peso di piu'» e «dentro questo
+    # gruppo, cosa trascuro» — e mescolare le due scale renderebbe entrambe
+    # illeggibili.
+    annidati = [
+        {
+            **g,
+            "muscoli": [m for m in muscoli if m["gruppo"] == g["codice"]],
+            "spenti": len([m for m in muscoli if m["gruppo"] == g["codice"] and m["serie"] == 0]),
+        }
+        for g in gruppi
+    ]
+
     return {
+        "hm_annidati": annidati,
         "hm_variante": variante,
         "hm_variante_nome": VARIANTI_HM[variante],
         "hm_gruppi": gruppi,

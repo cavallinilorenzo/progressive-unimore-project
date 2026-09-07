@@ -225,6 +225,9 @@ def heatmap(request):
 
     contesto = _contesto(request)
     contesto.update(contesto_heatmap(variante))
+    # `?open=1` apre tutti i gruppi in una volta: serve solo a giudicare la
+    # densita' della lista aperta, non e' un comportamento da portarsi dietro.
+    contesto["hm_apri"] = request.GET.get("open") == "1"
     contesto.update({
         # Il guscio e' sempre quello di A (lo dice `{% extends %}` nel template);
         # qui `variante` serve solo alla barra flottante, che commuta la heatmap.
