@@ -55,8 +55,11 @@ Bilanciere, manubri, macchina, cavi, corpo libero. Serve a filtrare e raggruppar
 - **Carico** — il peso sollevato in una serie. Mai «peso» da solo.
 - **Peso corporeo** — il peso dell'utente. Serve alla **forza relativa**, cioè al massimale diviso il peso corporeo, che è il criterio con cui utenti di taglia diversa diventano confrontabili.
 - **Volume** — carico × ripetizioni, sommato sulle sole serie di lavoro.
-- **Massimale** — l'1RM *stimato* a partire da carico e ripetizioni. Non è mai un massimale realmente testato.
-- **Stallo** — l'assenza di progressione su un esercizio nel tempo. In codice si chiama `plateau`, che è il termine tecnico inglese.
+- **Massimale** — l'1RM *stimato* a partire da carico e ripetizioni. Non è mai un massimale realmente testato. Si calcola sulla **miglior serie di lavoro** di un allenamento, e le serie oltre le 12 ripetizioni non concorrono (la stima le sovrastima).
+- **Stallo** — l'assenza di progressione su un esercizio nel tempo. In codice si chiama `plateau`, che è il termine tecnico inglese. Lo stallo si predica sempre su una coppia **utente + esercizio**, mai su un utente in blocco né su un gruppo muscolare: si stalla *su una panca*, non «in generale».
+- **Finestra** — il tratto di storia su cui si giudica la progressione di un esercizio: gli allenamenti più recenti di quell'esercizio, contati sia in numero sia in giorni di calendario. Serve a entrambi i vincoli perché quattro sedute in cinque giorni non sono una storia, e un mese senza toccare l'esercizio non è uno stallo ma un'assenza. Un'interruzione abbastanza lunga **spezza** la finestra: quello che viene prima non entra.
+- **Stato di progressione** — cosa la app dice di una coppia utente + esercizio: `stallo`, `non stallo`, oppure **dati insufficienti** quando la finestra non è abbastanza lunga per pronunciarsi. «Dati insufficienti» non è un modo educato di dire «non stallo»: è l'ammissione che la domanda non ha ancora risposta, e all'utente si mostra come avanzamento verso la soglia.
+- **Regressione** — la pendenza del massimale nettamente in discesa su una finestra. È un'**osservazione descrittiva**, non uno stato di progressione: si calcola, non si predice, e convive con lo stallo invece di essere una sua terza alternativa.
 
 ## Confini del dominio
 
