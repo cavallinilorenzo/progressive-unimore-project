@@ -16,6 +16,19 @@ in cui vivra', non su fondo bianco.
   .corpo .overlay { stroke: none; }
   .corpo .deep { opacity: .45; }
 
+  /* --- la figura schematica: forme grandi, stacco netto fra loro --- */
+  .corpo.schema { max-height: 420px; margin: 0 auto; }
+  /* L'ombra: stessa geometria, bordo spesso del colore del fondo. Ingrossa ogni
+     forma quel tanto che basta perche' le vicine si fondano, e da' alla figura
+     una silhouette invece di venti pezzi staccati. */
+  .corpo.schema .ombra * { fill: #191C22; stroke: #191C22; stroke-width: 13;
+                           stroke-linejoin: round; }
+  .corpo.schema .regioni * { stroke: #12151A; stroke-width: 1.5; }
+  /* Testa, mani, piedi non sono muscoli: non entrano nella scala. */
+  .corpo.schema .neutro { fill: #22262E; }
+  /* Il trasverso non ha superficie propria: vela l'addome invece di occuparlo. */
+  .corpo.schema .profondo { opacity: .55; stroke: none; }
+
   /* --- il colore: l'unica cosa che la view genera --- */
 {{ hm_regole }}
 
@@ -112,7 +125,15 @@ in cui vivra', non su fondo bianco.
       <div class="eyebrow mb-2">
         {% if hm_variante == "B" %}Colorata sui 6 gruppi{% else %}Colorata sui 23 muscoli{% endif %}
       </div>
-      {% include "prototype/_corpo.svg" %}
+      {% comment %}
+        Stesso contratto per i due partial — ogni forma porta
+        `class="g-<gruppo> m-<muscolo>"` — quindi cambia solo quale si include.
+      {% endcomment %}
+      {% if hm_variante == "D" %}
+        {% include "prototype/_corpo_schema.svg" %}
+      {% else %}
+        {% include "prototype/_corpo.svg" %}
+      {% endif %}
       <div class="mt-3">
         <div class="legenda mb-1">
           {% for l in hm_legenda %}<i style="background:{{ l.colore }}"></i>{% endfor %}
@@ -147,7 +168,7 @@ in cui vivra', non su fondo bianco.
         nativo: il menu si apre e si chiude senza una riga di JavaScript, che
         e' esattamente il vincolo della mappa.
       {% endcomment %}
-      {% if hm_variante == "C" %}
+      {% if hm_variante != "B" %}
       {% for g in hm_annidati %}
       <details class="gruppo"{% if hm_apri %} open{% endif %}>
         <summary>
@@ -174,7 +195,29 @@ in cui vivra', non su fondo bianco.
   <div class="col-lg-3">
     <div class="card-ink p-3 h-100">
       <div class="eyebrow mb-2">Cosa costa e cosa da'</div>
-      {% if hm_variante == "B" %}
+      {% if hm_variante == "D" %}
+      <p class="nota mb-2">
+        <b>E' nostra.</b> Disegnata in
+        <code>build_schema_svg.py</code>, quindi la domanda della licenza non
+        esiste piu': niente provenienza da ricostruire, niente attribuzione da
+        portarsi dietro, niente asset di terzi in un repo pubblico.
+      </p>
+      <p class="nota mb-2">
+        <b>7,5 KB invece di 51.</b> Ed e' lo stesso contratto: ogni forma porta
+        <code>class="g-… m-…"</code>, quindi il template non cambia di una riga
+        — cambia solo quale partial include.
+      </p>
+      <p class="nota mb-2">
+        <b>Copre gli stessi 23 muscoli</b>, incluse le tre fasce del petto e i
+        tre deltoidi: sono i nostri codici, non quelli di qualcun altro da
+        rimappare. Nessuna libreria open trovata li separa cosi'.
+      </p>
+      <p class="nota mb-0">
+        <b>Il prezzo:</b> e' un diagramma, non un'illustrazione. Perde il
+        fascino dell'anatomia vera — che pero' a 360px in una card era gia'
+        mezza sprecata.
+      </p>
+      {% elif hm_variante == "B" %}
       <p class="nota mb-2">
         <b>Sei regioni, tutte accendibili.</b> Ogni gruppo ha decine di path e
         riceve volume da qualunque esercizio: nessuna zona resta spenta per un
@@ -214,6 +257,19 @@ in cui vivra', non su fondo bianco.
 
 <div class="card-ink p-3 mt-3">
   <div class="eyebrow mb-2">Da dove viene la figura</div>
+  {% if hm_variante == "D" %}
+  <p class="nota mb-0">
+    <code>prototypes/t37-heatmap/build_schema_svg.py</code> disegna
+    <code>_corpo_schema.svg</code> — 63 forme primitive, fronte e retro, ognuna
+    etichettata <code>class="g-&lt;gruppo&gt; m-&lt;muscolo&gt;"</code> sui
+    <b>nostri</b> 23 codici. Nessun asset di terzi, quindi nessuna licenza da
+    ricostruire: e' il motivo per cui esiste (#40). La silhouette non e'
+    geometria in piu': ogni forma e' emessa due volte, e la copia sotto ha un
+    bordo spesso del colore del fondo che la ingrossa finche' le vicine si
+    fondono. Stesso contratto di <code>_corpo.svg</code>, quindi il template
+    cambia solo quale partial include.
+  </p>
+  {% else %}
   <p class="nota mb-0">
     <code>prototypes/t37-heatmap/build_body_svg.mjs</code> genera
     <code>_corpo.svg</code> — 154 path, fronte e retro, ognuno etichettato
@@ -225,6 +281,7 @@ in cui vivra', non su fondo bianco.
     solo il blocco <code>&lt;style&gt;</code> qui sopra. Nessun JavaScript, come
     vuole la mappa.
   </p>
+  {% endif %}
 </div>
 
 {% endblock %}

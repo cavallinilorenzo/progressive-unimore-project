@@ -69,6 +69,9 @@ VARIANTI_HM = {
     "A": "Barre per gruppo — il ripiego",
     "B": "Figura anatomica — 6 gruppi",
     "C": "Figura anatomica — 23 muscoli",
+    # D nasce da #40: l'anatomia di C e' di terzi con licenza ignota, quindi non
+    # si pubblica. Questa figura e' disegnata da noi e ha lo stesso contratto.
+    "D": "Figura schematica — disegnata da noi",
 }
 
 # Scala: dal grigio della superficie al volt del brand. Il grigio non e' "nessun
