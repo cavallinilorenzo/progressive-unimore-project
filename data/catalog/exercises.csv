@@ -1,0 +1,101 @@
+name,muscle_code,equipment_code
+Panca inclinata con bilanciere,chestUpper,barbell
+Spinte su panca inclinata con manubri,chestUpper,dumbbell
+Spinte su panca inclinata al multipower,chestUpper,smith_machine
+Croci su panca inclinata con manubri,chestUpper,dumbbell
+Croci ai cavi dal basso,chestUpper,cable
+Chest press inclinata alla macchina,chestUpper,machine
+Panca piana con bilanciere,chestMid,barbell
+Spinte su panca piana con manubri,chestMid,dumbbell
+Panca piana al multipower,chestMid,smith_machine
+Chest press alla macchina,chestMid,machine
+Croci alla pectoral machine,chestMid,machine
+Croci ai cavi,chestMid,cable
+Piegamenti sulle braccia,chestMid,bodyweight
+Panca declinata con bilanciere,chestLower,barbell
+Spinte su panca declinata con manubri,chestLower,dumbbell
+Dip alle parallele,chestLower,bodyweight
+Trazioni alla sbarra,lats,bodyweight
+Lat machine avanti,lats,machine
+Lat machine presa stretta,lats,machine
+Pulldown a braccia tese ai cavi,lats,cable
+Pullover con manubrio,lats,dumbbell
+Rematore con manubrio a un braccio,lats,dumbbell
+Scrollate con bilanciere,traps,barbell
+Scrollate con manubri,traps,dumbbell
+Rematore ai cavi presa larga,upperBack,cable
+Face pull ai cavi,upperBack,cable
+Rematore alla macchina presa larga,upperBack,machine
+Rematore con bilanciere presa larga,upperBack,barbell
+Rematore con bilanciere,middleBack,barbell
+Pulley basso ai cavi,middleBack,cable
+Rematore alla T-bar,middleBack,barbell
+Rematore alla macchina,middleBack,machine
+Stacco da terra con bilanciere,lowerBack,barbell
+Iperestensioni alla panca romana,lowerBack,bodyweight
+Good morning con bilanciere,lowerBack,barbell
+Estensioni lombari alla macchina,lowerBack,machine
+Military press con bilanciere,deltoidFront,barbell
+Lento avanti con manubri,deltoidFront,dumbbell
+Arnold press con manubri,deltoidFront,dumbbell
+Alzate frontali con manubri,deltoidFront,dumbbell
+Shoulder press alla macchina,deltoidFront,machine
+Alzate laterali con manubri,deltoidLateral,dumbbell
+Alzate laterali ai cavi,deltoidLateral,cable
+Alzate laterali alla macchina,deltoidLateral,machine
+Tirate al mento con bilanciere,deltoidLateral,barbell
+Alzate posteriori con manubri,deltoidRear,dumbbell
+Alzate posteriori ai cavi,deltoidRear,cable
+Reverse pec deck alla macchina,deltoidRear,machine
+Curl con bilanciere,biceps,barbell
+Curl con bilanciere EZ,biceps,ez_bar
+Curl con manubri,biceps,dumbbell
+Curl a martello con manubri,biceps,dumbbell
+Curl a martello alla corda ai cavi,biceps,cable
+Curl alla panca Scott,biceps,ez_bar
+Curl ai cavi,biceps,cable
+Panca piana presa stretta,triceps,barbell
+French press con bilanciere EZ,triceps,ez_bar
+Push down ai cavi con barra,triceps,cable
+Push down ai cavi alla corda,triceps,cable
+Estensioni sopra la testa ai cavi,triceps,cable
+Dip tra le panche,triceps,bodyweight
+Curl ai polsi con bilanciere,forearms,barbell
+Estensioni dei polsi con manubri,forearms,dumbbell
+Curl inverso con bilanciere EZ,forearms,ez_bar
+Camminata del contadino con manubri,forearms,dumbbell
+Squat con bilanciere,quads,barbell
+Squat frontale con bilanciere,quads,barbell
+Leg press,quads,machine
+Leg extension,quads,machine
+Affondi con manubri,quads,dumbbell
+Affondi bulgari con manubri,quads,dumbbell
+Hack squat alla macchina,quads,machine
+Goblet squat con kettlebell,quads,kettlebell
+Stacco rumeno con bilanciere,hamstrings,barbell
+Stacco a gambe tese con manubri,hamstrings,dumbbell
+Leg curl sdraiato,hamstrings,machine
+Leg curl seduto,hamstrings,machine
+Hip thrust con bilanciere,glutes,barbell
+Stacco sumo con bilanciere,glutes,barbell
+Slanci per glutei ai cavi,glutes,cable
+Ponte per glutei a corpo libero,glutes,bodyweight
+Calf raise in piedi alla macchina,calves,machine
+Calf raise seduto alla macchina,calves,machine
+Calf raise al leg press,calves,machine
+Adduttori alla macchina,adductors,machine
+Adduzioni ai cavi,adductors,cable
+Abduttori alla macchina,abductors,machine
+Abduzioni ai cavi,abductors,cable
+Camminata laterale con elastico,abductors,band
+Crunch a terra,rectusAbdominis,bodyweight
+Crunch ai cavi,rectusAbdominis,cable
+Crunch alla macchina,rectusAbdominis,machine
+Sollevamento gambe alla sbarra,rectusAbdominis,bodyweight
+Torsioni russe con kettlebell,obliques,kettlebell
+Crunch laterale a terra,obliques,bodyweight
+Torsioni ai cavi,obliques,cable
+Plank laterale,obliques,bodyweight
+Plank,transverse,bodyweight
+Ruota per addominali,transverse,bodyweight
+Vacuum addominale,transverse,bodyweight
