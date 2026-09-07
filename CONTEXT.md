@@ -50,6 +50,12 @@ La tassonomia è tenuta **identica a `reporting.muscle_taxonomy` di Overload** �
 
 Bilanciere, manubri, macchina, cavi, corpo libero. Serve a filtrare e raggruppare il catalogo, e porta il peso a vuoto dell'attrezzo (`default_bar_weight_kg`): il peso del bilanciere è una proprietà **dell'attrezzo**, non del singolo esercizio.
 
+### ExerciseAlias — «Abbinamento esercizio»
+
+Il ricordo di una traduzione: «in un file importato da *questo* utente, il nome libero *X* significa l'esercizio *Y* del catalogo». Nasce quando l'utente, durante l'anteprima di un import, sceglie a mano a quale esercizio del catalogo corrisponde un nome che l'app non ha riconosciuto — `RDL` → «Stacco rumeno con bilanciere» — e serve solo perché al secondo import quella scelta non venga richiesta di nuovo.
+
+Non è un esercizio e non allarga il catalogo: è **infrastruttura dell'import**, appartiene a un utente e non compare in nessuna analisi. Creare un esercizio nuovo resta vietato (vedi [ADR-0001](docs/adr/0001-catalogo-esercizi-globale-e-scritto-a-mano.md)); l'abbinamento è il modo in cui un nome estraneo entra nel dominio senza sporcarlo. Vedi [ADR-0004](docs/adr/0004-abbinamento-nomi-import-interattivo.md).
+
 ## Termini da non confondere
 
 - **Carico** — il peso sollevato in una serie. Mai «peso» da solo.
@@ -57,6 +63,8 @@ Bilanciere, manubri, macchina, cavi, corpo libero. Serve a filtrare e raggruppar
 - **Volume** — carico × ripetizioni, sommato sulle sole serie di lavoro.
 - **Massimale** — l'1RM *stimato* a partire da carico e ripetizioni. Non è mai un massimale realmente testato.
 - **Stallo** — l'assenza di progressione su un esercizio nel tempo. In codice si chiama `plateau`, che è il termine tecnico inglese.
+- **Import** — il caricamento del **proprio storico di allenamenti** da un file CSV, attraverso un form web, con anteprima e conferma. È una funzione dell'utente. Da non confondere con il **caricamento del catalogo**, che è il management command `load_catalog` riservato all'amministratore: sono due canali diversi, con due pubblici diversi.
+- **Nome libero** — il nome di un esercizio come appare in un file importato, scritto da un altro sistema e non vincolato al catalogo. Diventa utilizzabile solo attraverso un **abbinamento**.
 
 ## Confini del dominio
 
