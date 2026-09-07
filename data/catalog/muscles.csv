@@ -1,0 +1,24 @@
+code,group_code,label_it,sort_order
+chestUpper,chest,Petto alto,1
+chestMid,chest,Petto medio,2
+chestLower,chest,Petto basso,3
+lats,back,Gran dorsale,4
+traps,back,Trapezio,5
+upperBack,back,Schiena alta,6
+middleBack,back,Schiena media,7
+lowerBack,back,Lombari,8
+deltoidFront,shoulders,Deltoide anteriore,9
+deltoidLateral,shoulders,Deltoide laterale,10
+deltoidRear,shoulders,Deltoide posteriore,11
+biceps,arms,Bicipiti,12
+triceps,arms,Tricipiti,13
+forearms,arms,Avambracci,14
+quads,legs,Quadricipiti,15
+hamstrings,legs,Femorali,16
+glutes,legs,Glutei,17
+calves,legs,Polpacci,18
+adductors,legs,Adduttori,19
+abductors,legs,Abduttori,20
+rectusAbdominis,core,Retto addominale,21
+obliques,core,Obliqui,22
+transverse,core,Trasverso,23
