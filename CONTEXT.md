@@ -52,10 +52,13 @@ Bilanciere, manubri, macchina, cavi, corpo libero. Serve a filtrare e raggruppar
 
 ## Termini da non confondere
 
-- **Carico** — il peso sollevato in una serie. Mai «peso» da solo.
-- **Peso corporeo** — il peso dell'utente. Serve alla **forza relativa**, cioè al massimale diviso il peso corporeo, che è il criterio con cui utenti di taglia diversa diventano confrontabili.
-- **Volume** — carico × ripetizioni, sommato sulle sole serie di lavoro.
-- **Massimale** — l'1RM *stimato* a partire da carico e ripetizioni. Non è mai un massimale realmente testato.
+- **Carico** — il peso sollevato in una serie. Mai «peso» da solo. È sempre **comprensivo del bilanciere**: il peso a vuoto dell'attrezzo non si somma mai a valle, serve solo a precompilare il form.
+- **Carico effettivo** — il carico che entra nelle analisi: il carico, più il **peso corporeo** quando l'attrezzo è il corpo libero. Senza questa aggiunta ogni trazione e ogni piegamento peserebbero zero, e nella distribuzione del volume la schiena sparirebbe. Gestisce anche le trazioni zavorrate, che sono peso corporeo più carico aggiunto.
+- **Peso corporeo** — il peso dell'utente (`body_mass_kg`). Serve alla **forza relativa**, cioè al massimale diviso il peso corporeo, che è il criterio con cui utenti di taglia diversa diventano confrontabili, e al carico effettivo sul corpo libero.
+- **Volume** — **carico effettivo** × ripetizioni, sommato sulle sole serie di lavoro eseguite.
+- **Massimale** — l'1RM *stimato* a partire da carico effettivo e ripetizioni. Non è mai un massimale realmente testato. Le serie **oltre le 12 ripetizioni non concorrono al massimale** — la stima gonfia — ma restano nel volume.
+- **PR** — il massimale più alto mai raggiunto da un utente su un esercizio. Non è un concetto distinto dal massimale: è il suo massimo storico.
+- **Percentile di forza** — la posizione dell'utente nella popolazione su un esercizio, calcolata sulla **forza relativa**. Non si mostra sotto i 20 utenti su quell'esercizio: sarebbe formalmente corretto e informativamente falso.
 - **Stallo** — l'assenza di progressione su un esercizio nel tempo. In codice si chiama `plateau`, che è il termine tecnico inglese.
 
 ## Confini del dominio
