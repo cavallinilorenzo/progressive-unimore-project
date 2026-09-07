@@ -3,6 +3,15 @@
 **Codice usa e getta.** Tre risposte alla domanda del ticket, sulla stessa
 rotta, nel guscio della variante A vinta in #19.
 
+## L'esito
+
+**Vince C, la figura anatomica a 23 muscoli**, con la lista dei muscoli
+annidata sotto i sei gruppi: sei righe che si aprono una per volta, invece di
+23 righe piatte. Il menu e' `details`/`summary`, HTML nativo, quindi la
+revisione non costa una riga di JavaScript.
+
+Resta un blocco fuori dal design: la **provenienza dell'anatomia** (in fondo).
+
 ## Avvio
 
 ```
