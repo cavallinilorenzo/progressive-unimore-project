@@ -10,12 +10,15 @@ annidata sotto i sei gruppi: sei righe che si aprono una per volta, invece di
 23 righe piatte. Il menu e' `details`/`summary`, HTML nativo, quindi la
 revisione non costa una riga di JavaScript.
 
-Poi #40 ha tolto di mezzo l'anatomia: Lorenzo non ricorda se l'abbia disegnata
-lui, quindi si tratta come materiale di terzi e `_corpo.svg` non si pubblica.
-Nasce cosi' la **variante D**, `_corpo_schema.svg`, disegnata in
-`build_schema_svg.py`: stesso contratto, stessi 23 codici, 7,5 KB invece di 51,
-e nessuna licenza da ricostruire. Quale delle due figure spedire e' la
-decisione aperta in #40.
+**Si spedisce C**, e l'anatomia resta quella. #40 ha chiuso cosi': gli SVG di
+Overload si trattano come materiale di terzi, quindi **`_corpo.svg` non entra
+nel versionamento** e si rigenera in locale con `build_body_svg.mjs`, che e'
+codice nostro — nel repo pubblico non finisce nessun disegno di terzi.
+
+La **variante D** (`_corpo_schema.svg`, disegnata in `build_schema_svg.py`) era
+la terza strada, quando sembrava che l'anatomia fosse impubblicabile:
+**scartata da Lorenzo per ragioni estetiche**. Il codice resta qui come registro
+del tentativo, non come opzione viva.
 
 ## Avvio
 
@@ -30,7 +33,7 @@ Poi <http://127.0.0.1:8000/heatmap/>. Frecce &larr; &rarr; o `?variant=A|B|C`.
 | **A** | Barre per gruppo | Il ripiego a costo zero, gia' in `dashboard_a.html` |
 | **B** | Figura anatomica, 6 gruppi | Poche regioni, tutte accendibili |
 | **C** | Figura anatomica, 23 muscoli | Precisa; 4 regioni spente per come e' fatto il catalogo |
-| **D** | Figura schematica, 23 muscoli | Disegnata da noi (#40); 7,5 KB, nessun asset di terzi |
+| **D** | Figura schematica, 23 muscoli | Disegnata da noi (#40) — **scartata**, esteticamente non regge |
 
 ## La cosa che ha cambiato la domanda
 
