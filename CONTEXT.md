@@ -50,6 +50,14 @@ La tassonomia è tenuta **identica a `reporting.muscle_taxonomy` di Overload** �
 
 Bilanciere, manubri, macchina, cavi, corpo libero. Serve a filtrare e raggruppare il catalogo, e porta il peso a vuoto dell'attrezzo (`default_bar_weight_kg`): il peso del bilanciere è una proprietà **dell'attrezzo**, non del singolo esercizio.
 
+### Utente sintetico — «Utente dimostrativo»
+
+Uno dei ~100 utenti generati, riconoscibile da `is_synthetic`. Esiste perché percentili e classifiche hanno bisogno di una popolazione che un progetto d'esame non ha. Non è un utente di prova nascosto: entra nelle statistiche come tutti gli altri **ed è dichiarato nell'interfaccia**. Vedi [ADR-0007](docs/adr/0007-la-popolazione-sintetica-si-dichiara.md).
+
+### Archetipo — «Archetipo»
+
+Il profilo di progressione di un utente sintetico: principiante, intermedio in plateau, incostante, avanzato, abbandono. Vive **solo nel generatore** — non è un campo del modello e l'applicazione non lo conosce. Da non confondere con lo **stato di progressione**, che è una proprietà osservata di una coppia (utente, esercizio), non una qualità della persona: nessun archetipo «stalla», è una fase che quasi tutti attraversano.
+
 ## Termini da non confondere
 
 - **Carico** — il peso sollevato in una serie. Mai «peso» da solo.
