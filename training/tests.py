@@ -21,6 +21,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from django.conf import settings
+from django.contrib import admin
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
@@ -3990,3 +3991,312 @@ class RankingTests(TestCase):
             self.vota(self.scheda_pubblica(f"Scheda {numero}"), [5, 4, 3])
 
         self.assertEqual(prima, rendi())
+
+
+# --- La proprietà dell'oggetto e l'admin (#77) ------------------------------
+#
+# `docs/spec/07-test.md` §2 chiede la proprietà dell'oggetto «su tutte e sei le
+# view», e i CRUD l'avevano già coperta sul GET (#69, #70) ma sul POST solo su
+# quattro. La differenza non è cosmetica: il GET a 403 dimostra che la pagina
+# non si apre, il POST a 403 dimostra che la *scrittura* non passa, ed è quella
+# la richiesta che fa il danno. `routine-exercises` e `workout-update` erano gli
+# scoperti. Raccogliere tutte e sei in una classe sola è deliberato: è un
+# requisito della traccia, e all'orale un requisito si mostra da un posto, non
+# da sei metodi sparsi in due classi.
+
+
+class ObjectOwnershipTests(TestCase):
+    """Le sei view di proprietà, GET e POST, viste da un secondo utente.
+
+    Atteso **403** e non un 404: nascondere l'esistenza della riga sarebbe
+    un'altra decisione, e #69 ha scelto di non prenderla — l'app dice «non è
+    tua», non «non esiste». `UserPassesTestMixin.test_func()` risponde in
+    `dispatch()`, quindi il 403 arriva **prima** che il form venga validato:
+    è il motivo per cui i payload qui sotto possono essere approssimativi e il
+    test resta significativo.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user(username="lorenzo", password=PASSWORD)
+        cls.altro = User.objects.create_user(username="martina", password=PASSWORD)
+
+        group = MuscleGroup.objects.create(code="chest", label_it="Petto", sort_order=1)
+        muscle = Muscle.objects.create(
+            code="chestMid", group=group, label_it="Petto medio", sort_order=1
+        )
+        equipment = Equipment.objects.create(
+            code="barbell", label_it="Bilanciere", sort_order=1
+        )
+        cls.panca = Exercise.objects.create(
+            name="Panca piana", slug="panca-piana",
+            primary_muscle=muscle, equipment=equipment,
+        )
+
+    def setUp(self):
+        self.routine = Routine.objects.create(user=self.user, name="Spinta A")
+        RoutineExercise.objects.create(
+            routine=self.routine, exercise=self.panca,
+            position=1, target_sets=3, target_reps=8,
+        )
+        self.workout = Workout.objects.create(
+            user=self.user, title="Spinta A", started_at=timezone.now()
+        )
+        WorkoutSet.objects.create(
+            workout=self.workout, exercise=self.panca,
+            set_number=1, reps=8, weight=Decimal("60.00"),
+        )
+
+    def rotte(self):
+        """Le sei view della spec, ognuna col POST che tenterebbe la scrittura."""
+        inizio = timezone.localtime(self.workout.started_at).strftime("%Y-%m-%dT%H:%M")
+        return (
+            ("routine-update", self.routine.pk,
+             {"name": "Rubata", "notes": "", "is_public": "on"}),
+            ("routine-delete", self.routine.pk, {}),
+            ("routine-exercises", self.routine.pk, {
+                "exercises-TOTAL_FORMS": "1",
+                "exercises-INITIAL_FORMS": "0",
+                "exercises-MIN_NUM_FORMS": "0",
+                "exercises-MAX_NUM_FORMS": "1000",
+                "exercises-0-exercise": str(self.panca.pk),
+                "exercises-0-position": "1",
+                "exercises-0-target_sets": "5",
+                "exercises-0-target_reps": "5",
+                "exercises-0-notes": "",
+            }),
+            ("workout-update", self.workout.pk,
+             {"title": "Rubato", "started_at": inizio, "ended_at": "", "notes": ""}),
+            ("workout-delete", self.workout.pk, {}),
+            ("workoutset-manage", self.workout.pk, {
+                "sets-TOTAL_FORMS": "1",
+                "sets-INITIAL_FORMS": "0",
+                "sets-MIN_NUM_FORMS": "0",
+                "sets-MAX_NUM_FORMS": "1000",
+                "sets-0-exercise": str(self.panca.pk),
+                "sets-0-set_number": "9",
+                "sets-0-reps": "1",
+                "sets-0-weight": "200",
+                "sets-0-set_type": "working",
+                "sets-0-is_completed": "on",
+            }),
+        )
+
+    def test_a_second_user_gets_403_on_every_one_of_the_six_views(self):
+        """Il GET: la pagina non si apre. 403, non 404 e soprattutto non 200."""
+        self.client.force_login(self.altro)
+
+        for nome, pk, _ in self.rotte():
+            with self.subTest(rotta=nome):
+                response = self.client.get(reverse(f"training:{nome}", args=[pk]))
+                self.assertEqual(response.status_code, 403)
+
+    def test_the_post_is_refused_too_and_nothing_moves(self):
+        """Il POST: la scrittura non passa, e lo si verifica **sui dati**.
+
+        Un 403 senza il controllo su cosa c'è nel database proverebbe solo che
+        la risposta ha il numero giusto. Qui si guarda anche la riga.
+        """
+        self.client.force_login(self.altro)
+
+        for nome, pk, payload in self.rotte():
+            with self.subTest(rotta=nome):
+                response = self.client.post(
+                    reverse(f"training:{nome}", args=[pk]), payload
+                )
+                self.assertEqual(response.status_code, 403)
+
+        self.routine.refresh_from_db()
+        self.workout.refresh_from_db()
+        self.assertEqual(self.routine.name, "Spinta A")
+        self.assertFalse(self.routine.is_public)
+        self.assertEqual(self.routine.exercises.count(), 1)
+        self.assertEqual(self.routine.exercises.get().target_sets, 3)
+        self.assertEqual(self.workout.title, "Spinta A")
+        self.assertEqual(self.workout.sets.count(), 1)
+        self.assertEqual(self.workout.sets.get().set_number, 1)
+
+    def test_the_owner_still_gets_through(self):
+        """La guardia deve fermare l'altro, non tutti: la controprova.
+
+        Senza questo, un `test_func()` che restituisce sempre `False` farebbe
+        passare i due test qui sopra.
+        """
+        self.client.force_login(self.user)
+
+        for nome, pk, _ in self.rotte():
+            with self.subTest(rotta=nome):
+                response = self.client.get(reverse(f"training:{nome}", args=[pk]))
+                self.assertEqual(response.status_code, 200)
+
+    def test_an_anonymous_visitor_is_asked_to_log_in_not_refused(self):
+        """Per un anonimo la risposta giusta è «entra», e la dà `LoginRequiredMixin`."""
+        for nome, pk, _ in self.rotte():
+            with self.subTest(rotta=nome):
+                response = self.client.get(reverse(f"training:{nome}", args=[pk]))
+                self.assertEqual(response.status_code, 302)
+                self.assertIn(reverse("login"), response.url)
+
+
+class AdminTests(TestCase):
+    """L'admin apre, e le tre registrazioni sono ancora coerenti coi modelli.
+
+    Un `ModelAdmin` è configurazione che nomina campi per stringa: rinominare
+    un campo o toglierlo da `Meta` lascia `admin.py` a puntare nel vuoto, e il
+    sintomo è una pagina che esplode **solo quando qualcuno la apre**. È la
+    stessa famiglia dei guasti silenziosi di #73 e #74, e la guardia è la
+    stessa: aprire davvero le pagine.
+    """
+
+    #: I tre modelli che `training/admin.py` registra; il perché di ognuno sta
+    #: nel docstring di quel file.
+    REGISTRATI = (Exercise, Routine, User)
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.admin = User.objects.create_superuser(
+            username="capo", password=PASSWORD, email="capo@example.com"
+        )
+        cls.utente = User.objects.create_user(
+            username="lorenzo", password=PASSWORD, body_mass_kg=Decimal("78.50")
+        )
+
+        group = MuscleGroup.objects.create(code="chest", label_it="Petto", sort_order=1)
+        muscle = Muscle.objects.create(
+            code="chestMid", group=group, label_it="Petto medio", sort_order=1
+        )
+        equipment = Equipment.objects.create(
+            code="barbell", label_it="Bilanciere", sort_order=1
+        )
+        cls.panca = Exercise.objects.create(
+            name="Panca piana", slug="panca-piana",
+            primary_muscle=muscle, equipment=equipment,
+        )
+        cls.routine = Routine.objects.create(user=cls.utente, name="Spinta A")
+        RoutineExercise.objects.create(
+            routine=cls.routine, exercise=cls.panca,
+            position=1, target_sets=3, target_reps=8,
+        )
+
+    def setUp(self):
+        self.client.force_login(self.admin)
+
+    def test_the_three_models_are_registered_with_a_custom_modeladmin(self):
+        """«`admin.register()` con `ModelAdmin` custom su 2–3 modelli», alla lettera."""
+        for modello in self.REGISTRATI:
+            with self.subTest(modello=modello.__name__):
+                self.assertIn(modello, admin.site._registry)
+                self.assertIsNot(
+                    type(admin.site._registry[modello]), admin.ModelAdmin,
+                    "registrato col ModelAdmin di serie: la spec ne chiede uno custom",
+                )
+
+    def test_the_index_and_every_changelist_open(self):
+        indice = self.client.get(reverse("admin:index"))
+        self.assertEqual(indice.status_code, 200)
+
+        for modello in self.REGISTRATI:
+            with self.subTest(modello=modello.__name__):
+                rotta = f"admin:{modello._meta.app_label}_{modello._meta.model_name}"
+                self.assertEqual(
+                    self.client.get(reverse(f"{rotta}_changelist")).status_code, 200
+                )
+                self.assertEqual(
+                    self.client.get(reverse(f"{rotta}_add")).status_code, 200
+                )
+
+    def test_the_change_pages_open_on_real_rows(self):
+        """La pagina di modifica è quella che valida `fieldsets` e gli inline."""
+        for modello, oggetto in (
+            (Exercise, self.panca),
+            (Routine, self.routine),
+            (User, self.utente),
+        ):
+            with self.subTest(modello=modello.__name__):
+                rotta = (
+                    f"admin:{modello._meta.app_label}_"
+                    f"{modello._meta.model_name}_change"
+                )
+                response = self.client.get(reverse(rotta, args=[oggetto.pk]))
+                self.assertEqual(response.status_code, 200)
+
+    def test_the_custom_user_is_the_one_registered(self):
+        """`django.contrib.auth.admin` registra `auth.User`, che qui non esiste.
+
+        Senza `training/admin.py` l'admin non mostrerebbe **nessun** utente: è
+        la conseguenza di ADR-0003 che si paga in un posto solo, e si vede solo
+        aprendo la pagina.
+        """
+        self.assertIs(admin.site._registry[User].model, User)
+        self.assertEqual(User._meta.app_label, "training")
+
+        lista = self.client.get(reverse("admin:training_user_changelist"))
+        self.assertContains(lista, "lorenzo")
+
+    def test_the_two_custom_user_fields_are_editable_from_the_admin(self):
+        """`body_mass_kg` e `is_synthetic` sono nei `fieldsets`, non solo nel modello."""
+        campi = set()
+        for _, opzioni in admin.site._registry[User].fieldsets:
+            campi.update(opzioni["fields"])
+        self.assertIn("body_mass_kg", campi)
+        self.assertIn("is_synthetic", campi)
+
+    def test_the_routine_page_carries_its_exercises_inline(self):
+        response = self.client.get(
+            reverse("admin:training_routine_change", args=[self.routine.pk])
+        )
+        self.assertContains(response, "exercises-TOTAL_FORMS")
+        self.assertContains(response, "Esercizi della scheda")
+
+    def test_the_exercise_changelist_does_not_requery_per_row(self):
+        """`list_select_related`: due FK per riga sono 200 query su 100 esercizi.
+
+        Stessa guardia di #86 sul formset delle schede, e stessa forma: si
+        confronta il numero di query a **due** righe e a **dodici**, perché il
+        guasto è la crescita, non il valore assoluto.
+        """
+        def query_della_lista():
+            with CaptureQueriesContext(connection) as contesto:
+                self.assertEqual(
+                    self.client.get(
+                        reverse("admin:training_exercise_changelist")
+                    ).status_code,
+                    200,
+                )
+            return len(contesto.captured_queries)
+
+        con_una = query_della_lista()
+
+        for numero in range(1, 12):
+            Exercise.objects.create(
+                name=f"Esercizio {numero}",
+                slug=f"esercizio-{numero}",
+                primary_muscle=self.panca.primary_muscle,
+                equipment=self.panca.equipment,
+            )
+        self.assertEqual(Exercise.objects.count(), 12)
+
+        self.assertEqual(query_della_lista(), con_una)
+
+    def test_the_admin_is_closed_to_everyone_who_is_not_staff(self):
+        """Il 302 al login dell'admin, non il 200: la superficie è dei soli staff."""
+        self.client.force_login(self.utente)
+
+        response = self.client.get(reverse("admin:index"))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("admin:login"), response.url)
+
+        lista = self.client.get(reverse("admin:training_exercise_changelist"))
+        self.assertEqual(lista.status_code, 302)
+
+    def test_the_admin_does_not_open_the_history_of_what_someone_did(self):
+        """`Workout`, `WorkoutSet` e `Vote` restano fuori, ed è una decisione.
+
+        `03-import-ed-export.md` fissa la linea: «nessun import per conto di
+        altri, nemmeno da admin». Registrarli sarebbe storico riscritto in
+        silenzio; questo test è qui perché la prossima mano non lo faccia per
+        comodità.
+        """
+        for modello in (Workout, WorkoutSet, Vote):
+            with self.subTest(modello=modello.__name__):
+                self.assertNotIn(modello, admin.site._registry)
