@@ -1,0 +1,189 @@
+{% extends "base.html" %}
+{% comment %}
+`/import/anteprima/` — e l'anteprima È UN FORM.
+
+L'ORDINE DELLA PAGINA È LA DECISIONE. Le cinque cose che l'anteprima mostra non
+pesano uguale: sulle prime due si **agisce** — il riepilogo dice se il file è
+quello giusto, la tabella di abbinamento chiede una scelta — e le altre tre
+sono resoconto. Quindi le prime due stanno in cima e in grande, le altre in
+blocchi collassati sotto. Una pagina che le mettesse in fila tutte e cinque
+sarebbe un muro in cui la sola cosa da fare non si trova.
+
+LA TABELLA DI ABBINAMENTO È IL CUORE (ADR-0010). Sui 24 nomi reali dello
+storico la normalizzazione automatica non risolve quasi niente: `RDL`,
+`Leg extention`, `d'Annunzio crunch` — quest'ultimo ambiguo anche per un
+umano. Quindi la macchina **suggerisce** e l'utente sceglie: la `<select>`
+arriva preselezionata sulla voce più probabile, e può essere sbagliata senza
+danno perché c'è qualcuno che la guarda. La scelta viene ricordata, e al
+secondo import quel nome non compare più in questa tabella.
+
+IL REPORT DEGLI ERRORI NON SI TRONCA, ed è una scelta contro l'estetica: se un
+giorno le righe rotte fossero trecento, quel numero **è** l'informazione che
+serve. Ogni riga porta il numero reale del CSV — intestazione compresa — perché
+il numero serve ad aprire il file e andarci.
+{% endcomment %}
+
+{% block title %}Anteprima dell'import — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="mb-4">
+  <div class="eyebrow">
+    <a href="{% url 'training:import-upload' %}" style="color:var(--t3)">Importa</a>
+  </div>
+  <h1 class="h4 fw-bold mb-0">Anteprima</h1>
+</div>
+
+{% comment %}1 — IL RIEPILOGO. Cosa entra, e in che periodo.{% endcomment %}
+<div class="card-ink p-3 mb-3">
+  <div class="rail">
+    <div class="eyebrow mb-2">Cosa entra</div>
+    <div class="d-flex flex-wrap gap-4">
+      <div>
+        <div class="h4 fw-bold mb-0">{{ valide_sessioni }}</div>
+        <div class="eyebrow">allenamenti</div>
+      </div>
+      <div>
+        <div class="h4 fw-bold mb-0">{{ valide_serie }}</div>
+        <div class="eyebrow">serie</div>
+      </div>
+      <div>
+        <div class="h4 fw-bold mb-0">
+          {% if dal %}{{ dal|date:"d/m/Y" }} &rarr; {{ al|date:"d/m/Y" }}{% else %}&mdash;{% endif %}
+        </div>
+        <div class="eyebrow">periodo</div>
+      </div>
+    </div>
+    <div class="mt-3" style="color:var(--t2);font-size:.85rem">
+      Lette {{ lettura.lette_sessioni }} righe di allenamento e
+      {{ lettura.lette_serie }} righe di serie;
+      scartate {{ lettura.errori|length }}.
+    </div>
+  </div>
+</div>
+
+<form method="post" novalidate>
+  {% csrf_token %}
+  {{ form.management_form }}
+
+  {% comment %}2 — L'ABBINAMENTO DEI NOMI: la sola cosa che la pagina chiede.{% endcomment %}
+  {% if form.forms %}
+  <div class="card-ink p-3 mb-3">
+    <div class="eyebrow mb-1">Abbina i nomi</div>
+    <div class="mb-3" style="color:var(--t2);font-size:.88rem">
+      Questi nomi arrivano dal tuo file e non corrispondono a nessun esercizio
+      del catalogo. Scegli tu a quale corrispondono: il suggerimento è già
+      selezionato dove ce n'era uno plausibile, ma <strong>controllalo</strong>.
+      La scelta viene ricordata, e al prossimo import non te la chiediamo più.
+    </div>
+
+    {% if form.non_form_errors %}
+    {% for errore in form.non_form_errors %}
+    <div class="mb-2" style="color:var(--red);font-size:.82rem">{{ errore }}</div>
+    {% endfor %}
+    {% endif %}
+
+    {% for riga in form %}
+    <div class="row g-2 align-items-end mb-2">
+      {{ riga.raw_name }}
+      <div class="col-12 col-lg-5">
+        <div class="eyebrow d-block mb-1">Nel tuo file</div>
+        <div style="font-size:.95rem">{{ riga.initial.raw_name|default:riga.raw_name.value }}</div>
+      </div>
+      <div class="col-12 col-lg-7">
+        <label for="{{ riga.exercise.id_for_label }}" class="eyebrow d-block mb-1">Esercizio del catalogo</label>
+        {{ riga.exercise }}
+        {% for errore in riga.exercise.errors %}
+        <div class="mt-1" style="color:var(--red);font-size:.82rem">{{ errore }}</div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="card-ink p-3 mb-3">
+    <div class="rail">
+      <div class="eyebrow mb-1">Abbina i nomi</div>
+      <div style="color:var(--t2);font-size:.88rem">
+        Niente da abbinare: ogni nome del file corrisponde già a un esercizio
+        del catalogo, o a una scelta che avevi fatto in un import precedente.
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {% comment %}3, 4, 5 — IL RESOCONTO. Sotto, e collassato.{% endcomment %}
+  {% if lettura.errori %}
+  <div class="card-ink p-3 mb-3">
+    <details>
+      <summary class="eyebrow" style="cursor:pointer;color:var(--red)">
+        {{ lettura.errori|length }} righe scartate
+      </summary>
+      <div class="mt-2" style="color:var(--t2);font-size:.85rem">
+        Queste righe <strong>non</strong> entrano. Il numero è quello reale del
+        file: l'intestazione è la riga 1.
+      </div>
+      <div class="table-responsive mt-2">
+        <table class="table table-sm align-middle" style="font-size:.85rem">
+          <thead>
+            <tr class="eyebrow">
+              <th>File</th><th>Riga</th><th>Colonna</th><th>Valore</th><th>Motivo</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for errore in lettura.errori %}
+            <tr>
+              <td style="color:var(--t3)">{{ errore.file }}</td>
+              <td>{{ errore.numero }}</td>
+              <td style="color:var(--t3)">{{ errore.colonna }}</td>
+              <td>{{ errore.valore|default:"—" }}</td>
+              <td style="color:var(--t2)">{{ errore.motivo }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </details>
+  </div>
+  {% endif %}
+
+  {% if lettura.avvisi %}
+  <div class="card-ink p-3 mb-3">
+    <details>
+      <summary class="eyebrow" style="cursor:pointer">
+        {{ lettura.avvisi|length }} avvisi non bloccanti
+      </summary>
+      <div class="mt-2" style="color:var(--t2);font-size:.85rem">
+        Queste righe <strong>entrano intatte</strong>: c'è qualcosa di strano,
+        ma correggerlo vorrebbe dire inventare un dato e scartarlo vorrebbe
+        dire perderne uno vero.
+      </div>
+      <ul class="mt-2 mb-0" style="color:var(--t2);font-size:.85rem">
+        {% for avviso in lettura.avvisi %}
+        <li>{{ avviso.file }}, riga {{ avviso.numero }} — {{ avviso.motivo }}</li>
+        {% endfor %}
+      </ul>
+    </details>
+  </div>
+  {% endif %}
+
+  {% if lettura.sessioni_duplicate or lettura.serie_duplicate %}
+  <div class="card-ink p-3 mb-3">
+    <div class="rail">
+      <div class="eyebrow mb-1">Già importati, e quindi saltati</div>
+      <div style="color:var(--t2);font-size:.85rem">
+        {{ lettura.sessioni_duplicate }} allenamenti e
+        {{ lettura.serie_duplicate }} serie di questo file sono già nel tuo
+        storico. Non verranno duplicati.
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <div class="d-flex gap-3 align-items-center">
+    <button type="submit" class="btn btn-volt px-4 py-2">Importa</button>
+    <a href="{% url 'training:import-upload' %}" style="color:var(--t2);font-size:.9rem">Cambia i file</a>
+  </div>
+</form>
+
+{% endblock %}

@@ -67,7 +67,7 @@ quel link porta a un 404: è l'unica lettura onesta dello stato del progetto.
         <a href="#" class="dropdown-toggle text-decoration-none" data-bs-toggle="dropdown" style="color:var(--t2)">{{ user.get_username }}</a>
         <ul class="dropdown-menu dropdown-menu-end">
           <li><a class="dropdown-item" href="{% url 'training:profile' %}">Profilo</a></li>
-          <li><a class="dropdown-item" href="/importa/">Importa storico</a></li>
+          <li><a class="dropdown-item" href="{% url 'training:import-upload' %}">Importa storico</a></li>
           <li><hr class="dropdown-divider"></li>
           {% comment %}
           Uscire è un POST, non un link: da Django 5 `LogoutView` rifiuta il GET

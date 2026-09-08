@@ -11,20 +11,28 @@ le view già pronte di `django.contrib.auth`, incluse in `config/urls.py` sotto
 `LoginView` sarebbe lavoro in più con meno garanzie.
 """
 
+from pathlib import Path
+from uuid import uuid4
+
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.contrib.messages.views import SuccessMessageMixin
 from django.core.exceptions import PermissionDenied
+from django.core.files.storage import FileSystemStorage
 from django.db import transaction
 from django.db.models import Avg, Count, Prefetch, Q
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse, reverse_lazy
 from django.utils import timezone
+from django.utils.functional import cached_property
 from django.views.generic import DetailView, ListView, TemplateView
-from django.views.generic.edit import CreateView, DeleteView, UpdateView
+from django.views.generic.edit import CreateView, DeleteView, FormView, UpdateView
 
 from training.forms import (
+    AbbinamentoFormSet,
+    ImportUploadForm,
     ProfileForm,
     RoutineExerciseFormSet,
     RoutineForm,
@@ -33,6 +41,7 @@ from training.forms import (
     WorkoutForm,
     WorkoutSetFormSet,
 )
+from training.importer import FormatoNonValido, leggi, ricorda, risolvi, scrivi
 from training.models import (
     Equipment,
     Exercise,
@@ -847,3 +856,196 @@ class VoteDeleteView(LoginRequiredMixin, DeleteView):
     def form_valid(self, form):
         messages.success(self.request, "Il tuo voto è stato tolto.")
         return super().form_valid(form)
+
+
+#: La chiave con cui i tre passi dell'import si passano i nomi dei file
+#: depositati. Sta in `request.session` e **non** contiene dati: contiene dove
+#: trovarli, che è tutta la differenza fra tenere in sessione un puntatore e
+#: tenerci ~100 KB di JSON parsato (`03-import-ed-export.md`).
+CHIAVE_IMPORT = "import_csv"
+CHIAVE_ESITO = "import_csv_esito"
+
+
+def deposito():
+    """`MEDIA_ROOT/imports/`, dove il file aspetta fra anteprima e conferma.
+
+    È una funzione e non una costante di modulo perché `MEDIA_ROOT` si
+    sovrascrive nei test: uno storage costruito all'import del modulo
+    punterebbe alla cartella vera anche dentro un `override_settings`, e
+    lascerebbe file di prova nel repo.
+    """
+    return FileSystemStorage(location=Path(settings.MEDIA_ROOT) / "imports")
+
+
+class ImportUploadView(LoginRequiredMixin, FormView):
+    """`/import/` — primo dei **tre URL**, e il primo è la scelta dei file.
+
+    Tre URL e non una vista con tre rami dentro `post()`: quella è la forma che
+    poi non si riesce a spiegare, perché lo stato del passo vive dentro un `if`
+    invece che nell'indirizzo. Qui ogni passo ha il suo indirizzo, il suo
+    template e la sua responsabilità — si carica, si abbina, si legge l'esito.
+
+    Questo è il canale **utente** del requisito «data import», e non sostituisce
+    `load_catalog`: quello è il canale amministratore, un management command
+    che carica il catalogo globale. I due hanno pubblici diversi e la traccia
+    li conta entrambi (`03-import-ed-export.md`).
+    """
+
+    form_class = ImportUploadForm
+    template_name = "training/import_upload.html"
+
+    def form_valid(self, form):
+        # I file vanno su disco, non in sessione. Il nome depositato è quello
+        # che `FileSystemStorage` restituisce dopo aver risolto le collisioni:
+        # due import contemporanei dello stesso file non si sovrascrivono.
+        archivio = deposito()
+        depositati = {}
+        for campo in ("sessioni", "serie", "esercizi"):
+            caricato = form.cleaned_data.get(campo)
+            if caricato:
+                depositati[campo] = archivio.save(f"{uuid4()}.csv", caricato)
+
+        self.request.session[CHIAVE_IMPORT] = depositati
+        return redirect("training:import-preview")
+
+
+class ImportPreviewView(LoginRequiredMixin, FormView):
+    """`/import/anteprima/` — **e l'anteprima è un form**, non una schermata.
+
+    È il punto in cui l'import chiede qualcosa invece di limitarsi a informare,
+    ed è la conseguenza diretta di ADR-0010: i nomi che il file porta non si
+    risolvono da soli — sui 24 nomi reali dello storico la normalizzazione
+    automatica non ne indovina quasi nessuno — quindi l'abbinamento lo fa
+    l'utente, con un suggerimento accanto e una `<select>` per correggerlo.
+
+    La pagina mostra **cinque cose**, e le prime due sono le uniche su cui si
+    agisce, quindi stanno in cima: il riepilogo e la tabella di abbinamento.
+    Righe in errore, avvisi e duplicati sono resoconto, e stanno sotto.
+
+    I file si **rileggono da disco** a ogni passaggio, in GET come in POST:
+    niente tabella di staging, che sarebbe stata due modelli in più senza
+    nessun requisito pagato, e niente parsato in sessione. Il costo è una
+    seconda lettura di ~60 KB; il guadagno è che non esiste uno stato
+    intermedio da tenere allineato.
+    """
+
+    form_class = AbbinamentoFormSet
+    template_name = "training/import_preview.html"
+
+    def dispatch(self, request, *args, **kwargs):
+        if not request.user.is_authenticated:
+            return super().dispatch(request, *args, **kwargs)
+
+        if not request.session.get(CHIAVE_IMPORT):
+            messages.error(
+                request, "Non c'è nessun file da controllare: ricomincia da qui."
+            )
+            return redirect("training:import-upload")
+
+        try:
+            # `lettura` è una `cached_property`: la si tocca qui perché un
+            # formato illeggibile è un errore del **file**, e la risposta
+            # giusta è rimandare all'upload — non renderizzare un'anteprima
+            # vuota che non dice cosa non va.
+            self.lettura
+        except FormatoNonValido as errore:
+            messages.error(request, str(errore))
+            return redirect("training:import-upload")
+        except FileNotFoundError:
+            request.session.pop(CHIAVE_IMPORT, None)
+            messages.error(
+                request, "I file caricati non ci sono più: ricomincia da qui."
+            )
+            return redirect("training:import-upload")
+
+        return super().dispatch(request, *args, **kwargs)
+
+    @cached_property
+    def lettura(self):
+        archivio = deposito()
+        depositati = self.request.session[CHIAVE_IMPORT]
+        aperti = []
+        try:
+            for campo in ("sessioni", "serie", "esercizi"):
+                nome = depositati.get(campo)
+                aperti.append(archivio.open(nome) if nome else None)
+            return leggi(*aperti)
+        finally:
+            for file in aperti:
+                if file is not None:
+                    file.close()
+
+    @cached_property
+    def abbinamenti(self):
+        """Il taglio fra ciò che è già risolto e ciò che si chiede."""
+        return risolvi(self.lettura.nomi_grezzi, self.request.user)
+
+    def get_form_kwargs(self):
+        kwargs = super().get_form_kwargs()
+        _, da_chiedere = self.abbinamenti
+        kwargs["initial"] = [
+            {"raw_name": nome, "exercise": suggerito}
+            for nome, suggerito in da_chiedere
+        ]
+        return kwargs
+
+    def get_context_data(self, **kwargs):
+        contesto = super().get_context_data(**kwargs)
+        lettura = self.lettura
+        risolti, _ = self.abbinamenti
+        inizio, fine = lettura.periodo
+
+        contesto["lettura"] = lettura
+        contesto["risolti"] = sorted(risolti.items())
+        contesto["dal"] = inizio
+        contesto["al"] = fine
+        contesto["valide_serie"] = len(lettura.serie)
+        contesto["valide_sessioni"] = len(lettura.sessioni)
+        return contesto
+
+    def form_valid(self, formset):
+        risolti, _ = self.abbinamenti
+        scelti = {
+            form.cleaned_data["raw_name"]: form.cleaned_data["exercise"]
+            for form in formset
+        }
+
+        # Solo le scelte **fatte a mano** diventano alias: quelle risolte per
+        # nome esatto non hanno niente da ricordare, e scriverle produrrebbe
+        # una riga per ogni esercizio del catalogo al primo import di un file
+        # esportato da Progressive stesso.
+        ricorda(scelti, self.request.user)
+
+        esito = scrivi(self.lettura, {**risolti, **scelti}, self.request.user)
+
+        self.request.session[CHIAVE_ESITO] = esito.as_dict()
+        self.pulisci()
+        return redirect("training:import-result")
+
+    def pulisci(self):
+        """Il deposito non è un archivio: finito l'import, i file se ne vanno.
+
+        Se restassero, `MEDIA_ROOT/imports/` crescerebbe di un file per ogni
+        anteprima aperta, compresi gli import abbandonati a metà — che è il
+        prezzo nascosto della scelta «file su disco», e si paga qui.
+        """
+        archivio = deposito()
+        for nome in self.request.session.pop(CHIAVE_IMPORT, {}).values():
+            archivio.delete(nome)
+
+
+class ImportResultView(LoginRequiredMixin, TemplateView):
+    """`/import/esito/` — cosa è entrato davvero.
+
+    L'esito arriva dalla sessione e si **consuma**: ricaricare la pagina non
+    ripete l'import, e non lo ripete nemmeno un tasto «indietro», perché la
+    scrittura è avvenuta nel POST dell'anteprima e questa è una GET dopo una
+    redirect. È il motivo per cui i tre passi sono tre URL.
+    """
+
+    template_name = "training/import_result.html"
+
+    def get_context_data(self, **kwargs):
+        contesto = super().get_context_data(**kwargs)
+        contesto["esito"] = self.request.session.pop(CHIAVE_ESITO, None)
+        return contesto

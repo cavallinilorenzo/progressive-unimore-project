@@ -112,4 +112,20 @@ urlpatterns = [
         views.ExerciseDetailView.as_view(),
         name="exercise-detail",
     ),
+    # Import — **tre URL, non una vista con tre rami dentro `post()`**. Ogni
+    # passo ha il suo indirizzo, quindi lo stato dell'import vive
+    # nell'indirizzo e non dentro un `if`: si carica, si abbina, si legge
+    # l'esito. È anche ciò che rende la conferma non ripetibile con un
+    # ricaricamento — la scrittura avviene nel POST dell'anteprima e l'esito è
+    # una GET dopo una redirect.
+    #
+    # L'import non è una sesta voce dell'header: sta nel menu utente, come
+    # prescrive la regola di navigazione di `02-pagine-e-template.md`.
+    path("import/", views.ImportUploadView.as_view(), name="import-upload"),
+    path(
+        "import/anteprima/",
+        views.ImportPreviewView.as_view(),
+        name="import-preview",
+    ),
+    path("import/esito/", views.ImportResultView.as_view(), name="import-result"),
 ]
