@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% comment %}
+La conferma di uscita. È una pagina e non una redirect per scelta:
+`LOGOUT_REDIRECT_URL` è deliberatamente non dichiarato in `config/settings.py`,
+così `LogoutView` rende questo template — un posto dove dire «sei uscito» e
+offrire il rientro, invece di sbattere l'utente su un form di login senza
+spiegare perché.
+
+Come le sorelle di `registration/`: blocchi pieni svuotati, `base.html` esteso.
+{% endcomment %}
+
+{% block title %}Sei uscito — Progressive{% endblock %}
+
+{% block header %}{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center py-5">
+  <div class="col-12 col-sm-9 col-md-6 col-lg-4">
+
+    <div class="text-center mb-4">
+      <span class="wordmark">Progressive<span style="color:var(--volt)">.</span></span>
+    </div>
+
+    <div class="card-ink p-4 text-center">
+      <div class="eyebrow mb-2">Sessione chiusa</div>
+      <h1 class="h5 fw-bold mb-3">Sei uscito.</h1>
+      <p class="mb-4" style="color:var(--t2);font-size:.9rem">
+        Gli allenamenti restano dove li hai lasciati.
+      </p>
+      <a href="{% url 'login' %}" class="btn btn-volt px-4 py-2">Rientra</a>
+    </div>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block footer %}{% endblock %}

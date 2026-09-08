@@ -56,6 +56,19 @@ ROOT_URLCONF = 'config.urls'
 # zero. Vedi docs/adr/0003-custom-user-model.md.
 AUTH_USER_MODEL = 'training.User'
 
+# Le tre rotte dell'autenticazione, tutte per nome e non per percorso.
+#
+# `LOGIN_REDIRECT_URL` va dichiarato: il default di Django è
+# `/accounts/profile/`, una rotta che questo progetto non ha — il profilo qui
+# è `/profilo/`, di dominio, non sotto `/accounts/`. Chi entra atterra sulla
+# dashboard, che è la pagina che risponde alla domanda «come sto andando».
+#
+# `LOGOUT_REDIRECT_URL` resta invece **non** dichiarato di proposito: senza,
+# `LogoutView` rende `registration/logged_out.html`, che è una pagina vera del
+# progetto e come tutte le altre estende `base.html`.
+LOGIN_URL = "login"
+LOGIN_REDIRECT_URL = "training:dashboard"
+
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',

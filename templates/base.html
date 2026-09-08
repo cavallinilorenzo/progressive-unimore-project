@@ -59,14 +59,25 @@ onesta dello stato del progetto.
       <div class="dropdown">
         <a href="#" class="dropdown-toggle text-decoration-none" data-bs-toggle="dropdown" style="color:var(--t2)">{{ user.get_username }}</a>
         <ul class="dropdown-menu dropdown-menu-end">
-          <li><a class="dropdown-item" href="/profilo/">Profilo</a></li>
+          <li><a class="dropdown-item" href="{% url 'training:profile' %}">Profilo</a></li>
           <li><a class="dropdown-item" href="/importa/">Importa storico</a></li>
           <li><hr class="dropdown-divider"></li>
-          <li><a class="dropdown-item" href="/accounts/logout/">Esci</a></li>
+          {% comment %}
+          Uscire è un POST, non un link: da Django 5 `LogoutView` rifiuta il GET
+          (405), perché una richiesta di sola lettura non deve avere effetti —
+          un prefetch del browser sloggerebbe l'utente. Il form è la forma che
+          la documentazione indica, e il bottone è vestito da voce di menu.
+          {% endcomment %}
+          <li>
+            <form method="post" action="{% url 'logout' %}">
+              {% csrf_token %}
+              <button type="submit" class="dropdown-item">Esci</button>
+            </form>
+          </li>
         </ul>
       </div>
       {% else %}
-      <a href="/accounts/login/" style="color:var(--t2)">Entra</a>
+      <a href="{% url 'login' %}" style="color:var(--t2)">Entra</a>
       {% endif %}
     </div>
   </div>
