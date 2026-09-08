@@ -3,10 +3,15 @@
 `/schede/<pk>/` — la scheda letta: gli esercizi in ordine di `position`, con
 il bersaglio scritto come lo si legge in palestra («3 × 8-12»).
 
-Il bottone «Avvia allenamento da scheda» non c'è ancora: `workout-create` è
-il ticket #70. Il link resta fuori finché la rotta non esiste — il tag `url`
-su un nome assente non rende un 404, solleva `NoReverseMatch` in fase di
-rendering e porta giù l'intera pagina.
+Il bottone «Avvia allenamento» è entrato con #70, ed è il varco fra il piano
+e l'eseguito: porta a `workout-create` con la scheda in query string, e da lì
+un solo POST crea l'allenamento con le serie già scritte. È l'azione primaria
+della pagina — una scheda si legge per eseguirla — quindi si prende il
+`btn-volt`, e «Gestisci esercizi» scende a link.
+
+Il bottone non compare su una scheda vuota: precompilerebbe zero serie, e
+un allenamento nato vuoto da una scheda si legge come un guasto. Lì l'invito
+è già un altro, ed è aggiungere gli esercizi.
 {% endcomment %}
 
 {% block title %}{{ routine.name }} — Progressive{% endblock %}
@@ -22,7 +27,10 @@ rendering e porta giù l'intera pagina.
     {% if routine.is_public %}<span class="delta delta-up">Pubblica</span>{% endif %}
     <a href="{% url 'training:routine-update' routine.pk %}" style="color:var(--t2);font-size:.9rem">Modifica</a>
     <a href="{% url 'training:routine-delete' routine.pk %}" style="color:var(--t2);font-size:.9rem">Elimina</a>
-    <a href="{% url 'training:routine-exercises' routine.pk %}" class="btn btn-volt btn-sm px-3">Gestisci esercizi</a>
+    <a href="{% url 'training:routine-exercises' routine.pk %}" style="color:var(--t2);font-size:.9rem">Gestisci esercizi</a>
+    {% if routine.exercises.all %}
+    <a href="{% url 'training:workout-create' %}?scheda={{ routine.pk }}" class="btn btn-volt btn-sm px-3">Avvia allenamento</a>
+    {% endif %}
   </div>
 </div>
 

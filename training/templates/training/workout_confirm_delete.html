@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% comment %}
+`/allenamenti/<pk>/elimina/` — la conferma, ed è un POST come per le schede.
+
+Qui però la pagina dice l'opposto di `routine_confirm_delete.html`, ed è la
+stessa decisione vista dall'altro lato. Cancellare una scheda non tocca gli
+allenamenti: il log è immutabile (ADR-0002). Cancellare un allenamento porta
+via le sue serie in `CASCADE`, e quei carichi non stanno da nessun'altra
+parte — escono dalla progressione, dai record e dai percentili.
+{% endcomment %}
+
+{% block title %}Elimina «{{ allenamento.title }}» — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-6">
+
+    <div class="mb-4">
+      <div class="eyebrow">Storico</div>
+      <h1 class="h4 fw-bold mb-0">Eliminare «{{ allenamento.title }}»?</h1>
+    </div>
+
+    <div class="card-ink p-4">
+      <div class="rail mb-4" style="border-color:var(--red)">
+        <div class="eyebrow mb-1" style="color:var(--red)">Cosa si perde</div>
+        <div style="color:var(--t2);font-size:.9rem">
+          L'allenamento del
+          <strong>{{ allenamento.started_at|date:"j F Y" }}</strong>
+          e le sue <strong>{{ allenamento.sets.count }}</strong>
+          seri{{ allenamento.sets.count|pluralize:"e,e" }}. Sono dati eseguiti:
+          spariscono dalla progressione, dai record e dai percentili, e
+          l'operazione non si annulla.
+        </div>
+      </div>
+
+      <div class="rail mb-4">
+        <div class="eyebrow mb-1" style="color:var(--volt)">Cosa resta</div>
+        <div style="color:var(--t2);font-size:.9rem">
+          {% if allenamento.routine %}
+          La scheda <strong>{{ allenamento.routine.name }}</strong> non viene
+          toccata: è il piano, e questo era solo una delle volte in cui l'hai
+          eseguita.
+          {% else %}
+          Nient'altro: questo allenamento non è legato a nessuna scheda
+          esistente.
+          {% endif %}
+        </div>
+      </div>
+
+      <form method="post">
+        {% csrf_token %}
+        <div class="d-flex gap-3 align-items-center">
+          <button type="submit" class="btn btn-danger px-4 py-2">Elimina</button>
+          <a href="{% url 'training:workout-detail' allenamento.pk %}" style="color:var(--t2);font-size:.9rem">Annulla</a>
+        </div>
+      </form>
+    </div>
+
+  </div>
+</div>
+
+{% endblock %}

@@ -39,9 +39,10 @@ dentro la pagina del singolo esercizio, l'import nel menu utente.
 
 Le rotte entrano una alla volta con i ticket della mappa #53, e ognuno
 sostituisce il proprio `href` letterale con il tag `url` quando la sua sezione
-arriva. Schede è passata al tag `url` con #69, Esercizi con #71; restano
-letterali Storico (#70) e Classifiche (#76). Fino ad allora quei link portano a
-un 404, che è l'unica lettura onesta dello stato del progetto.
+arriva. Schede è passata al tag `url` con #69, Esercizi con #71, Storico con #70
+— e con esso il bottone «Inizia allenamento», che è la stessa rotta vista dal
+verso di chi non parte da una scheda. Resta letterale Classifiche (#76), e
+quel link porta a un 404: è l'unica lettura onesta dello stato del progetto.
 {% endcomment %}
 <header class="nav-top sticky-top">
   <div class="container-xl d-flex align-items-center gap-4 py-3">
@@ -55,12 +56,12 @@ un 404, che è l'unica lettura onesta dello stato del progetto.
       {% endcomment %}
       <a href="{% url 'training:dashboard' %}" class="{% if request.path == '/' %}attivo{% endif %}">Dashboard</a>
       <a href="{% url 'training:routine-list' %}" class="{% if request.path|slice:':8' == '/schede/' %}attivo{% endif %}">Schede</a>
-      <a href="/allenamenti/" class="{% if request.path|slice:':13' == '/allenamenti/' %}attivo{% endif %}">Storico</a>
+      <a href="{% url 'training:workout-list' %}" class="{% if request.path|slice:':13' == '/allenamenti/' %}attivo{% endif %}">Storico</a>
       <a href="{% url 'training:exercise-list' %}" class="{% if request.path|slice:':10' == '/esercizi/' %}attivo{% endif %}">Esercizi</a>
       <a href="/classifiche/" class="{% if request.path|slice:':13' == '/classifiche/' %}attivo{% endif %}">Classifiche</a>
     </nav>
     <div class="ms-auto d-flex align-items-center gap-3">
-      <a href="/allenamenti/nuovo/" class="btn btn-volt btn-sm px-3">Inizia allenamento</a>
+      <a href="{% url 'training:workout-create' %}" class="btn btn-volt btn-sm px-3">Inizia allenamento</a>
       {% if user.is_authenticated %}
       <div class="dropdown">
         <a href="#" class="dropdown-toggle text-decoration-none" data-bs-toggle="dropdown" style="color:var(--t2)">{{ user.get_username }}</a>

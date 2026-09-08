@@ -15,7 +15,10 @@ from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.contrib.messages.views import SuccessMessageMixin
-from django.shortcuts import redirect
+from django.core.exceptions import PermissionDenied
+from django.db import transaction
+from django.db.models import Count, Prefetch, Q
+from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse, reverse_lazy
 from django.utils import timezone
 from django.views.generic import DetailView, ListView, TemplateView
@@ -26,6 +29,8 @@ from training.forms import (
     RoutineExerciseFormSet,
     RoutineForm,
     SignUpForm,
+    WorkoutForm,
+    WorkoutSetFormSet,
 )
 from training.models import (
     Equipment,
@@ -376,3 +381,304 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
         )
         return context
 
+
+
+class WorkoutListView(LoginRequiredMixin, ListView):
+    """`/allenamenti/` — lo storico, e solo il mio.
+
+    Come per le schede il filtro sta nel queryset e non in un `if` di template:
+    un template che riceve allenamenti altrui li ha già caricati.
+
+    I due conteggi sono annotazioni e non `count()` nel template, perché la
+    lista dello storico cresce senza limite — è l'unica pagina di fase 1 in cui
+    una query per riga si farebbe sentire davvero. Entrambe le annotazioni
+    passano dallo stesso join su `sets`, quindi non si moltiplicano fra loro.
+    """
+
+    model = Workout
+    context_object_name = "allenamenti"
+    template_name = "training/workout_list.html"
+
+    def get_queryset(self):
+        return (
+            Workout.objects.filter(user=self.request.user)
+            .select_related("routine")
+            .annotate(
+                n_serie=Count("sets", filter=Q(sets__is_completed=True)),
+                n_esercizi=Count("sets__exercise", distinct=True),
+            )
+        )
+
+
+class WorkoutDetailView(OwnerRequiredMixin, DetailView):
+    """`/allenamenti/<pk>/` — le serie eseguite, raggruppate per esercizio.
+
+    L'ordinamento è `(esercizio, numero di serie)` e non `set_number` secco:
+    `Meta.ordering` del modello ordina le serie dentro un esercizio, ma qui
+    servono i blocchi — tre righe di panca, poi tre di rematore — e il
+    `regroup` del template li può formare solo su una lista già ordinata per
+    la chiave di raggruppamento.
+    """
+
+    model = Workout
+    context_object_name = "allenamento"
+    template_name = "training/workout_detail.html"
+
+    def get_queryset(self):
+        return Workout.objects.select_related("routine").prefetch_related(
+            Prefetch(
+                "sets",
+                queryset=WorkoutSet.objects.select_related(
+                    "exercise__equipment"
+                ).order_by("exercise__name", "set_number"),
+                to_attr="serie_in_ordine",
+            )
+        )
+
+
+class WorkoutCreateView(LoginRequiredMixin, CreateView):
+    """`/allenamenti/nuovo/`, e con `?scheda=<pk>` **«Avvia allenamento da scheda»**.
+
+    È il pezzo che tiene insieme il piano e l'eseguito, ed è una pagina sola,
+    un `POST`, zero JavaScript: la scheda arriva in query string, il form nasce
+    già intitolato col suo nome, e al salvataggio le serie pianificate
+    diventano righe vere, precompilate col carico dell'ultima volta. Da lì
+    l'utente corregge i numeri e toglie la spunta a ciò che ha saltato — che è
+    il motivo per cui `is_completed` esiste, col significato «eseguita» contro
+    «saltata», invece di essere un `reps` nullo e basta.
+
+    Il legame con la scheda si stabilisce **qui e solo qui** (ADR-0002): dopo,
+    `title` è un'istantanea e `routine` è `SET_NULL`, quindi rinominare o
+    cancellare la scheda non riscrive il passato. Vedi `WorkoutForm`, dove
+    `routine` non è un campo proprio per questo.
+    """
+
+    model = Workout
+    form_class = WorkoutForm
+    template_name = "training/workout_form.html"
+
+    #: Il nome del parametro in query string. In italiano come le rotte: il
+    #: link `/allenamenti/nuovo/?scheda=3` si legge da solo.
+    PARAMETRO_SCHEDA = "scheda"
+
+    def get_scheda(self):
+        """La scheda da cui partire, se il link ne porta una.
+
+        La proprietà si difende **anche qui**, e allo stesso modo del mixin:
+        una scheda che non esiste è 404, una che esiste ma è di un altro è
+        403. Il parametro è in query string e non in URL, quindi
+        `UserPassesTestMixin` non lo copre — `get_object` di questa view
+        restituirebbe l'allenamento, che ancora non esiste.
+        """
+        grezzo = self.request.GET.get(self.PARAMETRO_SCHEDA)
+        if not grezzo or not grezzo.isdigit():
+            return None
+
+        scheda = get_object_or_404(
+            Routine.objects.prefetch_related("exercises__exercise__equipment"),
+            pk=int(grezzo),
+        )
+        if scheda.user != self.request.user:
+            raise PermissionDenied
+
+        return scheda
+
+    def get_initial(self):
+        initial = super().get_initial()
+        # `localtime` e non `now`: il campo `datetime-local` mostra l'ora del
+        # fuso corrente, e proporre l'UTC significherebbe proporre due ore
+        # sbagliate d'estate.
+        initial["started_at"] = timezone.localtime()
+
+        scheda = self.get_scheda()
+        if scheda is not None:
+            initial["title"] = scheda.name
+        return initial
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["scheda"] = self.get_scheda()
+        return context
+
+    def form_valid(self, form):
+        scheda = self.get_scheda()
+
+        form.instance.user = self.request.user
+        form.instance.routine = scheda
+
+        # L'allenamento e le sue serie nascono insieme o non nascono: un
+        # allenamento «avviato da scheda» rimasto senza righe sarebbe la cosa
+        # peggiore da trovare, perché sembra vuoto invece che rotto.
+        with transaction.atomic():
+            response = super().form_valid(form)
+            if scheda is not None:
+                serie = self.serie_dalla_scheda(scheda)
+                WorkoutSet.objects.bulk_create(serie)
+
+        if scheda is not None:
+            messages.success(
+                self.request,
+                f"Allenamento avviato da «{scheda.name}»: le serie sono "
+                "precompilate, correggi i numeri veri.",
+            )
+        else:
+            messages.success(
+                self.request, "L'allenamento è creato. Ora mettici le serie."
+            )
+        return response
+
+    def serie_dalla_scheda(self, scheda):
+        """Le righe pianificate, con il carico dell'ultima volta.
+
+        Due regole di precompilazione, e nessuna delle due inventa un dato:
+
+        - il **carico** è l'ultimo che l'utente ha davvero usato su
+          quell'esercizio; in mancanza è `default_bar_weight_kg`, cioè
+          l'attrezzo scarico, che è il minimo vero e non una stima;
+        - le **ripetizioni** sono l'estremo *basso* del bersaglio, perché è la
+          promessa che la scheda fa, mentre l'estremo alto è ciò che la doppia
+          progressione insegue e va conquistato, non precompilato.
+
+        Tutto è comunque modificabile nella pagina delle serie: questi valori
+        sono un punto di partenza, e il loro compito è ridurre la digitazione,
+        non decidere lo storico.
+        """
+        voci = list(scheda.exercises.all())
+        ultimi = self.ultimo_carico_per_esercizio(voci)
+
+        serie = []
+        for voce in voci:
+            peso = ultimi.get(
+                voce.exercise_id, voce.exercise.equipment.default_bar_weight_kg
+            )
+            # `target_sets` è positivo per modello, ma `target_reps` a zero
+            # passerebbe il database e violerebbe poi
+            # `workout_set_completed_has_reps`: una riga senza ripetizioni nasce
+            # **saltata**, che è l'unica lettura coerente e non un 500.
+            reps = voce.target_reps or None
+            for numero in range(1, voce.target_sets + 1):
+                serie.append(
+                    WorkoutSet(
+                        workout=self.object,
+                        exercise=voce.exercise,
+                        set_number=numero,
+                        reps=reps,
+                        weight=peso,
+                        set_type=WorkoutSet.SetType.WORKING,
+                        is_completed=reps is not None,
+                    )
+                )
+        return serie
+
+    def ultimo_carico_per_esercizio(self, voci):
+        """`{exercise_id: peso}` in **una query**, non una per esercizio.
+
+        Le serie arrivano ordinate dalla più vecchia alla più recente e il
+        dizionario si sovrascrive: l'ultima scritta vince, ed è per costruzione
+        la più recente. Un `Subquery` per esercizio direbbe la stessa cosa con
+        più codice e la stessa query in più per riga.
+
+        Si guardano solo le serie **eseguite**: il carico di una serie saltata
+        è un'intenzione, non un dato, e ripartire da lì significherebbe
+        propagare in avanti un numero che non è mai stato sollevato.
+        """
+        esercizi = [voce.exercise_id for voce in voci]
+        if not esercizi:
+            return {}
+
+        ultimi = {}
+        for exercise_id, peso in (
+            WorkoutSet.objects.filter(
+                workout__user=self.request.user,
+                exercise_id__in=esercizi,
+                is_completed=True,
+                weight__isnull=False,
+            )
+            .order_by("workout__started_at", "set_number")
+            .values_list("exercise_id", "weight")
+        ):
+            ultimi[exercise_id] = peso
+        return ultimi
+
+    def get_success_url(self):
+        # Chi crea un allenamento atterra sulle serie, non sulla lista: come
+        # per le schede, il passo successivo è l'unico che abbia senso — con
+        # la differenza che qui, se si è partiti da una scheda, le righe sono
+        # già lì e la pagina è di correzione, non di compilazione.
+        return reverse("training:workoutset-manage", args=[self.object.pk])
+
+
+class WorkoutUpdateView(OwnerRequiredMixin, SuccessMessageMixin, UpdateView):
+    """`/allenamenti/<pk>/modifica/` — titolo, orari e note.
+
+    Le serie non stanno qui: sono la pagina `workoutset-manage`. Un
+    allenamento è un log e le sue due parti si correggono in momenti diversi —
+    l'orario sbagliato si aggiusta a freddo, i numeri delle serie si aggiustano
+    mentre si allena.
+    """
+
+    model = Workout
+    form_class = WorkoutForm
+    template_name = "training/workout_form.html"
+    success_message = "L'allenamento è aggiornato."
+
+    def get_success_url(self):
+        return reverse("training:workout-detail", args=[self.object.pk])
+
+
+class WorkoutDeleteView(OwnerRequiredMixin, DeleteView):
+    """`/allenamenti/<pk>/elimina/` — e qui si perde davvero qualcosa.
+
+    È l'asimmetria di ADR-0002 vista dall'altro lato: cancellare una *scheda*
+    non tocca gli allenamenti, perché il log è immutabile; cancellare un
+    *allenamento* porta via le sue serie in `CASCADE`, e quei numeri non stanno
+    da nessun'altra parte. La pagina di conferma lo dice col conto delle serie.
+    """
+
+    model = Workout
+    context_object_name = "allenamento"
+    template_name = "training/workout_confirm_delete.html"
+    success_url = reverse_lazy("training:workout-list")
+
+    def form_valid(self, form):
+        messages.success(self.request, f"«{self.object.title}» è eliminato.")
+        return super().form_valid(form)
+
+
+class WorkoutSetsView(OwnerRequiredMixin, UpdateView):
+    """`/allenamenti/<pk>/serie/` — il registro delle serie.
+
+    Stessa forma della gestione esercizi di una scheda, `fields = []` compreso
+    e per la stessa ragione: la pagina non modifica l'allenamento, modifica le
+    sue righe figlie, e `UpdateView` porta già `get_object`, il 403 del mixin e
+    il template.
+
+    Ciò che cambia è la densità. Qui le righe sono quante sono le serie di una
+    sessione — dieci, quindici — e per questo la pagina esiste soprattutto come
+    pagina di **correzione**: chi è partito da una scheda le trova già scritte
+    (`WorkoutCreateView`), tocca i numeri che non tornano e toglie la spunta a
+    ciò che ha saltato.
+    """
+
+    model = Workout
+    fields = []
+    context_object_name = "allenamento"
+    template_name = "training/workout_sets.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        # Se il POST è fallito il formset in contesto è quello con gli errori e
+        # i dati dell'utente: ricostruirlo li perderebbe.
+        context.setdefault("formset", WorkoutSetFormSet(instance=self.object))
+        return context
+
+    def post(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        formset = WorkoutSetFormSet(request.POST, instance=self.object)
+
+        if not formset.is_valid():
+            return self.render_to_response(self.get_context_data(formset=formset))
+
+        formset.save()
+        messages.success(request, "Le serie dell'allenamento sono aggiornate.")
+        return redirect("training:workout-detail", pk=self.object.pk)
