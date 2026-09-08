@@ -46,6 +46,27 @@ produce esattamente i due file che questa pagina legge.
   </div>
 </div>
 
+{% comment %}
+La seconda metà del giro, e sta **qui** perché qui c'è chi non ha un file: il
+formato non è di un'altra app, Progressive lo produce. Chi arriva senza un
+`session_sets.csv` può scaricare il proprio storico, guardarlo, e ricaricarlo
+per vedere che non succede niente — che è l'idempotenza mostrata invece che
+raccontata.
+{% endcomment %}
+<div class="card-ink p-3 mb-3">
+  <div class="rail">
+    <div class="eyebrow mb-1">Non hai un file?</div>
+    <div style="color:var(--t2);font-size:.88rem">
+      I due file sono <strong>lo stesso formato che Progressive esporta</strong>:
+      scarica il tuo storico e avrai un esempio da guardare.
+    </div>
+    <div class="d-flex gap-3 mt-2" style="font-size:.85rem">
+      <a href="{% url 'training:export-csv' 'allenamenti' %}">workout_sessions.csv</a>
+      <a href="{% url 'training:export-csv' 'serie' %}">session_sets.csv</a>
+    </div>
+  </div>
+</div>
+
 <form method="post" enctype="multipart/form-data" novalidate>
   {% csrf_token %}
 

@@ -33,6 +33,8 @@ PK autoincrement normali, più un campo **`external_id`** (UUID, nullable, uniqu
 
 Il **nullable è essenziale**: un allenamento nato dentro Progressive non ha nessun `external_id` e non deve fingerne uno.
 
+E resta vero anche dopo l'export, che è il punto in cui la regola si è dovuta difendere (#74): un CSV ha bisogno di un `id` su ogni riga, ma le righe che escono sono in maggioranza nate qui. Ognuna ha quindi un **nome pubblico** — quello di provenienza se importata, altrimenti uno derivato dalla sua chiave primaria, uguale a ogni export e **mai scritto in database**. L'import riconosce i due allo stesso modo, e così «esporta e reimporta» non aggiunge niente nemmeno a uno storico che non è mai stato importato. Motivazione completa e limite dichiarato in [ADR-0011](../adr/0011-nome-pubblico-calcolato-non-memorizzato.md).
+
 Scartati: l'UUID come PK (imporrebbe la chiave di un altro sistema anche agli allenamenti creati in-app) e la deduplica implicita su `unique(user, started_at)` (si rompe appena l'utente corregge un orario).
 
 ## Validazione — scritta sui dati veri, non immaginati
@@ -102,13 +104,16 @@ Scartata la **tabella di staging** (`ImportBatch`/`ImportRow`): due modelli che 
 | `/import/` | `import-upload` | `FormView` — i due file |
 | `/import/anteprima/` | `import-preview` | `FormView` — il formset degli abbinamenti |
 | `/import/esito/` | `import-result` | `TemplateView` |
-| `/export/` | `export-csv` | Scarica i due CSV |
+| `/export/allenamenti/` | `export-csv` | `View` — scarica `workout_sessions.csv` |
+| `/export/serie/` | `export-csv` | `View` — scarica `session_sets.csv` |
 
-Tre template che estendono `base.html`.
+Tre template che estendono `base.html`; l'export non ne ha nessuno, ed è la sua natura — restituisce un file, non una pagina. I link stanno nel menu utente accanto a «Importa storico» e nella pagina di import, che è dove serve a chi un file non ce l'ha.
+
+**Un solo `/export/` è diventato due URL** (#74): i file sono due, e comprimerli in uno ZIP avrebbe obbligato a spacchettarli prima di ricaricarli, cioè a toccare i dati **fuori** dall'app — la stessa ragione per cui è stato scartato il CSV unico denormalizzato. Il nome del file sta nel percorso e non in query string perché qui il parametro *identifica la risorsa*, al contrario di `?scheda=<pk>` su «avvia allenamento», che lascia la pagina la stessa.
 
 ## Due decisioni minori
 
 Prese senza chiedere, e segnalate perché si ribaltano a costo zero.
 
 - **Limite 5 MB per file** più estensione `.csv`, verificati nel form. Lo storico reale sta in ~60 KB, quindi 5 MB sono ~25.000 serie. Il parsing è **a streaming** — `csv.DictReader` su un `TextIOWrapper` — mai un `.read()` in memoria.
-- **I CSV di prova sono fabbricati a mano e versionati** in `training/tests/`, e **non** sono i dati reali (personali, in `.gitignore`). Piccoli — tre sessioni, una decina di serie — e costruiti perché contengano **uno per uno** i casi decisi qui: una serie non eseguita, una completata senza peso, una completata senza `reps`, una sessione con `ended_at` assurdo, un nome non abbinabile, un duplicato. Sono la traduzione in test della sporcizia misurata in #13.
+- **I CSV di prova sono fabbricati a mano e versionati** in `training/tests/fixtures/`, e **non** sono i dati reali (personali, in `.gitignore`). Piccoli — tre sessioni, una decina di serie — e costruiti perché contengano **uno per uno** i casi decisi qui: una serie non eseguita, una completata senza peso, una completata senza `reps`, una sessione con `ended_at` assurdo, un nome non abbinabile, un duplicato. Sono la traduzione in test della sporcizia misurata in #13.
