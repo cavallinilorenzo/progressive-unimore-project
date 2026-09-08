@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% comment %}
+Un template per `CreateView` e `UpdateView`, come vuole il default di Django
+(`<model>_form.html`). Le due pagine differiscono in una parola, e quella
+parola la decide `form.instance.pk`: duplicare il file per cambiare un titolo
+è il modo in cui due pagine gemelle divergono senza che nessuno se ne accorga.
+{% endcomment %}
+
+{% block title %}{% if form.instance.pk %}Modifica scheda{% else %}Nuova scheda{% endif %} — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-7">
+
+    <div class="mb-4">
+      <div class="eyebrow">Schede</div>
+      <h1 class="h4 fw-bold mb-0">
+        {% if form.instance.pk %}Modifica «{{ form.instance.name }}»{% else %}Nuova scheda{% endif %}
+      </h1>
+    </div>
+
+    <form method="post" novalidate class="card-ink p-4">
+      {% csrf_token %}
+
+      {% if form.non_field_errors %}
+      <div class="rail mb-3" style="border-color:var(--red)">
+        {% for errore in form.non_field_errors %}
+        <div style="color:var(--red);font-size:.85rem">{{ errore }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <div class="mb-3">
+        <label for="{{ form.name.id_for_label }}" class="eyebrow d-block mb-1">Nome</label>
+        {{ form.name }}
+        {% for errore in form.name.errors %}
+        <div style="color:var(--red);font-size:.82rem">{{ errore }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="mb-3">
+        <label for="{{ form.notes.id_for_label }}" class="eyebrow d-block mb-1">Note</label>
+        {{ form.notes }}
+        {% for errore in form.notes.errors %}
+        <div style="color:var(--red);font-size:.82rem">{{ errore }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="form-check mb-1">
+        {{ form.is_public }}
+        <label for="{{ form.is_public.id_for_label }}" class="form-check-label" style="color:var(--t1)">
+          Rendi pubblica questa scheda
+        </label>
+      </div>
+      <div class="mb-3" style="color:var(--t3);font-size:.8rem">
+        Una scheda pubblica compare fra quelle della community e gli altri
+        utenti possono votarla e commentarla. Le tue serie e i tuoi carichi
+        restano privati: si vede il piano, non l'eseguito.
+      </div>
+
+      <div class="d-flex gap-3 align-items-center mt-4">
+        <button type="submit" class="btn btn-volt px-4 py-2">
+          {% if form.instance.pk %}Salva{% else %}Crea la scheda{% endif %}
+        </button>
+        <a href="{% if form.instance.pk %}{% url 'training:routine-detail' form.instance.pk %}{% else %}{% url 'training:routine-list' %}{% endif %}"
+           style="color:var(--t2);font-size:.9rem">Annulla</a>
+      </div>
+    </form>
+
+  </div>
+</div>
+
+{% endblock %}

@@ -21,8 +21,10 @@ questo sia tutto ciò che la pagina sarà.
 
 <div class="mb-4">
   <div class="eyebrow">
-    {# Il ritorno alla sezione: la regola di navigazione vuole che ogni pagina
-       si raggiunga da dentro la sua sezione, e che ci si possa tornare. #}
+    {% comment %}
+    Il ritorno alla sezione: la regola di navigazione vuole che ogni pagina si
+    raggiunga da dentro la sua sezione, e che ci si possa tornare.
+    {% endcomment %}
     <a href="{% url 'training:exercise-list' %}" style="color:var(--t2)">Esercizi</a>
     &rsaquo; {{ esercizio.primary_muscle.group.label_it }}
   </div>
@@ -54,9 +56,11 @@ questo sia tutto ciò che la pagina sarà.
   <div class="eyebrow mb-2" style="color:var(--volt)">Le tue serie</div>
 
   {% if serie %}
-  {# Raggruppate per allenamento: una serie fuori dalla sua sessione non si
-     legge. Il queryset arriva ordinato per data discendente, che è la
-     condizione perché `regroup` non spezzi una sessione in due blocchi. #}
+  {% comment %}
+  Raggruppate per allenamento: una serie fuori dalla sua sessione non si legge.
+  Il queryset arriva ordinato per data discendente, che è la condizione perché
+  `regroup` non spezzi una sessione in due blocchi.
+  {% endcomment %}
   {% regroup serie by workout as sessioni %}
   <table class="table table-sm align-middle mb-0">
     <thead>
@@ -78,8 +82,10 @@ questo sia tutto ciò che la pagina sarà.
           {% endif %}
         </td>
         <td>{{ s.set_number }}</td>
-        {# Una serie saltata non ha ripetizioni né carico, e il trattino lo dice:
-           uno zero si leggerebbe come «zero ripetizioni fatte». #}
+        {% comment %}
+        Una serie saltata non ha ripetizioni né carico, e il trattino lo dice:
+        uno zero si leggerebbe come «zero ripetizioni fatte».
+        {% endcomment %}
         <td>{% if s.reps is not None %}{{ s.reps }}{% else %}<span style="color:var(--t3)">&mdash;</span>{% endif %}</td>
         <td>{% if s.weight is not None %}{{ s.weight|floatformat:"-2" }} kg{% else %}<span style="color:var(--t3)">&mdash;</span>{% endif %}</td>
         <td style="color:var(--t2)">

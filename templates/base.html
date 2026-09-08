@@ -37,21 +37,27 @@ raggiunge da *dentro* la sezione a cui appartiene per dominio, mai da un link
 orfano. Le schede della community stanno dentro Schede, stalli e progressione
 dentro la pagina del singolo esercizio, l'import nel menu utente.
 
-Le rotte arrivano una alla volta con la mappa #53, e ogni ticket sostituisce il
-proprio `href` letterale col tag `url` quando la sua sezione entra: Esercizi
-l'ha fatto con #71. Restano letterali Schede (#69), Storico (#70) e Classifiche
-(#76), e fino ad allora quei link portano a un 404, che è l'unica lettura onesta
-dello stato del progetto.
+Le rotte entrano una alla volta con i ticket della mappa #53, e ognuno
+sostituisce il proprio `href` letterale con il tag `url` quando la sua sezione
+arriva. Schede è passata al tag `url` con #69, Esercizi con #71; restano
+letterali Storico (#70) e Classifiche (#76). Fino ad allora quei link portano a
+un 404, che è l'unica lettura onesta dello stato del progetto.
 {% endcomment %}
 <header class="nav-top sticky-top">
   <div class="container-xl d-flex align-items-center gap-4 py-3">
     <span class="wordmark">Progressive<span style="color:var(--volt)">.</span></span>
     <nav class="d-flex gap-4 ms-3">
+      {% comment %}
+      La voce attiva si decide sul PREFISSO dell'URL, non con `in`: con `in`
+      la pagina `/schede/3/esercizi/` accendeva insieme «Schede» ed
+      «Esercizi», perché la stringa `/esercizi/` compare anche lì dentro. Due
+      voci accese sono peggio di nessuna. Rilevato in #69.
+      {% endcomment %}
       <a href="{% url 'training:dashboard' %}" class="{% if request.path == '/' %}attivo{% endif %}">Dashboard</a>
-      <a href="/schede/" class="{% if '/schede/' in request.path %}attivo{% endif %}">Schede</a>
-      <a href="/allenamenti/" class="{% if '/allenamenti/' in request.path %}attivo{% endif %}">Storico</a>
-      <a href="{% url 'training:exercise-list' %}" class="{% if '/esercizi/' in request.path %}attivo{% endif %}">Esercizi</a>
-      <a href="/classifiche/" class="{% if '/classifiche/' in request.path %}attivo{% endif %}">Classifiche</a>
+      <a href="{% url 'training:routine-list' %}" class="{% if request.path|slice:':8' == '/schede/' %}attivo{% endif %}">Schede</a>
+      <a href="/allenamenti/" class="{% if request.path|slice:':13' == '/allenamenti/' %}attivo{% endif %}">Storico</a>
+      <a href="{% url 'training:exercise-list' %}" class="{% if request.path|slice:':10' == '/esercizi/' %}attivo{% endif %}">Esercizi</a>
+      <a href="/classifiche/" class="{% if request.path|slice:':13' == '/classifiche/' %}attivo{% endif %}">Classifiche</a>
     </nav>
     <div class="ms-auto d-flex align-items-center gap-3">
       <a href="/allenamenti/nuovo/" class="btn btn-volt btn-sm px-3">Inizia allenamento</a>

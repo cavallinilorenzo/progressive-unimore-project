@@ -37,9 +37,11 @@ sembrare un CRUD dimenticato: vedi `training.views.ExerciseListView`.
       </select>
     </div>
     <div class="col-12 col-md-3">
-      {# Se un gruppo è scelto, questa tendina porta solo i suoi muscoli: la
-         view la restringe, così non si può comporre un filtro che non rende
-         mai una riga. #}
+      {% comment %}
+      Se un gruppo è scelto, questa tendina porta solo i suoi muscoli: la view
+      la restringe, così non si può comporre un filtro che non rende mai una
+      riga.
+      {% endcomment %}
       <label for="filtro-muscolo" class="eyebrow d-block mb-1">Muscolo</label>
       <select name="muscolo" id="filtro-muscolo" class="form-select form-select-sm">
         <option value="">Tutti</option>
@@ -66,9 +68,11 @@ sembrare un CRUD dimenticato: vedi `training.views.ExerciseListView`.
   </div>
 </form>
 
-{# `regroup` è ciò che rende la pagina «grouped»: il queryset arriva ordinato
-   per `group__sort_order` dalla view, che è la condizione perché regroup non
-   spezzi lo stesso gruppo in due blocchi. #}
+{% comment %}
+`regroup` è ciò che rende la pagina «grouped»: il queryset arriva ordinato per
+`group__sort_order` dalla view, che è la condizione perché regroup non spezzi
+lo stesso gruppo in due blocchi.
+{% endcomment %}
 {% regroup esercizi by primary_muscle.group as gruppi_di_esercizi %}
 
 {% for blocco in gruppi_di_esercizi %}

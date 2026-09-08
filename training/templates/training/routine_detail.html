@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% comment %}
+`/schede/<pk>/` — la scheda letta: gli esercizi in ordine di `position`, con
+il bersaglio scritto come lo si legge in palestra («3 × 8-12»).
+
+Il bottone «Avvia allenamento da scheda» non c'è ancora: `workout-create` è
+il ticket #70. Il link resta fuori finché la rotta non esiste — il tag `url`
+su un nome assente non rende un 404, solleva `NoReverseMatch` in fase di
+rendering e porta giù l'intera pagina.
+{% endcomment %}
+
+{% block title %}{{ routine.name }} — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-baseline justify-content-between mb-4">
+  <div>
+    <div class="eyebrow"><a href="{% url 'training:routine-list' %}" style="color:var(--t3)">Schede</a></div>
+    <h1 class="h4 fw-bold mb-0">{{ routine.name }}</h1>
+  </div>
+  <div class="d-flex gap-3 align-items-center">
+    {% if routine.is_public %}<span class="delta delta-up">Pubblica</span>{% endif %}
+    <a href="{% url 'training:routine-update' routine.pk %}" style="color:var(--t2);font-size:.9rem">Modifica</a>
+    <a href="{% url 'training:routine-delete' routine.pk %}" style="color:var(--t2);font-size:.9rem">Elimina</a>
+    <a href="{% url 'training:routine-exercises' routine.pk %}" class="btn btn-volt btn-sm px-3">Gestisci esercizi</a>
+  </div>
+</div>
+
+{% for messaggio in messages %}
+<div class="card-ink p-3 mb-3">
+  <div class="rail">
+    <div class="eyebrow" style="color:var(--volt)">Fatto</div>
+    <div style="color:var(--t2);font-size:.9rem">{{ messaggio }}</div>
+  </div>
+</div>
+{% endfor %}
+
+{% if routine.notes %}
+<div class="card-ink p-3 mb-4">
+  <div class="eyebrow mb-1">Note</div>
+  <div style="color:var(--t2);font-size:.9rem">{{ routine.notes|linebreaksbr }}</div>
+</div>
+{% endif %}
+
+<div class="card-ink p-0 mb-4">
+  {% if routine.exercises.all %}
+  <table class="table table-dark table-borderless mb-0 align-middle" style="background:transparent">
+    <thead>
+      <tr class="eyebrow" style="color:var(--t3)">
+        <th class="ps-3" style="width:3rem">#</th>
+        <th>Esercizio</th>
+        <th>Attrezzo</th>
+        <th>Bersaglio</th>
+        <th class="pe-3">Note</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for voce in routine.exercises.all %}
+      <tr>
+        <td class="ps-3" style="color:var(--t3)">{{ voce.position }}</td>
+        <td class="fw-bold">{{ voce.exercise.name }}</td>
+        <td style="color:var(--t2)">{{ voce.exercise.equipment }}</td>
+        <td style="color:var(--volt)">
+          {{ voce.target_sets }} &times; {{ voce.target_reps }}{% if voce.target_reps_max %}-{{ voce.target_reps_max }}{% endif %}
+        </td>
+        <td class="pe-3" style="color:var(--t3);font-size:.85rem">{{ voce.notes|default:"—" }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="p-4 text-center">
+    <div class="eyebrow mb-2">Scheda vuota</div>
+    <p style="color:var(--t2);max-width:32rem;margin:0 auto">
+      Una scheda senza esercizi non ha ancora niente da dire al coach: è dal
+      bersaglio delle sue voci che nasce il consiglio di carico.
+    </p>
+    <a href="{% url 'training:routine-exercises' routine.pk %}" class="btn btn-volt px-4 mt-3">Aggiungi esercizi</a>
+  </div>
+  {% endif %}
+</div>
+
+{% endblock %}
