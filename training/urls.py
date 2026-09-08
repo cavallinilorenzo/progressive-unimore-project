@@ -2,8 +2,9 @@
 
 `app_name` più nomi di rotta **col trattino**, come nell'esempio del corso
 (#22). La sitemap completa — cinque sezioni e i loro URL — è in
-`docs/spec/02-pagine-e-template.md`; qui ci sono la dashboard e le pagine
-dell'utente, e le altre entrano coi ticket della mappa #53.
+`docs/spec/02-pagine-e-template.md`; qui ci sono la dashboard, le pagine
+dell'utente, le schede, lo storico e il catalogo; le classifiche e l'import
+entrano coi ticket rimasti della mappa #53.
 
 Login e logout non stanno qui: vivono sotto `/accounts/` in `config/urls.py`,
 perché sono le view di `django.contrib.auth` e i loro nomi di rotta (`login`,
@@ -66,6 +67,39 @@ urlpatterns = [
         "schede/pubbliche/<int:pk>/voto/elimina/",
         views.VoteDeleteView.as_view(),
         name="vote-delete",
+    ),
+    # Storico — il secondo dei due CRUD completi, e quello che tiene insieme
+    # il piano e l'eseguito: `nuovo/` accetta `?scheda=<pk>` ed è «Avvia
+    # allenamento da scheda». Il parametro viaggia in query string e non in
+    # URL perché non identifica la risorsa: `/allenamenti/nuovo/` resta la
+    # stessa pagina, la scheda è il suo punto di partenza facoltativo.
+    path("allenamenti/", views.WorkoutListView.as_view(), name="workout-list"),
+    path(
+        "allenamenti/nuovo/",
+        views.WorkoutCreateView.as_view(),
+        name="workout-create",
+    ),
+    path(
+        "allenamenti/<int:pk>/",
+        views.WorkoutDetailView.as_view(),
+        name="workout-detail",
+    ),
+    path(
+        "allenamenti/<int:pk>/modifica/",
+        views.WorkoutUpdateView.as_view(),
+        name="workout-update",
+    ),
+    path(
+        "allenamenti/<int:pk>/elimina/",
+        views.WorkoutDeleteView.as_view(),
+        name="workout-delete",
+    ),
+    # `workoutset-manage` e non `workout-sets`: il nome della rotta segue il
+    # modello che gestisce, come `routine-exercises` fa con `RoutineExercise`.
+    path(
+        "allenamenti/<int:pk>/serie/",
+        views.WorkoutSetsView.as_view(),
+        name="workoutset-manage",
     ),
     # Esercizi — e qui l'avvertenza di sopra si vede all'opera: `<slug:slug>`
     # cattura anche «panca-piana», quindi nessuna rotta letterale può stargli

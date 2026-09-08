@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% comment %}
+Un template per `CreateView` e `UpdateView`, come per le schede: le due pagine
+differiscono in una parola, e quella parola la decide `form.instance.pk`.
+
+IL FORM NON HA `action`, ed è deliberato. «Avvia allenamento da scheda» porta
+la scheda in query string — `/allenamenti/nuovo/?scheda=3` — e un form senza
+`action` invia all'URL corrente *con* la sua query string. Scrivere un
+`action` col tag `url` la perderebbe, e il POST creerebbe un allenamento vuoto
+invece di uno precompilato: un guasto silenzioso, perché la pagina risponde
+comunque 302 e sembra aver funzionato.
+
+I due campi orario sono `<input type="datetime-local">`, l'unico modo di
+chiedere data e ora senza JavaScript. Il formato che quel campo parla non è
+quello italiano di `DATETIME_INPUT_FORMATS`: la conversione sta in
+`training.forms.LocalDateTimeField`, non qui.
+{% endcomment %}
+
+{% block title %}{% if form.instance.pk %}Modifica allenamento{% else %}Nuovo allenamento{% endif %} — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-7">
+
+    <div class="mb-4">
+      <div class="eyebrow">Storico</div>
+      <h1 class="h4 fw-bold mb-0">
+        {% if form.instance.pk %}Modifica «{{ form.instance.title }}»{% else %}Nuovo allenamento{% endif %}
+      </h1>
+    </div>
+
+    {% if scheda %}
+    <div class="card-ink p-3 mb-3">
+      <div class="rail">
+        <div class="eyebrow mb-1" style="color:var(--volt)">Da scheda: {{ scheda.name }}</div>
+        <div style="color:var(--t2);font-size:.9rem">
+          Salvando, le
+          <strong>{{ scheda.exercises.count }}</strong>
+          voc{{ scheda.exercises.count|pluralize:"e,i" }} della scheda diventano
+          serie già scritte, col carico dell'ultima volta che le hai fatte — o
+          con l'attrezzo scarico, se è la prima. Nella pagina successiva
+          correggi i numeri veri e togli la spunta a ciò che hai saltato.
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <form method="post" novalidate class="card-ink p-4">
+      {% csrf_token %}
+
+      {% if form.non_field_errors %}
+      <div class="rail mb-3" style="border-color:var(--red)">
+        {% for errore in form.non_field_errors %}
+        <div style="color:var(--red);font-size:.85rem">{{ errore }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <div class="mb-3">
+        <label for="{{ form.title.id_for_label }}" class="eyebrow d-block mb-1">Titolo</label>
+        {{ form.title }}
+        {% for errore in form.title.errors %}
+        <div style="color:var(--red);font-size:.82rem">{{ errore }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="row g-3 mb-3">
+        <div class="col-12 col-md-6">
+          <label for="{{ form.started_at.id_for_label }}" class="eyebrow d-block mb-1">Iniziato il</label>
+          {{ form.started_at }}
+          {% for errore in form.started_at.errors %}
+          <div style="color:var(--red);font-size:.82rem">{{ errore }}</div>
+          {% endfor %}
+        </div>
+        <div class="col-12 col-md-6">
+          <label for="{{ form.ended_at.id_for_label }}" class="eyebrow d-block mb-1">Finito il</label>
+          {{ form.ended_at }}
+          {% for errore in form.ended_at.errors %}
+          <div style="color:var(--red);font-size:.82rem">{{ errore }}</div>
+          {% endfor %}
+        </div>
+      </div>
+      <div class="mb-3" style="color:var(--t3);font-size:.8rem">
+        La fine è facoltativa: un allenamento in corso non ce l'ha ancora, e si
+        aggiunge dopo. L'unica cosa che non può succedere è che finisca prima
+        di cominciare.
+      </div>
+
+      <div class="mb-3">
+        <label for="{{ form.notes.id_for_label }}" class="eyebrow d-block mb-1">Note</label>
+        {{ form.notes }}
+        {% for errore in form.notes.errors %}
+        <div style="color:var(--red);font-size:.82rem">{{ errore }}</div>
+        {% endfor %}
+      </div>
+
+      <div class="d-flex gap-3 align-items-center mt-4">
+        <button type="submit" class="btn btn-volt px-4 py-2">
+          {% if form.instance.pk %}Salva{% elif scheda %}Avvia l'allenamento{% else %}Crea l'allenamento{% endif %}
+        </button>
+        <a href="{% if form.instance.pk %}{% url 'training:workout-detail' form.instance.pk %}{% elif scheda %}{% url 'training:routine-detail' scheda.pk %}{% else %}{% url 'training:workout-list' %}{% endif %}"
+           style="color:var(--t2);font-size:.9rem">Annulla</a>
+      </div>
+    </form>
+
+  </div>
+</div>
+
+{% endblock %}

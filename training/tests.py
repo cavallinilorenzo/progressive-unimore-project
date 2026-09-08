@@ -17,10 +17,11 @@ from pathlib import Path
 from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
-from django.db import IntegrityError, transaction
+from django.db import IntegrityError, connection, transaction
 from django.template import TemplateDoesNotExist
 from django.template.loader import get_template
 from django.test import TestCase, override_settings
+from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
@@ -1151,6 +1152,718 @@ class ExerciseDetailTests(TestCase):
 
                 self.assertRedirects(response, f"{reverse('login')}?next={url}")
 
+
+
+# --- Il CRUD degli allenamenti (#70) ---------------------------------------
+#
+# Il secondo dei due CRUD completi che pagano il requisito della traccia, e la
+# funzione che tiene insieme il piano e l'eseguito. Si proteggono tre cose, di
+# natura diversa: i quattro verbi, la proprietà dell'oggetto (403 come per le
+# schede), e le regole che il database impone con un `IntegrityError` — cioè
+# con un 500 — se il form non le dice prima in italiano.
+
+
+class WorkoutCrudTests(TestCase):
+    """Creare, leggere, modificare, eliminare un allenamento e le sue serie."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user(username="lorenzo", password=PASSWORD)
+        cls.altro = User.objects.create_user(username="martina", password=PASSWORD)
+
+        group = MuscleGroup.objects.create(code="chest", label_it="Petto", sort_order=1)
+        muscle = Muscle.objects.create(
+            code="chestMid", group=group, label_it="Petto medio", sort_order=1
+        )
+        cls.bilanciere = Equipment.objects.create(
+            code="barbell",
+            label_it="Bilanciere",
+            default_bar_weight_kg=Decimal("20.00"),
+            sort_order=1,
+        )
+        cls.corpo_libero = Equipment.objects.create(
+            code="bodyweight",
+            label_it="Corpo libero",
+            default_bar_weight_kg=Decimal("0.00"),
+            load_increment_kg=Decimal("0.00"),
+            sort_order=2,
+        )
+        cls.panca = Exercise.objects.create(
+            name="Panca piana", slug="panca-piana",
+            primary_muscle=muscle, equipment=cls.bilanciere,
+        )
+        cls.trazioni = Exercise.objects.create(
+            name="Trazioni", slug="trazioni",
+            primary_muscle=muscle, equipment=cls.corpo_libero,
+        )
+
+    def setUp(self):
+        self.client.force_login(self.user)
+        self.workout = Workout.objects.create(
+            user=self.user, title="Spinta A", started_at=timezone.now()
+        )
+
+    #: Il formato che `<input type="datetime-local">` invia. Non è quello
+    #: italiano, ed è tutto il punto di `LocalDateTimeField`.
+    def datetime_local(self, quando):
+        return timezone.localtime(quando).strftime("%Y-%m-%dT%H:%M")
+
+    def formset_payload(self, righe, iniziali=0):
+        """Il `management_form` più le righe. Prefisso `sets`, da `related_name`."""
+        payload = {
+            "sets-TOTAL_FORMS": str(len(righe)),
+            "sets-INITIAL_FORMS": str(iniziali),
+            "sets-MIN_NUM_FORMS": "0",
+            "sets-MAX_NUM_FORMS": "1000",
+        }
+        for indice, riga in enumerate(righe):
+            for campo, valore in riga.items():
+                payload[f"sets-{indice}-{campo}"] = valore
+        return payload
+
+    # --- I quattro verbi ------------------------------------------------
+
+    def test_create_read_update_delete_a_workout(self):
+        inizio = timezone.now()
+
+        creazione = self.client.post(
+            reverse("training:workout-create"),
+            {
+                "title": "Spinta B",
+                "started_at": self.datetime_local(inizio),
+                "ended_at": "",
+                "notes": "Spalla destra un po' rigida.",
+            },
+        )
+        nuovo = Workout.objects.get(title="Spinta B")
+        # Chi crea un allenamento atterra sulle serie, non sulla lista.
+        self.assertRedirects(
+            creazione, reverse("training:workoutset-manage", args=[nuovo.pk])
+        )
+        self.assertEqual(nuovo.user, self.user)
+
+        lettura = self.client.get(reverse("training:workout-detail", args=[nuovo.pk]))
+        self.assertEqual(lettura.status_code, 200)
+        self.assertContains(lettura, "Spinta B")
+        self.assertContains(lettura, "Spalla destra")
+
+        modifica = self.client.post(
+            reverse("training:workout-update", args=[nuovo.pk]),
+            {
+                "title": "Spinta B — pesante",
+                "started_at": self.datetime_local(inizio),
+                "ended_at": self.datetime_local(inizio + timedelta(minutes=75)),
+                "notes": "",
+            },
+        )
+        self.assertRedirects(
+            modifica, reverse("training:workout-detail", args=[nuovo.pk])
+        )
+        nuovo.refresh_from_db()
+        self.assertEqual(nuovo.title, "Spinta B — pesante")
+        self.assertIsNotNone(nuovo.ended_at)
+
+        cancellazione = self.client.post(
+            reverse("training:workout-delete", args=[nuovo.pk])
+        )
+        self.assertRedirects(cancellazione, reverse("training:workout-list"))
+        self.assertFalse(Workout.objects.filter(pk=nuovo.pk).exists())
+
+    def test_the_list_shows_only_my_workouts(self):
+        Workout.objects.create(
+            user=self.altro, title="Roba di Martina", started_at=timezone.now()
+        )
+
+        response = self.client.get(reverse("training:workout-list"))
+
+        self.assertContains(response, "Spinta A")
+        self.assertNotContains(response, "Roba di Martina")
+
+    def test_the_list_counts_only_the_sets_that_were_actually_done(self):
+        """Dodici serie di cui tre saltate ne fanno nove: nove è il numero vero."""
+        for numero in range(1, 4):
+            WorkoutSet.objects.create(
+                workout=self.workout, exercise=self.panca, set_number=numero,
+                reps=8, weight=Decimal("60.00"),
+            )
+        WorkoutSet.objects.create(
+            workout=self.workout, exercise=self.panca, set_number=4,
+            reps=None, weight=None, is_completed=False,
+        )
+        WorkoutSet.objects.create(
+            workout=self.workout, exercise=self.trazioni, set_number=1, reps=6,
+        )
+
+        allenamento = self.client.get(
+            reverse("training:workout-list")
+        ).context["allenamenti"][0]
+
+        self.assertEqual(allenamento.n_serie, 4)  # le eseguite, non le cinque
+        self.assertEqual(allenamento.n_esercizi, 2)
+
+    # --- La proprietà dell'oggetto --------------------------------------
+
+    def test_a_second_user_gets_403_on_every_owned_route(self):
+        self.client.force_login(self.altro)
+
+        for nome in (
+            "workout-detail",
+            "workout-update",
+            "workout-delete",
+            "workoutset-manage",
+        ):
+            with self.subTest(rotta=nome):
+                response = self.client.get(reverse(f"training:{nome}", args=[self.workout.pk]))
+                self.assertEqual(response.status_code, 403)
+
+    def test_a_second_user_cannot_delete_or_edit_by_post_either(self):
+        """Il 403 sul GET non basta: il POST è la richiesta che fa il danno."""
+        self.client.force_login(self.altro)
+
+        cancellazione = self.client.post(
+            reverse("training:workout-delete", args=[self.workout.pk])
+        )
+        self.assertEqual(cancellazione.status_code, 403)
+        self.assertTrue(Workout.objects.filter(pk=self.workout.pk).exists())
+
+        serie = self.client.post(
+            reverse("training:workoutset-manage", args=[self.workout.pk]),
+            self.formset_payload([
+                {"exercise": self.panca.pk, "set_number": "1", "reps": "8",
+                 "weight": "60", "set_type": "working", "is_completed": "on"},
+            ]),
+        )
+        self.assertEqual(serie.status_code, 403)
+        self.assertEqual(self.workout.sets.count(), 0)
+
+    def test_an_anonymous_visitor_is_sent_to_the_login_not_to_a_403(self):
+        self.client.logout()
+
+        response = self.client.get(reverse("training:workout-list"))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(settings.LOGIN_URL, response.url)
+
+    def test_the_owner_is_taken_from_the_request_not_from_the_post(self):
+        """`user` non è un campo del form: un POST costruito a mano non lo tocca."""
+        self.client.post(
+            reverse("training:workout-create"),
+            {
+                "title": "Provo a intestarlo a un altro",
+                "started_at": self.datetime_local(timezone.now()),
+                "ended_at": "",
+                "notes": "",
+                "user": self.altro.pk,
+            },
+        )
+
+        nuovo = Workout.objects.get(title="Provo a intestarlo a un altro")
+        self.assertEqual(nuovo.user, self.user)
+
+    # --- Le regole che il form deve dire prima del database -------------
+
+    def test_the_datetime_local_format_is_accepted_and_read_back(self):
+        """Il progetto è in `it-it`, l'input nativo parla ISO: la coppia va tradotta.
+
+        Senza `LocalDateTimeField` questo POST tornerebbe indietro con
+        «Inserisci una data/ora valida» su un valore che ha composto il
+        browser, e la modifica aprirebbe il campo vuoto.
+        """
+        quando = timezone.now().replace(second=0, microsecond=0)
+
+        creazione = self.client.post(
+            reverse("training:workout-create"),
+            {
+                "title": "Orario ISO",
+                "started_at": self.datetime_local(quando),
+                "ended_at": "",
+                "notes": "",
+            },
+        )
+        self.assertEqual(creazione.status_code, 302)
+
+        nuovo = Workout.objects.get(title="Orario ISO")
+        self.assertEqual(
+            timezone.localtime(nuovo.started_at).strftime("%Y-%m-%dT%H:%M"),
+            self.datetime_local(quando),
+        )
+
+        modifica = self.client.get(reverse("training:workout-update", args=[nuovo.pk]))
+        self.assertContains(modifica, f'value="{self.datetime_local(quando)}"')
+
+    def test_a_workout_that_ends_before_it_starts_is_a_form_error_not_a_500(self):
+        inizio = timezone.now()
+
+        response = self.client.post(
+            reverse("training:workout-create"),
+            {
+                "title": "Al contrario",
+                "started_at": self.datetime_local(inizio),
+                "ended_at": self.datetime_local(inizio - timedelta(hours=2)),
+                "notes": "",
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "prima di cominciare")
+        self.assertFalse(Workout.objects.filter(title="Al contrario").exists())
+
+    def test_absurd_durations_still_go_through_the_form(self):
+        """Zero minuti e venticinque ore restano ammessi: lo storico vero ne ha."""
+        inizio = timezone.now()
+
+        for etichetta, fine in (
+            ("Zero minuti", inizio),
+            ("Venticinque ore", inizio + timedelta(hours=25)),
+        ):
+            with self.subTest(durata=etichetta):
+                response = self.client.post(
+                    reverse("training:workout-create"),
+                    {
+                        "title": etichetta,
+                        "started_at": self.datetime_local(inizio),
+                        "ended_at": self.datetime_local(fine),
+                        "notes": "",
+                    },
+                )
+                self.assertEqual(response.status_code, 302)
+                self.assertTrue(Workout.objects.filter(title=etichetta).exists())
+
+    # --- Il formset delle serie -----------------------------------------
+
+    def test_the_formset_adds_updates_and_removes_sets(self):
+        url = reverse("training:workoutset-manage", args=[self.workout.pk])
+
+        aggiunta = self.client.post(url, self.formset_payload([
+            {"exercise": self.panca.pk, "set_number": "1", "reps": "8",
+             "weight": "60", "set_type": "working", "is_completed": "on"},
+            {"exercise": self.panca.pk, "set_number": "2", "reps": "8",
+             "weight": "60", "set_type": "working", "is_completed": "on"},
+        ]))
+        self.assertRedirects(
+            aggiunta, reverse("training:workout-detail", args=[self.workout.pk])
+        )
+        self.assertEqual(self.workout.sets.count(), 2)
+
+        prima, seconda = self.workout.sets.order_by("set_number")
+
+        modifica = self.client.post(url, self.formset_payload(
+            [
+                {"id": prima.pk, "exercise": self.panca.pk, "set_number": "1",
+                 "reps": "10", "weight": "62.5", "set_type": "working",
+                 "is_completed": "on"},
+                {"id": seconda.pk, "exercise": self.panca.pk, "set_number": "2",
+                 "reps": "8", "weight": "60", "set_type": "working",
+                 "is_completed": "on", "DELETE": "on"},
+            ],
+            iniziali=2,
+        ))
+        self.assertEqual(modifica.status_code, 302)
+
+        prima.refresh_from_db()
+        self.assertEqual(prima.reps, 10)
+        self.assertEqual(prima.weight, Decimal("62.50"))
+        self.assertEqual(self.workout.sets.count(), 1)
+
+    def test_empty_rows_are_ignored(self):
+        """Cinque righe vuote in coda non sono cinque errori.
+
+        `is_completed` ha `default=True`, quindi una riga in bianco arriva al
+        `clean` con la spunta messa e senza ripetizioni: senza la guardia della
+        riga vuota, `extra=5` renderebbe la pagina impossibile da salvare.
+        """
+        piena = {"exercise": self.panca.pk, "set_number": "1", "reps": "8",
+                 "weight": "60", "set_type": "working", "is_completed": "on"}
+        vuota = {"exercise": "", "set_number": "", "reps": "", "weight": "",
+                 "set_type": "working"}
+
+        # La casella nasce spuntata, quindi entrambe le forme arrivano davvero
+        # dal browser: chi lascia stare le righe in coda, e chi toglie la
+        # spunta a una riga che non intende compilare. La seconda è quella che
+        # rompeva la pagina.
+        for etichetta, spunta in (("lasciata", {"is_completed": "on"}), ("tolta", {})):
+            with self.subTest(spunta=etichetta):
+                self.workout.sets.all().delete()
+
+                response = self.client.post(
+                    reverse("training:workoutset-manage", args=[self.workout.pk]),
+                    self.formset_payload([
+                        dict(piena),
+                        {**vuota, **spunta},
+                        {**vuota, **spunta},
+                    ]),
+                )
+
+                self.assertEqual(response.status_code, 302)
+                self.assertEqual(self.workout.sets.count(), 1)
+
+    def test_a_skipped_set_needs_neither_reps_nor_weight(self):
+        """È il senso di `is_completed`: «saltata» non è «zero ripetizioni»."""
+        response = self.client.post(
+            reverse("training:workoutset-manage", args=[self.workout.pk]),
+            self.formset_payload([
+                {"exercise": self.panca.pk, "set_number": "1", "reps": "",
+                 "weight": "", "set_type": "working"},
+            ]),
+        )
+
+        self.assertEqual(response.status_code, 302)
+        serie = self.workout.sets.get()
+        self.assertFalse(serie.is_completed)
+        self.assertIsNone(serie.reps)
+
+    def test_a_completed_set_without_reps_is_a_form_error_not_a_500(self):
+        """`workout_set_completed_has_reps`, detto prima che lo dica SQLite."""
+        response = self.client.post(
+            reverse("training:workoutset-manage", args=[self.workout.pk]),
+            self.formset_payload([
+                {"exercise": self.panca.pk, "set_number": "1", "reps": "",
+                 "weight": "60", "set_type": "working", "is_completed": "on"},
+            ]),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "togli la spunta")
+        self.assertEqual(self.workout.sets.count(), 0)
+
+    def test_zero_weight_is_accepted_because_bodyweight_exists(self):
+        response = self.client.post(
+            reverse("training:workoutset-manage", args=[self.workout.pk]),
+            self.formset_payload([
+                {"exercise": self.trazioni.pk, "set_number": "1", "reps": "6",
+                 "weight": "0", "set_type": "working", "is_completed": "on"},
+            ]),
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.workout.sets.get().weight, Decimal("0.00"))
+
+    def test_the_same_set_number_twice_on_one_exercise_is_a_form_error(self):
+        """`workout_set_unique` è `(workout, exercise, set_number)`.
+
+        La terna arriva spezzata al singolo form — `workout` è l'istanza del
+        formset — quindi la regola vive nel `clean` del formset. Senza,
+        sarebbe un `IntegrityError`.
+        """
+        response = self.client.post(
+            reverse("training:workoutset-manage", args=[self.workout.pk]),
+            self.formset_payload([
+                {"exercise": self.panca.pk, "set_number": "2", "reps": "8",
+                 "weight": "60", "set_type": "working", "is_completed": "on"},
+                {"exercise": self.panca.pk, "set_number": "2", "reps": "8",
+                 "weight": "60", "set_type": "working", "is_completed": "on"},
+            ]),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "si numerano")
+        self.assertEqual(self.workout.sets.count(), 0)
+
+    def test_the_same_set_number_on_two_different_exercises_is_fine(self):
+        """La serie 1 di panca e la serie 1 di trazioni non sono un duplicato."""
+        response = self.client.post(
+            reverse("training:workoutset-manage", args=[self.workout.pk]),
+            self.formset_payload([
+                {"exercise": self.panca.pk, "set_number": "1", "reps": "8",
+                 "weight": "60", "set_type": "working", "is_completed": "on"},
+                {"exercise": self.trazioni.pk, "set_number": "1", "reps": "6",
+                 "weight": "0", "set_type": "working", "is_completed": "on"},
+            ]),
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(self.workout.sets.count(), 2)
+
+    def test_the_sets_page_does_not_requery_the_catalogue_per_row(self):
+        """Il costo della pagina non cresce con le righe.
+
+        `ModelChoiceField` interroga il database ogni volta che il campo viene
+        reso, e qui i campi sono uno per serie: sul catalogo vero la pagina
+        faceva 27 query, quasi tutte identiche. La guardia non fissa un numero
+        — cambierebbe al primo `select_related` in più — ma l'**invariante**:
+        due serie o dodici, le query sono le stesse.
+        """
+        url = reverse("training:workoutset-manage", args=[self.workout.pk])
+
+        def rendi_con(n_serie):
+            self.workout.sets.all().delete()
+            WorkoutSet.objects.bulk_create([
+                WorkoutSet(workout=self.workout, exercise=self.panca,
+                           set_number=numero, reps=8, weight=Decimal("60.00"))
+                for numero in range(1, n_serie + 1)
+            ])
+            with CaptureQueriesContext(connection) as contesto:
+                self.assertEqual(self.client.get(url).status_code, 200)
+            return len(contesto.captured_queries)
+
+        self.assertEqual(rendi_con(2), rendi_con(12))
+
+    # --- Il guscio ------------------------------------------------------
+
+    def test_the_header_links_to_the_history_are_real_routes(self):
+        """#67 aveva lasciato due `href` letterali: la voce e il bottone."""
+        response = self.client.get(reverse("training:dashboard"))
+
+        self.assertContains(response, f'href="{reverse("training:workout-list")}"')
+        self.assertContains(response, f'href="{reverse("training:workout-create")}"')
+
+    def test_only_the_history_section_lights_up_on_a_workout_page(self):
+        response = self.client.get(
+            reverse("training:workoutset-manage", args=[self.workout.pk])
+        )
+        body = response.content.decode()
+
+        self.assertIn('class="attivo">Storico</a>', body)
+        self.assertIn('class="">Schede</a>', body)
+
+
+class StartWorkoutFromRoutineTests(TestCase):
+    """«Avvia allenamento da scheda»: il pezzo che tiene insieme piano ed eseguito.
+
+    Una pagina, un POST, zero JavaScript. Ciò che va protetto non è che la
+    pagina renda, ma che la **precompilazione** sia quella promessa: le serie
+    pianificate, col carico dell'ultima volta, e senza inventare numeri dove
+    un dato precedente non c'è.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user(username="lorenzo", password=PASSWORD)
+        cls.altro = User.objects.create_user(username="martina", password=PASSWORD)
+
+        group = MuscleGroup.objects.create(code="chest", label_it="Petto", sort_order=1)
+        muscle = Muscle.objects.create(
+            code="chestMid", group=group, label_it="Petto medio", sort_order=1
+        )
+        cls.bilanciere = Equipment.objects.create(
+            code="barbell", label_it="Bilanciere",
+            default_bar_weight_kg=Decimal("20.00"), sort_order=1,
+        )
+        cls.corpo_libero = Equipment.objects.create(
+            code="bodyweight", label_it="Corpo libero",
+            default_bar_weight_kg=Decimal("0.00"),
+            load_increment_kg=Decimal("0.00"), sort_order=2,
+        )
+        cls.panca = Exercise.objects.create(
+            name="Panca piana", slug="panca-piana",
+            primary_muscle=muscle, equipment=cls.bilanciere,
+        )
+        cls.trazioni = Exercise.objects.create(
+            name="Trazioni", slug="trazioni",
+            primary_muscle=muscle, equipment=cls.corpo_libero,
+        )
+
+    def setUp(self):
+        self.client.force_login(self.user)
+        self.scheda = Routine.objects.create(user=self.user, name="Spinta A")
+        RoutineExercise.objects.create(
+            routine=self.scheda, exercise=self.panca, position=1,
+            target_sets=3, target_reps=8, target_reps_max=12,
+        )
+        RoutineExercise.objects.create(
+            routine=self.scheda, exercise=self.trazioni, position=2,
+            target_sets=2, target_reps=6,
+        )
+
+    def url_avvio(self, scheda=None):
+        base = reverse("training:workout-create")
+        return base if scheda is None else f"{base}?scheda={scheda.pk}"
+
+    def avvia(self, scheda=None, titolo="Spinta A"):
+        return self.client.post(
+            self.url_avvio(scheda),
+            {
+                "title": titolo,
+                "started_at": timezone.localtime().strftime("%Y-%m-%dT%H:%M"),
+                "ended_at": "",
+                "notes": "",
+            },
+        )
+
+    def serie_passata(self, exercise, weight, giorni_fa, is_completed=True):
+        allenamento = Workout.objects.create(
+            user=self.user,
+            title="Vecchio",
+            started_at=timezone.now() - timedelta(days=giorni_fa),
+        )
+        return WorkoutSet.objects.create(
+            workout=allenamento, exercise=exercise, set_number=1,
+            reps=8 if is_completed else None,
+            weight=weight, is_completed=is_completed,
+        )
+
+    # --- La precompilazione ---------------------------------------------
+
+    def test_the_page_offers_the_routine_it_will_start_from(self):
+        response = self.client.get(self.url_avvio(self.scheda))
+
+        self.assertEqual(response.status_code, 200)
+        # Il titolo arriva già scritto: è l'istantanea del nome della scheda.
+        self.assertContains(response, 'value="Spinta A"')
+        self.assertContains(response, "Da scheda: Spinta A")
+
+    def test_starting_from_a_routine_writes_the_planned_sets(self):
+        risposta = self.avvia(self.scheda)
+
+        allenamento = Workout.objects.get(title="Spinta A")
+        self.assertRedirects(
+            risposta, reverse("training:workoutset-manage", args=[allenamento.pk])
+        )
+        self.assertEqual(allenamento.routine, self.scheda)
+
+        # Tre serie di panca più due di trazioni, numerate da 1 per esercizio.
+        self.assertEqual(allenamento.sets.count(), 5)
+        panca = allenamento.sets.filter(exercise=self.panca).order_by("set_number")
+        self.assertEqual([s.set_number for s in panca], [1, 2, 3])
+        # L'estremo *basso* del bersaglio: l'alto è ciò che va conquistato.
+        self.assertEqual({s.reps for s in panca}, {8})
+        self.assertTrue(all(s.is_completed for s in panca))
+
+    def test_the_weight_starts_from_the_last_time_the_exercise_was_done(self):
+        self.serie_passata(self.panca, Decimal("60.00"), giorni_fa=14)
+        self.serie_passata(self.panca, Decimal("65.00"), giorni_fa=3)
+
+        self.avvia(self.scheda)
+
+        allenamento = Workout.objects.get(title="Spinta A")
+        pesi = {s.weight for s in allenamento.sets.filter(exercise=self.panca)}
+        self.assertEqual(pesi, {Decimal("65.00")})
+
+    def test_without_a_previous_time_the_weight_is_the_empty_bar(self):
+        """20 kg sul bilanciere, 0 sul corpo libero: il minimo vero, non una stima."""
+        self.avvia(self.scheda)
+
+        allenamento = Workout.objects.get(title="Spinta A")
+        self.assertEqual(
+            allenamento.sets.filter(exercise=self.panca).first().weight,
+            Decimal("20.00"),
+        )
+        self.assertEqual(
+            allenamento.sets.filter(exercise=self.trazioni).first().weight,
+            Decimal("0.00"),
+        )
+
+    def test_a_skipped_set_is_not_a_weight_to_start_from(self):
+        """Il carico di una serie saltata è un'intenzione, non un dato."""
+        self.serie_passata(self.panca, Decimal("60.00"), giorni_fa=14)
+        self.serie_passata(
+            self.panca, Decimal("90.00"), giorni_fa=1, is_completed=False
+        )
+
+        self.avvia(self.scheda)
+
+        allenamento = Workout.objects.get(title="Spinta A")
+        self.assertEqual(
+            allenamento.sets.filter(exercise=self.panca).first().weight,
+            Decimal("60.00"),
+        )
+
+    def test_someone_elses_history_is_not_my_starting_weight(self):
+        altro_allenamento = Workout.objects.create(
+            user=self.altro, title="Suo", started_at=timezone.now()
+        )
+        WorkoutSet.objects.create(
+            workout=altro_allenamento, exercise=self.panca, set_number=1,
+            reps=8, weight=Decimal("140.00"),
+        )
+
+        self.avvia(self.scheda)
+
+        allenamento = Workout.objects.get(title="Spinta A")
+        self.assertEqual(
+            allenamento.sets.filter(exercise=self.panca).first().weight,
+            Decimal("20.00"),
+        )
+
+    def test_a_zero_rep_target_becomes_a_skipped_set_not_a_500(self):
+        """`target_reps` a zero passa il database ma violerebbe il check sulla serie.
+
+        Nasce **saltata**, che è l'unica lettura coerente: una riga senza
+        ripetizioni non è una serie eseguita a zero.
+        """
+        RoutineExercise.objects.filter(exercise=self.trazioni).update(target_reps=0)
+
+        risposta = self.avvia(self.scheda)
+
+        self.assertEqual(risposta.status_code, 302)
+        allenamento = Workout.objects.get(title="Spinta A")
+        saltate = allenamento.sets.filter(exercise=self.trazioni)
+        self.assertEqual(saltate.count(), 2)
+        self.assertFalse(any(s.is_completed for s in saltate))
+        self.assertTrue(all(s.reps is None for s in saltate))
+
+    # --- I confini ------------------------------------------------------
+
+    def test_a_workout_started_without_a_routine_is_empty_and_unlinked(self):
+        risposta = self.avvia(scheda=None, titolo="A mano")
+
+        self.assertEqual(risposta.status_code, 302)
+        allenamento = Workout.objects.get(title="A mano")
+        self.assertIsNone(allenamento.routine)
+        self.assertEqual(allenamento.sets.count(), 0)
+
+    def test_a_second_users_routine_cannot_be_started(self):
+        """403 come per il mixin: il parametro è in query string, la regola no."""
+        sua = Routine.objects.create(user=self.altro, name="Sua")
+
+        lettura = self.client.get(self.url_avvio(sua))
+        self.assertEqual(lettura.status_code, 403)
+
+        scrittura = self.avvia(sua, titolo="Rubata")
+        self.assertEqual(scrittura.status_code, 403)
+        self.assertFalse(Workout.objects.filter(title="Rubata").exists())
+
+    def test_an_unknown_routine_is_a_404(self):
+        response = self.client.get(f"{reverse('training:workout-create')}?scheda=9999")
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_a_nonsense_routine_parameter_is_ignored_not_a_500(self):
+        response = self.client.get(f"{reverse('training:workout-create')}?scheda=pippo")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIsNone(response.context["scheda"])
+
+    # --- ADR-0002 dal lato della view -----------------------------------
+
+    def test_the_title_is_a_snapshot_not_a_reference(self):
+        """Rinominare la scheda non riscrive il passato."""
+        self.avvia(self.scheda)
+        allenamento = Workout.objects.get(title="Spinta A")
+
+        self.scheda.name = "Spinta A — rivista"
+        self.scheda.save()
+
+        allenamento.refresh_from_db()
+        self.assertEqual(allenamento.title, "Spinta A")
+
+    def test_deleting_the_routine_leaves_the_workout_and_its_sets(self):
+        self.avvia(self.scheda)
+        allenamento = Workout.objects.get(title="Spinta A")
+
+        self.client.post(reverse("training:routine-delete", args=[self.scheda.pk]))
+
+        allenamento.refresh_from_db()
+        self.assertIsNone(allenamento.routine)
+        self.assertEqual(allenamento.title, "Spinta A")
+        self.assertEqual(allenamento.sets.count(), 5)
+
+    def test_the_routine_page_offers_to_start_a_workout(self):
+        response = self.client.get(
+            reverse("training:routine-detail", args=[self.scheda.pk])
+        )
+
+        self.assertContains(response, f'{self.url_avvio(self.scheda)}"')
+
+    def test_an_empty_routine_does_not_offer_to_start_a_workout(self):
+        """Precompilerebbe zero serie, e un allenamento vuoto sembra un guasto."""
+        vuota = Routine.objects.create(user=self.user, name="Ancora da riempire")
+
+        response = self.client.get(
+            reverse("training:routine-detail", args=[vuota.pk])
+        )
+
+        self.assertNotContains(response, f'{self.url_avvio(vuota)}"')
 
 
 # --- La community e il voto (#72) ------------------------------------------
