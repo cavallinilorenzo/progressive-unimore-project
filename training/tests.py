@@ -25,6 +25,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from training import views
+from training.forms import VoteForm
 from training.models import (
     Equipment,
     Exercise,
@@ -1150,3 +1151,258 @@ class ExerciseDetailTests(TestCase):
 
                 self.assertRedirects(response, f"{reverse('login')}?next={url}")
 
+
+
+# --- La community e il voto (#72) ------------------------------------------
+#
+# Il **terzo CRUD**, e con lui i due test che `07-test.md` §3 mette fra i
+# quattro che contano: l'autovoto e la scheda non pubblica. Non sono
+# raffinatezze e non sono `CheckConstraint` — attraversano una relazione,
+# quindi nessun vincolo di database può imporli, e vivono nel form e nella
+# view. È esattamente il tipo di regola che si perde in un refactor senza che
+# niente segnali l'errore: la pagina continua a rendere, la classifica sociale
+# comincia solo a mentire.
+
+
+class PublicRoutineAndVoteTests(TestCase):
+    """`/schede/pubbliche/` e il CRUD su `Vote`."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.autore = User.objects.create_user(username="lorenzo", password=PASSWORD)
+        cls.lettore = User.objects.create_user(username="martina", password=PASSWORD)
+        cls.terzo = User.objects.create_user(username="giulia", password=PASSWORD)
+
+        group = MuscleGroup.objects.create(code="chest", label_it="Petto", sort_order=1)
+        muscle = Muscle.objects.create(
+            code="chestMid", group=group, label_it="Petto medio", sort_order=1
+        )
+        equipment = Equipment.objects.create(
+            code="barbell", label_it="Bilanciere", sort_order=1
+        )
+        cls.panca = Exercise.objects.create(
+            name="Panca piana", slug="panca-piana",
+            primary_muscle=muscle, equipment=equipment,
+        )
+
+    def setUp(self):
+        self.pubblica = Routine.objects.create(
+            user=self.autore, name="Spinta A", is_public=True
+        )
+        RoutineExercise.objects.create(
+            routine=self.pubblica, exercise=self.panca,
+            position=1, target_sets=3, target_reps=8, target_reps_max=12,
+        )
+        self.privata = Routine.objects.create(
+            user=self.autore, name="Bozza segreta", is_public=False
+        )
+        self.client.force_login(self.lettore)
+
+    def url_detail(self, routine):
+        return reverse("training:routine-public-detail", args=[routine.pk])
+
+    # --- La community ---------------------------------------------------
+
+    def test_the_community_lists_only_public_routines(self):
+        """`is_public` è l'unico consenso dato dall'autore, e vale come filtro."""
+        response = self.client.get(reverse("training:routine-public-list"))
+
+        self.assertContains(response, "Spinta A")
+        self.assertNotContains(response, "Bozza segreta")
+
+    def test_the_community_shows_the_average_with_the_number_of_votes(self):
+        """«4,5» su due voti e «4,5» su cento non sono lo stesso numero."""
+        Vote.objects.create(user=self.lettore, routine=self.pubblica, score=4)
+        Vote.objects.create(user=self.terzo, routine=self.pubblica, score=5)
+
+        response = self.client.get(reverse("training:routine-public-list"))
+
+        self.assertContains(response, "4,5/5")
+        self.assertContains(response, "2 voti")
+
+    def test_the_community_is_reachable_from_inside_the_routines_section(self):
+        """La regola di navigazione: nessun link orfano, e nessuna sesta voce."""
+        response = self.client.get(reverse("training:routine-list"))
+
+        self.assertContains(
+            response, f'href="{reverse("training:routine-public-list")}"'
+        )
+
+    def test_the_community_lights_up_the_routines_section_and_only_that(self):
+        response = self.client.get(reverse("training:routine-public-list"))
+        body = response.content.decode()
+
+        self.assertIn('class="attivo">Schede</a>', body)
+        self.assertIn('class="">Esercizi</a>', body)
+
+    def test_a_private_routine_has_no_public_page(self):
+        """404 e non 403: finché l'autore non la espone, da qui non esiste."""
+        for chi in (self.lettore, self.autore):
+            with self.subTest(utente=chi.get_username()):
+                self.client.force_login(chi)
+
+                response = self.client.get(self.url_detail(self.privata))
+
+                self.assertEqual(response.status_code, 404)
+
+    def test_the_public_page_shows_the_routine_of_someone_else(self):
+        response = self.client.get(self.url_detail(self.pubblica))
+
+        self.assertContains(response, "Spinta A")
+        self.assertContains(response, "Panca piana")
+        self.assertContains(response, "lorenzo")
+
+    def test_the_community_is_private_like_the_rest(self):
+        self.client.logout()
+
+        for url in (
+            reverse("training:routine-public-list"),
+            self.url_detail(self.pubblica),
+        ):
+            with self.subTest(url=url):
+                response = self.client.get(url)
+
+                self.assertRedirects(response, f"{reverse('login')}?next={url}")
+
+    # --- I tre verbi del voto -------------------------------------------
+
+    def test_create_update_and_delete_my_vote(self):
+        """Creare, **modificare** e cancellare: è il terzo CRUD, per intero."""
+        url = self.url_detail(self.pubblica)
+
+        # Creare.
+        response = self.client.post(url, {"score": "4", "comment": "Buona spinta."})
+        self.assertRedirects(response, url)
+        voto = Vote.objects.get(user=self.lettore, routine=self.pubblica)
+        self.assertEqual(voto.score, 4)
+        self.assertEqual(voto.comment, "Buona spinta.")
+
+        # Modificare: il secondo invio **aggiorna** invece di violare
+        # l'unicità `(user, routine)` con un `IntegrityError`.
+        response = self.client.post(url, {"score": "2", "comment": "Ci ho ripensato."})
+        self.assertRedirects(response, url)
+        self.assertEqual(Vote.objects.filter(routine=self.pubblica).count(), 1)
+        voto.refresh_from_db()
+        self.assertEqual(voto.score, 2)
+
+        # Cancellare: la conferma è una pagina, l'effetto è nel POST.
+        conferma = reverse("training:vote-delete", args=[self.pubblica.pk])
+        self.assertEqual(self.client.get(conferma).status_code, 200)
+        self.assertTrue(Vote.objects.filter(pk=voto.pk).exists())
+
+        response = self.client.post(conferma)
+        self.assertRedirects(response, url)
+        self.assertFalse(Vote.objects.filter(pk=voto.pk).exists())
+
+    def test_the_voter_is_taken_from_the_request_not_from_the_post(self):
+        """`user` e `routine` non sono campi del form: li mette la view."""
+        self.client.post(
+            self.url_detail(self.pubblica),
+            {"score": "5", "comment": "", "user": self.terzo.pk,
+             "routine": self.privata.pk},
+        )
+
+        voto = Vote.objects.get()
+        self.assertEqual(voto.user, self.lettore)
+        self.assertEqual(voto.routine, self.pubblica)
+
+    def test_a_vote_of_someone_else_is_not_mine_to_delete(self):
+        """L'URL porta il `pk` della scheda: il voto di un altro non è puntabile."""
+        Vote.objects.create(user=self.terzo, routine=self.pubblica, score=5)
+
+        response = self.client.post(
+            reverse("training:vote-delete", args=[self.pubblica.pk])
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertEqual(Vote.objects.count(), 1)
+
+    def test_a_score_outside_the_scale_is_a_form_error_not_a_500(self):
+        """Il `CheckConstraint` 1–5 c'è, ma non deve essere lui a rispondere."""
+        response = self.client.post(
+            self.url_detail(self.pubblica), {"score": "7", "comment": ""}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Vote.objects.exists())
+
+    def test_the_page_shows_the_average_and_the_comments_of_the_others(self):
+        Vote.objects.create(
+            user=self.terzo, routine=self.pubblica, score=5, comment="Ottima."
+        )
+
+        response = self.client.get(self.url_detail(self.pubblica))
+
+        self.assertContains(response, "Ottima.")
+        self.assertContains(response, "giulia")
+
+    # --- Le due regole che il database non può imporre (07-test.md §3) ---
+
+    def test_voting_your_own_routine_is_refused(self):
+        """L'autovoto sposterebbe la classifica sociale senza aggiungere un giudizio.
+
+        Non è un `CheckConstraint`: la regola attraversa la relazione fra
+        `Vote.user` e `Routine.user`, e SQLite non può leggere l'altra tabella.
+        Vive nel form, e il POST arriva **200 con l'errore**, non 302: nessuna
+        riga entra.
+        """
+        self.client.force_login(self.autore)
+
+        response = self.client.post(
+            self.url_detail(self.pubblica), {"score": "5", "comment": "Bella mia."}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Vote.objects.exists())
+        self.assertContains(response, "Non si vota la propria scheda")
+
+    def test_the_owner_never_even_sees_the_form(self):
+        """La faccia visibile della stessa regola: sulla propria scheda niente form."""
+        self.client.force_login(self.autore)
+
+        response = self.client.get(self.url_detail(self.pubblica))
+
+        self.assertNotContains(response, 'name="score"')
+        self.assertContains(response, "Questa scheda è tua")
+
+    def test_a_private_routine_is_not_votable(self):
+        """La seconda regola, e vale a due livelli.
+
+        Dalla pagina la scheda privata non è raggiungibile — il queryset la
+        esclude, quindi il POST è un 404 — ma la regola non può poggiare solo
+        sul filtro della view: se la scheda venisse resa privata fra il GET e
+        il POST, o se un domani un'altra view riusasse il form, a rifiutare
+        dev'essere il form. Qui si verificano entrambi.
+        """
+        response = self.client.post(
+            self.url_detail(self.privata), {"score": "5", "comment": ""}
+        )
+
+        self.assertEqual(response.status_code, 404)
+        self.assertFalse(Vote.objects.exists())
+
+        form = VoteForm(
+            {"score": "5", "comment": ""},
+            voter=self.lettore,
+            routine=self.privata,
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertIn(
+            "Questa scheda non è pubblica: non è votabile.",
+            form.non_field_errors(),
+        )
+
+    def test_the_form_refuses_the_self_vote_on_its_own(self):
+        """La regola dell'autovoto, presa dal lato del form e non della pagina."""
+        form = VoteForm(
+            {"score": "5", "comment": ""},
+            voter=self.autore,
+            routine=self.pubblica,
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertIn(
+            "Non si vota la propria scheda: il voto è il giudizio degli altri.",
+            form.non_field_errors(),
+        )

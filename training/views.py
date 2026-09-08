@@ -15,7 +15,8 @@ from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.contrib.messages.views import SuccessMessageMixin
-from django.shortcuts import redirect
+from django.db.models import Avg, Count
+from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse, reverse_lazy
 from django.utils import timezone
 from django.views.generic import DetailView, ListView, TemplateView
@@ -26,6 +27,7 @@ from training.forms import (
     RoutineExerciseFormSet,
     RoutineForm,
     SignUpForm,
+    VoteForm,
 )
 from training.models import (
     Equipment,
@@ -33,6 +35,7 @@ from training.models import (
     Muscle,
     MuscleGroup,
     Routine,
+    Vote,
     Workout,
     WorkoutSet,
 )
@@ -376,3 +379,166 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
         )
         return context
 
+
+
+class RoutinePublicListView(LoginRequiredMixin, ListView):
+    """`/schede/pubbliche/` — la community, dentro Schede e non nell'header.
+
+    È la regola di navigazione di `02-pagine-e-template.md` presa alla lettera:
+    l'header porta cinque voci, e ogni altra pagina si raggiunge da dentro la
+    sezione a cui appartiene per dominio. Le schede degli altri sono schede,
+    quindi si entra da `/schede/`.
+
+    L'ordine è **cronologico, non per media**: la classifica sociale è una
+    pagina propria (#76) e ordina per media bayesiana, che è un'altra cosa
+    dalla media grezza — con un voto solo, un 5 secco starebbe in testa alla
+    community per sempre. Qui la media si *mostra* accanto a ogni scheda, e
+    ordinare tocca alla pagina che lo dichiara.
+    """
+
+    model = Routine
+    context_object_name = "routines"
+    template_name = "training/routine_public_list.html"
+
+    def get_queryset(self):
+        # `annotate` invece di calcolare in template: media e conteggio in una
+        # query sola, contro due per riga. `select_related` sull'autore per la
+        # stessa ragione — il nome compare su ogni card.
+        return (
+            Routine.objects.filter(is_public=True)
+            .select_related("user")
+            .annotate(media=Avg("votes__score"), voti=Count("votes"))
+        )
+
+
+class RoutinePublicDetailView(LoginRequiredMixin, DetailView):
+    """`/schede/pubbliche/<pk>/` — la scheda di un altro, con voto e commento.
+
+    Questa pagina è **anche il form del terzo CRUD**: creare e modificare il
+    proprio voto succedono qui, sullo stesso URL, come il formset di
+    `RoutineExercisesView` — un `DetailView` con un `post()`, e non due rotte
+    separate, perché il voto non ha una pagina propria: si esprime guardando la
+    scheda. La cancellazione ha invece la sua rotta (`vote-delete`), perché
+    cancellare è un POST con una conferma.
+
+    Il queryset è filtrato su `is_public`: una scheda privata **non esiste** da
+    qui, e ci si arriva con un 404 — è la seconda delle due regole, applicata a
+    monte del form. Non è un 403 come per le rotte di `OwnerRequiredMixin`: là
+    la domanda è «è tua?» e la risposta onesta è «non è tua», qui la domanda è
+    «esiste una scheda pubblica con questo numero?», e finché l'autore non la
+    espone la risposta è no.
+
+    Il proprietario può aprire la propria scheda pubblica — è così che vede
+    cosa ne pensano gli altri — ma non trova il form: `posso_votare` è falso, e
+    se lo aggirasse con un POST lo fermerebbe `VoteForm.clean`.
+    """
+
+    model = Routine
+    context_object_name = "routine"
+    template_name = "training/routine_public_detail.html"
+
+    def get_queryset(self):
+        return (
+            Routine.objects.filter(is_public=True)
+            .select_related("user")
+            .prefetch_related(
+                "exercises__exercise__equipment",
+                "exercises__exercise__primary_muscle",
+            )
+        )
+
+    def get_mio_voto(self):
+        return Vote.objects.filter(
+            user=self.request.user, routine=self.object
+        ).first()
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+
+        mio_voto = self.get_mio_voto()
+        context["mio_voto"] = mio_voto
+        context["e_mia"] = self.object.user_id == self.request.user.pk
+        context["posso_votare"] = not context["e_mia"]
+
+        # Se il POST è fallito, il form in contesto è quello con gli errori e i
+        # dati dell'utente: non va ricostruito, o li si perde.
+        context.setdefault(
+            "form",
+            VoteForm(
+                instance=mio_voto, voter=self.request.user, routine=self.object
+            ),
+        )
+
+        voti = self.object.votes.select_related("user").exclude(
+            user=self.request.user
+        )
+        context["voti"] = voti
+        aggregato = self.object.votes.aggregate(
+            media=Avg("score"), conteggio=Count("pk")
+        )
+        context["media"] = aggregato["media"]
+        context["conteggio"] = aggregato["conteggio"]
+        return context
+
+    def post(self, request, *args, **kwargs):
+        self.object = self.get_object()
+
+        # Un voto per utente per scheda (`vote_unique_per_user_routine`): il
+        # secondo invio **modifica** il primo invece di infrangere l'unicità
+        # con un `IntegrityError`. È la U del CRUD, ed è anche il motivo per
+        # cui la pagina non ha bisogno di un «hai già votato, vai di là».
+        mio_voto = self.get_mio_voto()
+        form = VoteForm(
+            request.POST,
+            instance=mio_voto,
+            voter=request.user,
+            routine=self.object,
+        )
+
+        if not form.is_valid():
+            return self.render_to_response(self.get_context_data(form=form))
+
+        # Chi vota e cosa vota li mette la view, mai il form: un campo in
+        # pagina è un campo riscrivibile in un POST costruito a mano.
+        form.instance.user = request.user
+        form.instance.routine = self.object
+        form.save()
+
+        messages.success(
+            request,
+            "Il tuo voto è aggiornato." if mio_voto else "Il tuo voto è registrato.",
+        )
+        return redirect("training:routine-public-detail", pk=self.object.pk)
+
+
+class VoteDeleteView(LoginRequiredMixin, DeleteView):
+    """`/schede/pubbliche/<pk>/voto/elimina/` — la D del terzo CRUD.
+
+    L'URL porta il numero della **scheda**, non quello del voto: dalla pagina
+    della community il voto che si toglie è sempre il proprio, e un `pk` di
+    `Vote` in URL sarebbe un numero che l'utente non ha modo di conoscere e che
+    inviterebbe a puntare quello di un altro.
+
+    Per questo non c'è `UserPassesTestMixin`, e non manca: `get_object` cerca
+    il voto **di `request.user`** su quella scheda, quindi il voto di un altro
+    non è raggiungibile — non esiste un `pk` con cui puntarlo. È la stessa
+    ragione di `ProfileUpdateView`. Chi non ha votato riceve un 404: non c'è
+    niente da cancellare.
+    """
+
+    model = Vote
+    template_name = "training/vote_confirm_delete.html"
+
+    def get_object(self, queryset=None):
+        return get_object_or_404(
+            Vote.objects.select_related("routine"),
+            user=self.request.user,
+            routine_id=self.kwargs["pk"],
+        )
+
+    def get_success_url(self):
+        return reverse("training:routine-public-detail", args=[self.kwargs["pk"]])
+
+    def form_valid(self, form):
+        messages.success(self.request, "Il tuo voto è stato tolto.")
+        return super().form_valid(form)

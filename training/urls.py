@@ -43,6 +43,30 @@ urlpatterns = [
         views.RoutineExercisesView.as_view(),
         name="routine-exercises",
     ),
+    # La community sta **dentro Schede**, non è una sesta voce dell'header: è
+    # la regola di navigazione di `02-pagine-e-template.md`. Le due rotte
+    # stanno sotto `schede/` per la stessa ragione per cui il link ci sta
+    # dentro — l'URL dice a quale sezione appartiene la pagina.
+    #
+    # `pubbliche/` non ha bisogno di precedere `<int:pk>/`, perché un
+    # `<int:pk>` non cattura una parola; sta comunque qui in blocco, con le sue.
+    path(
+        "schede/pubbliche/",
+        views.RoutinePublicListView.as_view(),
+        name="routine-public-list",
+    ),
+    path(
+        "schede/pubbliche/<int:pk>/",
+        views.RoutinePublicDetailView.as_view(),
+        name="routine-public-detail",
+    ),
+    # Il `pk` è quello della **scheda**, non quello del voto: da qui il voto
+    # che si toglie è sempre il proprio, e la view lo cerca per `request.user`.
+    path(
+        "schede/pubbliche/<int:pk>/voto/elimina/",
+        views.VoteDeleteView.as_view(),
+        name="vote-delete",
+    ),
     # Esercizi — e qui l'avvertenza di sopra si vede all'opera: `<slug:slug>`
     # cattura anche «panca-piana», quindi nessuna rotta letterale può stargli
     # sotto. Lo slug è generato una volta da `load_catalog`, non a runtime,

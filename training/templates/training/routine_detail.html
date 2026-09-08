@@ -19,7 +19,9 @@ rendering e porta giù l'intera pagina.
     <h1 class="h4 fw-bold mb-0">{{ routine.name }}</h1>
   </div>
   <div class="d-flex gap-3 align-items-center">
-    {% if routine.is_public %}<span class="delta delta-up">Pubblica</span>{% endif %}
+    {% if routine.is_public %}
+    <a href="{% url 'training:routine-public-detail' routine.pk %}" class="delta delta-up text-decoration-none">Pubblica</a>
+    {% endif %}
     <a href="{% url 'training:routine-update' routine.pk %}" style="color:var(--t2);font-size:.9rem">Modifica</a>
     <a href="{% url 'training:routine-delete' routine.pk %}" style="color:var(--t2);font-size:.9rem">Elimina</a>
     <a href="{% url 'training:routine-exercises' routine.pk %}" class="btn btn-volt btn-sm px-3">Gestisci esercizi</a>

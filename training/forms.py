@@ -11,7 +11,7 @@ all'orale insieme alla riga `AUTH_USER_MODEL` di `config/settings.py`.
 from django import forms
 from django.contrib.auth.forms import UserCreationForm
 
-from training.models import Exercise, Routine, RoutineExercise, User
+from training.models import Exercise, Routine, RoutineExercise, User, Vote
 
 
 class SignUpForm(UserCreationForm):
@@ -209,3 +209,85 @@ RoutineExerciseFormSet = forms.inlineformset_factory(
     extra=3,
     can_delete=True,
 )
+
+
+class VoteForm(forms.ModelForm):
+    """Il voto su una scheda della community: il terzo CRUD.
+
+    Qui vivono **le due regole che il database non può imporre**, perché
+    entrambe attraversano una relazione e nessun `CheckConstraint` può leggere
+    la riga di un'altra tabella (`docs/spec/01-modelli.md`, §Vote):
+
+    1. **l'autovoto è vietato** — il voto misura cosa pensano gli altri, e chi
+       si vota da solo sposta la classifica sociale senza aggiungere un
+       giudizio;
+    2. **una scheda non pubblica non è votabile** — `is_public` è l'unico
+       consenso che l'autore ha dato, e votare ciò che non è stato esposto lo
+       aggirerebbe.
+
+    Il form riceve chi vota e cosa vota (`voter`, `routine`) perché nessuno dei
+    due è un campo in pagina: li mette la view da `request.user` e dall'URL,
+    per la stessa ragione per cui `RoutineForm` non espone `user`. Le regole
+    sono ripetute nella view — la view non renderizza il form quando non si può
+    votare — ma il posto in cui *valgono* è questo: un POST costruito a mano
+    non passa dal template, passa da qui.
+
+    La scala è 1–5 e non pollice su/giù, perché il punteggio serve a produrre
+    una **media da ordinare**, ed è quella media che alimenta la classifica
+    sociale (#76).
+    """
+
+    #: Il voto si sceglie da una tendina, non si digita: `score` è un
+    #: `PositiveSmallIntegerField` e il widget di Django sarebbe un `number`,
+    #: dove «7» si scrive e poi lo rifiuta il `CheckConstraint` con un 500.
+    SCELTE = [
+        (1, "1 — da rivedere"),
+        (2, "2 — sotto la media"),
+        (3, "3 — buona"),
+        (4, "4 — molto buona"),
+        (5, "5 — ottima"),
+    ]
+
+    score = forms.TypedChoiceField(
+        choices=SCELTE,
+        coerce=int,
+        label="Voto",
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
+    class Meta:
+        model = Vote
+        fields = ("score", "comment")
+        widgets = {
+            "comment": forms.Textarea(
+                attrs={
+                    "class": "form-control",
+                    "rows": 3,
+                    "placeholder": "Facoltativo: cosa funziona, cosa no.",
+                }
+            ),
+        }
+
+    def __init__(self, *args, voter=None, routine=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.voter = voter
+        self.routine = routine
+
+    def clean(self):
+        cleaned = super().clean()
+
+        if self.routine is not None and not self.routine.is_public:
+            raise forms.ValidationError(
+                "Questa scheda non è pubblica: non è votabile."
+            )
+
+        if (
+            self.routine is not None
+            and self.voter is not None
+            and self.routine.user_id == self.voter.pk
+        ):
+            raise forms.ValidationError(
+                "Non si vota la propria scheda: il voto è il giudizio degli altri."
+            )
+
+        return cleaned

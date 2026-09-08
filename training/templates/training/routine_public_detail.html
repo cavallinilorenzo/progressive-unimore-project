@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% comment %}
+`/schede/pubbliche/<pk>/` — la scheda di un altro, e il form del terzo CRUD.
+
+Il voto si esprime **qui**, sulla pagina che si sta guardando: il form fa POST
+su questo stesso URL, e il bottone cambia parola a seconda che il voto esista
+già. Toglierlo è un form a parte, che porta alla conferma — cancellare non è
+mai un link, perché un GET non deve avere effetti.
+
+Il proprietario apre questa pagina per leggere i giudizi, e il form non c'è:
+`posso_votare` è falso. Non è solo cortesia dell'interfaccia — la regola vive
+in `VoteForm.clean`, e questo blocco è la sua faccia visibile.
+{% endcomment %}
+
+{% block title %}{{ routine.name }} — community — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-baseline justify-content-between mb-4">
+  <div>
+    <div class="eyebrow"><a href="{% url 'training:routine-public-list' %}" style="color:var(--t3)">Schede della community</a></div>
+    <h1 class="h4 fw-bold mb-0">{{ routine.name }}</h1>
+    <div class="mt-1" style="color:var(--t2);font-size:.9rem">di {{ routine.user.get_username }}</div>
+  </div>
+  <div class="text-end">
+    {% if conteggio %}
+    <div class="hero-num">{{ media|floatformat:1 }}</div>
+    <div class="eyebrow">{{ conteggio }} vot{{ conteggio|pluralize:"o,i" }} su 5</div>
+    {% else %}
+    <div class="eyebrow" style="color:var(--t3)">Nessun voto</div>
+    {% endif %}
+  </div>
+</div>
+
+{% for messaggio in messages %}
+<div class="card-ink p-3 mb-3">
+  <div class="rail">
+    <div class="eyebrow" style="color:var(--volt)">Fatto</div>
+    <div style="color:var(--t2);font-size:.9rem">{{ messaggio }}</div>
+  </div>
+</div>
+{% endfor %}
+
+{% comment %}
+Le due regole che il database non può imporre si rifiutano **qui**, e il
+rifiuto sta fuori dal blocco del form di proposito: chi vota la propria scheda
+il form non ce l'ha davanti — è nascosto da `posso_votare` — quindi un errore
+reso solo lì dentro sarebbe un rifiuto invisibile, cioè un POST che non scrive
+niente e non lo dice. Un no muto si legge come un sì.
+{% endcomment %}
+{% if form.non_field_errors %}
+<div class="card-ink p-3 mb-3">
+  <div class="rail" style="border-left-color:var(--red)">
+    <div class="eyebrow" style="color:var(--red)">Voto rifiutato</div>
+    {% for errore in form.non_field_errors %}
+    <div style="color:var(--t2);font-size:.9rem">{{ errore }}</div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{% if routine.notes %}
+<div class="card-ink p-3 mb-4">
+  <div class="eyebrow mb-1">Note</div>
+  <div style="color:var(--t2);font-size:.9rem">{{ routine.notes|linebreaksbr }}</div>
+</div>
+{% endif %}
+
+<div class="card-ink p-0 mb-4">
+  {% if routine.exercises.all %}
+  <table class="table table-dark table-borderless mb-0 align-middle" style="background:transparent">
+    <thead>
+      <tr class="eyebrow" style="color:var(--t3)">
+        <th class="ps-3" style="width:3rem">#</th>
+        <th>Esercizio</th>
+        <th>Attrezzo</th>
+        <th class="pe-3">Bersaglio</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for voce in routine.exercises.all %}
+      <tr>
+        <td class="ps-3" style="color:var(--t3)">{{ voce.position }}</td>
+        <td class="fw-bold">
+          <a href="{% url 'training:exercise-detail' voce.exercise.slug %}"
+             class="text-decoration-none" style="color:var(--t1)">{{ voce.exercise.name }}</a>
+        </td>
+        <td style="color:var(--t2)">{{ voce.exercise.equipment }}</td>
+        <td class="pe-3" style="color:var(--volt)">
+          {{ voce.target_sets }} &times; {{ voce.target_reps }}{% if voce.target_reps_max %}-{{ voce.target_reps_max }}{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="p-4 text-center" style="color:var(--t2)">Questa scheda non ha ancora esercizi.</div>
+  {% endif %}
+</div>
+
+{% if posso_votare %}
+<div class="card-ink p-3 mb-4">
+  <div class="eyebrow mb-2">{% if mio_voto %}Il tuo voto{% else %}Vota questa scheda{% endif %}</div>
+
+  <form method="post">
+    {% csrf_token %}
+
+    <div class="row g-3 align-items-start">
+      <div class="col-12 col-md-4">
+        <label for="{{ form.score.id_for_label }}" class="form-label eyebrow">Voto</label>
+        {{ form.score }}
+        {% for errore in form.score.errors %}
+        <div style="color:var(--red);font-size:.85rem">{{ errore }}</div>
+        {% endfor %}
+      </div>
+      <div class="col-12 col-md-8">
+        <label for="{{ form.comment.id_for_label }}" class="form-label eyebrow">Commento</label>
+        {{ form.comment }}
+        {% for errore in form.comment.errors %}
+        <div style="color:var(--red);font-size:.85rem">{{ errore }}</div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="mt-3 d-flex align-items-center gap-3">
+      <button type="submit" class="btn btn-volt px-3">
+        {% if mio_voto %}Aggiorna il voto{% else %}Vota{% endif %}
+      </button>
+      {% if mio_voto %}
+      <a href="{% url 'training:vote-delete' routine.pk %}" style="color:var(--t2);font-size:.9rem">Togli il voto</a>
+      {% endif %}
+    </div>
+  </form>
+</div>
+{% else %}
+<div class="card-ink p-3 mb-4">
+  <div class="rail">
+    <div class="eyebrow">La tua scheda</div>
+    <div style="color:var(--t2);font-size:.9rem">
+      Questa scheda è tua: il voto è il giudizio degli altri, e l'autovoto non è
+      ammesso. Qui sotto leggi cosa ne pensa la community.
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<div class="eyebrow mb-2">Cosa ne dicono</div>
+{% if voti %}
+<div class="row g-3">
+  {% for voto in voti %}
+  <div class="col-12 col-lg-6">
+    <div class="card-ink p-3 h-100">
+      <div class="d-flex align-items-baseline justify-content-between">
+        <span class="fw-bold">{{ voto.user.get_username }}</span>
+        <span class="delta delta-up">{{ voto.score }}/5</span>
+      </div>
+      {% if voto.comment %}
+      <div class="mt-2" style="color:var(--t2);font-size:.9rem">{{ voto.comment|linebreaksbr }}</div>
+      {% endif %}
+      <div class="mt-2 eyebrow" style="color:var(--t3)">{{ voto.created_at|date:"j F Y" }}</div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card-ink p-3" style="color:var(--t2);font-size:.9rem">
+  Nessun altro ha ancora votato questa scheda.
+</div>
+{% endif %}
+
+{% endblock %}

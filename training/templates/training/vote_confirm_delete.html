@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% comment %}
+La conferma prima di togliere il proprio voto. Esiste per una ragione precisa:
+cancellare è un effetto, e un effetto non sta dietro un GET — la pagina che il
+link apre non cancella niente, è il `POST` di questo form a farlo.
+{% endcomment %}
+
+{% block title %}Togliere il voto — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="card-ink p-4" style="max-width:34rem">
+  <div class="eyebrow mb-2">Togliere il voto</div>
+  <h1 class="h5 fw-bold">{{ object.routine.name }}</h1>
+  <p style="color:var(--t2)">
+    Il tuo voto è <span style="color:var(--volt)">{{ object.score }}/5</span>.
+    Togliendolo esce dalla media della scheda, e il commento sparisce con lui.
+    Puoi sempre votarla di nuovo.
+  </p>
+
+  <form method="post" class="d-flex gap-3 align-items-center mt-3">
+    {% csrf_token %}
+    <button type="submit" class="btn btn-volt px-3">Togli il voto</button>
+    <a href="{% url 'training:routine-public-detail' object.routine.pk %}" style="color:var(--t2)">Annulla</a>
+  </form>
+</div>
+
+{% endblock %}
