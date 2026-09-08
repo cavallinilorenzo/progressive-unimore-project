@@ -8,9 +8,12 @@ constraint e le unicità decise in `01-modelli.md`, che sono invisibili finché
 qualcuno non li rimuove da `Meta` senza accorgersene.
 """
 
+import random
 import re
 import shutil
+import statistics
 import tempfile
+from collections import Counter
 from datetime import timedelta
 from decimal import Decimal
 from io import StringIO
@@ -20,7 +23,8 @@ from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
-from django.db import IntegrityError, connection, transaction
+from django.core.management.base import CommandError
+from django.db import IntegrityError, connection, models, transaction
 from django.template import TemplateDoesNotExist
 from django.template.loader import get_template
 from django.test import TestCase, override_settings
@@ -30,6 +34,7 @@ from django.utils import timezone
 
 from training import views
 from training.forms import VoteForm
+from training.management.commands import seed_synthetic
 from training.models import (
     Equipment,
     Exercise,
@@ -2605,3 +2610,387 @@ class CsvImportTests(TestCase):
                 risposta = self.client.get(reverse(f"training:{nome}"))
                 self.assertEqual(risposta.status_code, 302)
                 self.assertIn("/accounts/login/", risposta["Location"])
+
+
+# --- La popolazione sintetica (#75) ----------------------------------------
+#
+# Il generatore è stato portato dentro da un prototipo di 854 righe in stdlib
+# pura, e il porting ha una proprietà che nessun'altra parte del progetto ha:
+# **deve produrre esattamente la stessa popolazione**. Non «una popolazione
+# equivalente» — la stessa, riga per riga, perché tutte le misure che la
+# documentazione dichiara (≥ 1500 finestre etichettabili, classe `stallo` al
+# 30,1% con orizzonte a 6) sono state prese *su quella* popolazione e non
+# vengono ri-misurate qui: riscriverle nel comando significherebbe tenere una
+# seconda copia della regola di ADR-0004 dentro il seeding.
+#
+# Ne discende la forma di questi test: sono per la maggior parte **guardie
+# d'identità** sul generatore casuale. Basta invertire due estrazioni perché lo
+# stream si sposti e ogni numero a valle cambi — è successo durante il porting,
+# fra `target_sets` e `target_reps`, e il sintomo era un conteggio di voti
+# diverso a parità di mediana, cioè il tipo di divergenza che a occhio passa.
+#
+# La generazione pura costa 0,4 secondi, l'inserimento delle 299.367 serie ne
+# costa una decina: quasi tutti i test girano quindi sulle funzioni del modulo,
+# e **una sola** classe paga il database per intero, perché «gira da database
+# vuoto» è la condizione di chiusura del ticket e non si dimostra a parole.
+
+
+class SyntheticGeneratorTests(TestCase):
+    """Il generatore, senza database: identità dello stream e coerenza interna.
+
+    Questa classe non tocca i modelli oltre al catalogo, che le serve solo come
+    sorgente dei 100 esercizi.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command("load_catalog", stdout=StringIO())
+
+    def genera(self, seed=seed_synthetic.SEED):
+        rng = random.Random(seed)
+        esercizi = seed_synthetic.read_catalog()
+        utenti = seed_synthetic.make_users(rng)
+        allenamenti, serie = seed_synthetic.generate(utenti, esercizi, rng)
+        schede, voci, voti = seed_synthetic.make_routines_and_votes(
+            utenti, esercizi, rng
+        )
+        return esercizi, utenti, allenamenti, serie, schede, voci, voti
+
+    def test_the_population_has_exactly_the_documented_size(self):
+        """I conteggi esatti, che sono la guardia dell'identità con il prototipo.
+
+        Se una sola estrazione si spostasse questi numeri cambierebbero, e con
+        essi le misure che `docs/generatore-sintetico.md` dichiara senza
+        ri-misurarle.
+        """
+        _es, utenti, allenamenti, serie, schede, _voci, voti = self.genera()
+
+        self.assertEqual(len(utenti), 100)
+        self.assertEqual(len(allenamenti), 11_916)
+        self.assertEqual(len(serie), 299_367)
+        self.assertEqual(len(schede), 187)
+        self.assertEqual(len(voti), 728)
+
+    def test_the_demo_user_is_the_one_chosen_in_advance(self):
+        """`demo064 — Martina Longo` è nominato in anticipo, non la mattina
+        dell'orale: è su di lui che si mostra la pagina dello stallo, perché lo
+        storico reale di Lorenzo è troppo corto per superare la soglia."""
+        _es, utenti, *_resto = self.genera()
+        per_username = {u["username"]: u for u in utenti}
+
+        self.assertIn(seed_synthetic.DEMO_USERNAME, per_username)
+        self.assertEqual(
+            per_username[seed_synthetic.DEMO_USERNAME]["display_name"],
+            seed_synthetic.DEMO_DISPLAY_NAME,
+        )
+
+    def test_the_same_seed_generates_the_same_population(self):
+        """La riproducibilità, che è ciò che il seed fisso compra.
+
+        Si confrontano due generazioni intere e non due conteggi: due
+        popolazioni diverse possono avere lo stesso numero di righe.
+        """
+        primo = self.genera()
+        secondo = self.genera()
+
+        self.assertEqual(primo, secondo)
+
+    def test_a_different_seed_gives_a_different_population(self):
+        """Il controinterrogatorio del test precedente: se anche cambiando seed
+        uscisse la stessa cosa, l'uguaglianza di sopra non proverebbe niente."""
+        _es, utenti, *_resto = self.genera()
+        _es2, altri, *_resto2 = self.genera(seed=1)
+
+        self.assertNotEqual(utenti, altri)
+
+    def test_no_bench_press_beats_its_own_squat(self):
+        """Il principio che rende la popolazione credibile.
+
+        Non c'è nessun controllo di plausibilità nel generatore, e non serve:
+        i carichi di un utente nascono tutti da `peso corporeo × rapporto ×
+        forza × progressione × rumore`, quindi la panca da 140 con lo squat da
+        60 non è sorvegliata, è **impossibile per costruzione**. Questo test
+        misura la conseguenza, non la sorveglianza.
+        """
+        esercizi, utenti, allenamenti, serie, *_resto = self.genera()
+
+        rapporti, assurdi, _ = seed_synthetic.coherence(
+            utenti, esercizi, allenamenti, serie
+        )
+
+        self.assertEqual(assurdi, 0)
+        self.assertAlmostEqual(statistics.median(rapporti), 0.73, places=2)
+
+    def test_every_core_exercise_clears_the_percentile_threshold(self):
+        """Sotto i 20 utenti su un esercizio il percentile tace.
+
+        Spargere 100 utenti sulle 100 voci del catalogo lo farebbe tacere
+        ovunque: è la ragione per cui il repertorio si concentra su un core di
+        22 esercizi. La coda resta sotto soglia di proposito, così all'orale la
+        riga «percentile non disponibile» si può mostrare accanto a una che
+        funziona.
+        """
+        _es, _ut, allenamenti, serie, *_resto = self.genera()
+
+        conteggi = seed_synthetic.users_per_exercise(allenamenti, serie)
+        core = {
+            nome: n
+            for nome, n in conteggi.items()
+            if nome in seed_synthetic.CORE_RATIOS
+        }
+
+        self.assertEqual(len(core), 22)
+        for nome, n in sorted(core.items()):
+            with self.subTest(esercizio=nome):
+                self.assertGreaterEqual(n, 20)
+        self.assertLess(
+            sum(1 for n in conteggi.values() if n >= 20),
+            len(conteggi),
+            "La coda deve restare sotto soglia: mostra il percentile che tace.",
+        )
+
+    def test_four_users_are_deliberately_too_new_to_analyse(self):
+        """Lo stato «dati insufficienti» va dimostrato dal vivo, quindi la
+        popolazione contiene apposta chi non ha ancora abbastanza storico."""
+        _es, utenti, *_resto = self.genera()
+
+        giorni = [(seed_synthetic.TODAY - u["start"]).days for u in utenti]
+        mesi = sorted(g / 30.4 for g in giorni)
+
+        self.assertEqual(sum(1 for g in giorni if g < 21), 4)
+        self.assertAlmostEqual(mesi[0], 0.5, places=1)
+        self.assertAlmostEqual(mesi[-1], 17.8, places=1)
+
+    def test_public_routines_carry_enough_votes_to_be_ranked(self):
+        """La media bayesiana con `C = 3` è dominata dal prior sotto gli 8 voti:
+        con una mediana più bassa la classifica sociale ordinerebbe il rumore.
+        Le schede a zero voti restano, perché una scheda pubblicata ieri non ne
+        ha ed è il caso che la media bayesiana deve saper gestire."""
+        *_resto, schede, _voci, voti = self.genera()
+
+        pubbliche = [r for r in schede if r["is_public"]]
+        per_scheda = Counter(v["routine_id"] for v in voti)
+        conteggi = [per_scheda.get(r["id"], 0) for r in pubbliche]
+
+        self.assertEqual(len(pubbliche), 55)
+        self.assertGreaterEqual(statistics.median(conteggi), 8)
+        self.assertGreater(sum(1 for n in conteggi if n == 0), 0)
+
+    def test_the_end_of_history_does_not_drift_with_the_calendar(self):
+        """`TODAY` è una costante e non `date.today()`: se scorresse col
+        calendario, due esecuzioni a giorni diversi darebbero popolazioni
+        diverse e il seed fisso non comprerebbe niente."""
+        _es, _ut, allenamenti, *_resto = self.genera()
+
+        ultimo = max(w["started_at"].date() for w in allenamenti)
+
+        self.assertLessEqual(ultimo, seed_synthetic.TODAY)
+
+    def test_the_generator_rounds_loads_onto_its_own_grid(self):
+        """La griglia di arrotondamento **non** è `Equipment.load_increment_kg`.
+
+        Quella colonna risponde alla domanda del coach — di quanto il carico può
+        salire davvero — e vale zero sul corpo libero e sull'elastico, dove il
+        consiglio è di aggiungere ripetizioni. Usarla qui darebbe una divisione
+        per zero. Il test tiene ferma la distinzione, che a leggerla nel codice
+        sembra una svista.
+        """
+        self.assertEqual(Equipment.objects.get(code="bodyweight").load_increment_kg, 0)
+        self.assertGreater(seed_synthetic.STEP_BY_EQUIPMENT["bodyweight"], 0)
+
+        _es, _ut, _all, serie, *_resto = self.genera()
+        carichi = {s["weight_kg"] for s in serie}
+
+        self.assertTrue(
+            all(round(v * 4) == v * 4 for v in carichi),
+            "Ogni carico si posa su un multiplo di 0,25 kg: nessuno carica 43,7.",
+        )
+
+    def test_the_hidden_state_never_reaches_the_data(self):
+        """La macchina a tre fasi e l'archetipo restano dentro il generatore.
+
+        Se finissero in un campo del modello, la tentazione di usarli come
+        etichetta del ML tornerebbe, ed è la circolarità che ADR-0004 rifiuta.
+        Il test guarda le due superfici da cui potrebbero uscire: le righe che
+        il generatore consegna alla persistenza, e i campi dei modelli.
+        """
+        _es, utenti, allenamenti, serie, schede, voci, voti = self.genera()
+
+        for riga in (allenamenti[0], serie[0], schede[0], voci[0], voti[0]):
+            with self.subTest(riga=sorted(riga)):
+                self.assertNotIn("archetype", riga)
+                self.assertNotIn("phase", riga)
+                self.assertNotIn("state", riga)
+
+        # L'archetipo esiste sull'utente *generato*, che è un dizionario interno…
+        self.assertIn("archetype", utenti[0])
+        # …ma non esiste da nessuna parte sul modello che finisce nel database.
+        campi = {f.name for f in User._meta.get_fields()}
+        self.assertNotIn("archetype", campi)
+        self.assertNotIn("phase", campi)
+
+
+class SeedSyntheticCommandTests(TestCase):
+    """Il comando end-to-end: `migrate` → `load_catalog` → `seed_synthetic`.
+
+    È l'unica classe che paga davvero il database — 299.367 serie da inserire —
+    e lo fa una volta sola, in `setUpTestData`, perché la condizione di chiusura
+    del ticket è che quella catena giri da un database vuoto.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        call_command("load_catalog", stdout=StringIO())
+        cls.uscita = StringIO()
+        call_command("seed_synthetic", stdout=cls.uscita)
+
+    def test_the_whole_population_lands_in_the_database(self):
+        self.assertEqual(User.objects.filter(is_synthetic=True).count(), 100)
+        self.assertEqual(Workout.objects.count(), 11_916)
+        self.assertEqual(WorkoutSet.objects.count(), 299_367)
+        self.assertEqual(Routine.objects.count(), 187)
+        self.assertEqual(Vote.objects.count(), 728)
+        self.assertEqual(
+            RoutineExercise.objects.count(),
+            RoutineExercise.objects.filter(
+                target_reps_max__gt=models.F("target_reps")
+            ).count(),
+            "L'estremo alto del bersaglio c'è sempre: è ciò che la doppia "
+            "progressione insegue, e una scheda che dichiara solo il minimo "
+            "non la descrive.",
+        )
+
+    def test_the_report_says_whether_the_numbers_add_up(self):
+        """Il comando non si limita a finire: dice se i numeri tornano.
+
+        Un seeding che stampa «fatto» e basta obbliga a fidarsi; questo obbliga
+        a leggere, ed è ciò che si mostra all'orale.
+        """
+        testo = self.uscita.getvalue()
+
+        self.assertIn("299,367", testo)
+        self.assertIn("demo064 — Martina Longo", testo)
+        self.assertNotIn("NO", testo)
+
+    def test_the_demo_user_can_actually_log_in(self):
+        """Su `demo064` si dimostra la pagina dello stallo: se non ci si potesse
+        entrare, la scelta anticipata dell'utente non servirebbe a niente."""
+        entrato = self.client.login(
+            username=seed_synthetic.DEMO_USERNAME,
+            password=seed_synthetic.DEMO_PASSWORD,
+        )
+
+        self.assertTrue(entrato)
+
+    def test_every_synthetic_user_declares_itself(self):
+        """ADR-0009: non sono utenti di prova nascosti. Il campo **non filtra** —
+        nessuna query li esclude dalla popolazione, o i percentili tacerebbero
+        ovunque per mancanza di numeri — ma si dichiara."""
+        self.assertFalse(
+            User.objects.filter(
+                username__startswith="demo", is_synthetic=False
+            ).exists()
+        )
+
+    def test_the_body_mass_is_always_there(self):
+        """Senza peso corporeo un utente non compare in classifica e non riceve
+        un percentile (ADR-0008): una popolazione generata senza sarebbe una
+        popolazione che non serve a niente."""
+        self.assertFalse(
+            User.objects.filter(is_synthetic=True, body_mass_kg__isnull=True).exists()
+        )
+
+    def test_the_sets_of_one_exercise_are_numbered_from_one(self):
+        """Il vincolo `workout_set_unique` è su `(workout, exercise, set_number)`.
+
+        Il prototipo scriveva su CSV e usava un contatore globale per le serie
+        di riscaldamento; qui numerare warmup e working entrambi da 1 sarebbe
+        una collisione, quindi la numerazione è continua dentro la coppia. Le
+        analisi filtrano per `set_type`, non per numero.
+        """
+        allenamento, esercizio = (
+            WorkoutSet.objects.filter(set_type="warmup")
+            .values_list("workout_id", "exercise_id")
+            .first()
+        )
+        numeri = list(
+            WorkoutSet.objects.filter(workout_id=allenamento, exercise_id=esercizio)
+            .order_by("set_number")
+            .values_list("set_number", "set_type")
+        )
+
+        self.assertEqual([n for n, _ in numeri], list(range(1, len(numeri) + 1)))
+        self.assertEqual(numeri[0][1], "warmup")
+        self.assertEqual(numeri[1][1], "rampUp")
+
+    def test_a_second_run_refuses_instead_of_duplicating(self):
+        """Rieseguire il comando su un database già popolato non è idempotente
+        come `load_catalog` — sono utenti, non righe di anagrafica — quindi si
+        rifiuta e dice come si fa."""
+        with self.assertRaises(CommandError) as errore:
+            call_command("seed_synthetic", stdout=StringIO())
+
+        self.assertIn("--reset", str(errore.exception))
+        self.assertEqual(User.objects.filter(is_synthetic=True).count(), 100)
+
+    def test_the_synthetic_population_is_declared_on_the_community_page(self):
+        """ADR-0009 vuole l'etichetta **dove il nome compare**, e la community è
+        la superficie di fase 1 in cui compare: una classifica in cui l'unico
+        utente vero è circondato da cento profili inventati senza che sia
+        scritto da nessuna parte è ciò che un esaminatore attento nota."""
+        scheda = Routine.objects.filter(is_public=True, votes__isnull=False).first()
+        lettore = User.objects.create_user(username="lorenzo", password="x")
+        self.client.force_login(lettore)
+
+        lista = self.client.get(reverse("training:routine-public-list"))
+        dettaglio = self.client.get(
+            reverse("training:routine-public-detail", args=[scheda.pk])
+        )
+
+        self.assertContains(lista, "utente dimostrativo")
+        self.assertContains(dettaglio, "utente dimostrativo")
+
+
+class SeedSyntheticGuardTests(TestCase):
+    """Le due guardie che si possono provare senza generare tutto."""
+
+    def test_it_refuses_to_run_on_an_empty_catalogue(self):
+        """L'ordine di caricamento è stretto: i 100 esercizi devono esistere
+        perché il generatore ci si appoggi. Senza, il messaggio dice quale
+        comando manca invece di lasciare cadere un errore oscuro."""
+        with self.assertRaises(CommandError) as errore:
+            call_command("seed_synthetic", stdout=StringIO())
+
+        self.assertIn("load_catalog", str(errore.exception))
+
+    def test_reset_clears_the_previous_population_but_not_the_real_users(self):
+        """`--reset` è il modo dichiarato di rigenerare: cancella i sintetici e
+        tutto ciò che dipende da loro, e non tocca gli utenti veri."""
+        call_command("load_catalog", stdout=StringIO())
+        vecchio = User.objects.create_user(
+            username="demo001", password="x", is_synthetic=True
+        )
+        vero = User.objects.create_user(username="lorenzo", password="x")
+
+        call_command("seed_synthetic", "--reset", stdout=StringIO())
+
+        self.assertFalse(User.objects.filter(pk=vecchio.pk).exists())
+        self.assertTrue(User.objects.filter(pk=vero.pk).exists())
+        self.assertEqual(User.objects.filter(is_synthetic=True).count(), 100)
+
+    def test_the_catalogue_order_the_generator_depends_on_is_the_csv_order(self):
+        """`read_catalog` ordina per `pk` e non per nome, e non è estetica.
+
+        Il generatore pesca dagli esercizi con `random.sample`, quindi l'ordine
+        della lista decide ogni estrazione a valle. `Exercise.Meta.ordering` è
+        per nome: se `read_catalog` si affidasse all'ordinamento di default, la
+        popolazione cambierebbe e con essa tutte le misure documentate.
+        """
+        call_command("load_catalog", stdout=StringIO())
+
+        letti = [e["name"] for e in seed_synthetic.read_catalog()]
+
+        self.assertEqual(
+            letti, list(Exercise.objects.order_by("pk").values_list("name", flat=True))
+        )
+        self.assertNotEqual(letti, sorted(letti))

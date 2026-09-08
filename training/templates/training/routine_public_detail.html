@@ -20,7 +20,10 @@ in `VoteForm.clean`, e questo blocco è la sua faccia visibile.
   <div>
     <div class="eyebrow"><a href="{% url 'training:routine-public-list' %}" style="color:var(--t3)">Schede della community</a></div>
     <h1 class="h4 fw-bold mb-0">{{ routine.name }}</h1>
-    <div class="mt-1" style="color:var(--t2);font-size:.9rem">di {{ routine.user.get_username }}</div>
+    <div class="mt-1" style="color:var(--t2);font-size:.9rem">
+      di {{ routine.user.get_username }}
+      {% if routine.user.is_synthetic %}&middot; {% include "training/_utente_dimostrativo.html" with utente=routine.user %}{% endif %}
+    </div>
   </div>
   <div class="text-end">
     {% if conteggio %}
@@ -151,7 +154,10 @@ niente e non lo dice. Un no muto si legge come un sì.
   <div class="col-12 col-lg-6">
     <div class="card-ink p-3 h-100">
       <div class="d-flex align-items-baseline justify-content-between">
-        <span class="fw-bold">{{ voto.user.get_username }}</span>
+        <span class="fw-bold">
+          {{ voto.user.get_username }}
+          {% if voto.user.is_synthetic %}{% include "training/_utente_dimostrativo.html" with utente=voto.user %}{% endif %}
+        </span>
         <span class="delta delta-up">{{ voto.score }}/5</span>
       </div>
       {% if voto.comment %}
