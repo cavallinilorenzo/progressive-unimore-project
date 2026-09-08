@@ -2372,26 +2372,40 @@ class CsvImportTests(TestCase):
         # Panca piana e Trazioni si sono risolti da soli, per nome esatto.
         self.assertEqual(len(risposta.context["risolti"]), 2)
 
-    def test_la_tendina_del_catalogo_si_legge_una_volta_sola(self):
-        """La guardia ereditata da #70, e protegge l'**invarianza**, non il
-        numero: aggiungere esercizi al catalogo non deve aggiungere query.
-        `ModelChoiceField` interroga il database ogni volta che il campo viene
-        reso, e qui le righe sono una per nome non abbinato."""
-        self.carica()
-        with CaptureQueriesContext(connection) as prima:
-            self.client.get(reverse("training:import-preview"))
+    def test_lanteprima_non_ripaga_il_catalogo_a_ogni_riga(self):
+        """Il costo della pagina non cresce con le righe.
 
-        for numero in range(30):
-            Exercise.objects.create(
-                name=f"Esercizio {numero}", slug=f"esercizio-{numero}",
-                primary_muscle=self.panca.primary_muscle,
-                equipment=self.panca.equipment,
+        Stessa guardia di `test_the_sets_page_does_not_requery_the_catalogue_per_row`
+        (#70) e della sua gemella sulle schede (#86), e **nella stessa forma**:
+        due righe o dodici, le query sono le stesse. Ciò che si protegge è
+        l'invariante, non il numero, o la guardia cadrebbe al primo
+        `select_related` innocuo aggiunto altrove.
+
+        Qui le righe non le decide l'utente: sono i **nomi non abbinati** che
+        il file porta, e sullo storico reale sono ventiquattro — ognuna con una
+        `<select>` da cento opzioni. È il terzo formset del progetto a porre la
+        stessa domanda, e il primo che non è inline.
+        """
+
+        def rendi_con(n_righe):
+            righe = "".join(
+                f"aaaaaaaa-{indice:04d}-4000-8000-000000000000,"
+                "11111111-1111-4111-8111-111111111111,"
+                f"Ignoto {indice},1,8,60,working,true\n"
+                for indice in range(n_righe)
             )
+            self.carica(
+                serie=(
+                    "id,session_id,exercise_name,set_number,reps,weight,"
+                    "set_type,is_completed\n" + righe
+                )
+            )
+            with CaptureQueriesContext(connection) as contesto:
+                risposta = self.client.get(reverse("training:import-preview"))
+            self.assertEqual(len(risposta.context["form"].forms), n_righe)
+            return len(contesto.captured_queries)
 
-        with CaptureQueriesContext(connection) as dopo:
-            self.client.get(reverse("training:import-preview"))
-
-        self.assertEqual(len(dopo), len(prima))
+        self.assertEqual(rendi_con(2), rendi_con(12))
 
     # -------------------------------------------------------------- la conferma
 

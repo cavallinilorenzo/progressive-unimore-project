@@ -694,23 +694,34 @@ class AbbinamentoForm(forms.Form):
     """
 
     raw_name = forms.CharField(widget=forms.HiddenInput)
+    #: Il `queryset` è ciò su cui il campo **valida**, ed è la sua verità;
+    #: l'elenco che si vede lo mette il formset una volta per pagina. Stessa
+    #: divisione di `RoutineExerciseForm`, e `empty_label` serve alla stessa
+    #: eventualità: il form reso da solo, fuori dal formset.
     exercise = forms.ModelChoiceField(
-        queryset=Exercise.objects.all(),
+        queryset=queryset_catalogo(),
         label="Esercizio del catalogo",
-        empty_label="— scegli un esercizio —",
+        empty_label=ESERCIZIO_VUOTO,
         widget=forms.Select(attrs={"class": "form-select"}),
     )
 
 
 class BaseAbbinamentoFormSet(forms.BaseFormSet):
-    """Il catalogo si legge **una volta per pagina**, non una per riga.
+    """Il terzo formset con un esercizio dentro, e il primo che non è inline.
 
-    È la guardia che #70 ha lasciato in eredità: `ModelChoiceField` costruisce
-    le sue opzioni con un iteratore che interroga il database ogni volta che il
-    campo viene reso, e qui le righe sono ventiquattro sullo storico reale —
-    una `<select>` da cento opzioni per ciascuna. Valorizzare `choices` con una
-    lista già pronta sostituisce l'iteratore; la validazione non cambia, perché
-    `to_python` risolve comunque sul `queryset` del form.
+    `BaseCatalogoInlineFormSet` raccoglie ciò che le schede e le serie hanno in
+    comune, ma è un `BaseInlineFormSet`: presuppone un modello e un'istanza
+    padre, e qui non c'è né l'uno né l'altro — le righe sono nomi letti da un
+    file, non oggetti da salvare. Quindi la parentela con quel pattern non è di
+    ereditarietà ma di **regole condivise**: `queryset_catalogo()` e
+    `ESERCIZIO_VUOTO` sono gli stessi, e sono gli stessi perché #86 li ha
+    estratti — due copie della stessa frase divergono al primo ripensamento.
+
+    Ciò che qui non si eredita è `validate_unique` e il `clean` sul duplicato:
+    due nomi grezzi **possono** legittimamente puntare allo stesso esercizio
+    («Trazioni» e «Pull up» sono lo stesso movimento). La collisione che ne
+    nasce non è un errore di questo form: la vede la scrittura, sulla terna di
+    `workout_set_unique`, dove diventa una riga del report.
     """
 
     def get_form_kwargs(self, index):
@@ -737,14 +748,21 @@ class BaseAbbinamentoFormSet(forms.BaseFormSet):
         return kwargs
 
     def add_fields(self, form, index):
+        """Il catalogo si legge **una volta per pagina**, non una per riga.
+
+        Stessa correzione di `BaseCatalogoInlineFormSet.scelte_esercizio`, e
+        per lo stesso motivo: `ModelChoiceField` costruisce le sue opzioni con
+        un iteratore che interroga il database ogni volta che il campo viene
+        reso. Qui le righe sono ventiquattro sullo storico reale, ognuna con
+        una `<select>` da cento opzioni.
+        """
         super().add_fields(form, index)
         form.fields["exercise"].choices = self.scelte_esercizio
 
     @cached_property
     def scelte_esercizio(self):
-        esercizi = Exercise.objects.select_related("equipment", "primary_muscle")
-        return [("", "— scegli un esercizio —")] + [
-            (esercizio.pk, str(esercizio)) for esercizio in esercizi
+        return [("", ESERCIZIO_VUOTO)] + [
+            (esercizio.pk, str(esercizio)) for esercizio in queryset_catalogo()
         ]
 
 
