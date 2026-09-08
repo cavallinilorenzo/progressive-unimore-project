@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% comment %}
+`/schede/<pk>/elimina/` — la conferma.
+
+La cancellazione è un POST: il GET mostra soltanto la domanda, ed è il motivo
+per cui questa pagina esiste invece di un link che cancella. Un GET distruttivo
+lo eseguirebbe il prefetch del browser.
+
+La pagina dichiara anche cosa **non** succede: gli allenamenti nati da questa
+scheda restano, col nome che avevano al momento dell'esecuzione. È ADR-0002
+(log immutabile), ed è esattamente la domanda che l'utente si fa qui.
+{% endcomment %}
+
+{% block title %}Elimina «{{ routine.name }}» — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-6">
+
+    <div class="mb-4">
+      <div class="eyebrow">Schede</div>
+      <h1 class="h4 fw-bold mb-0">Eliminare «{{ routine.name }}»?</h1>
+    </div>
+
+    <div class="card-ink p-4">
+      <div class="rail mb-4">
+        <div class="eyebrow mb-1" style="color:var(--gold)">Cosa si perde</div>
+        <div style="color:var(--t2);font-size:.9rem">
+          La scheda e le sue
+          <strong>{{ routine.exercises.count }}</strong> voci. L'operazione non
+          si annulla.
+        </div>
+      </div>
+
+      <div class="rail mb-4">
+        <div class="eyebrow mb-1" style="color:var(--volt)">Cosa resta</div>
+        <div style="color:var(--t2);font-size:.9rem">
+          Gli <strong>allenamenti</strong> già registrati da questa scheda non
+          vengono toccati: conservano il nome che avevano il giorno in cui li
+          hai svolti, e restano nelle analisi. L'eseguito è un log immutabile.
+        </div>
+      </div>
+
+      <form method="post">
+        {% csrf_token %}
+        <div class="d-flex gap-3 align-items-center">
+          <button type="submit" class="btn btn-danger px-4 py-2">Elimina</button>
+          <a href="{% url 'training:routine-detail' routine.pk %}" style="color:var(--t2);font-size:.9rem">Annulla</a>
+        </div>
+      </form>
+    </div>
+
+  </div>
+</div>
+
+{% endblock %}

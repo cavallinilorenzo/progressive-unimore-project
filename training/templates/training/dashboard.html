@@ -26,10 +26,16 @@ mostrare uno zero che sembrerebbe un dato.
 </div>
 
 {% if not user.has_body_mass %}
-{# L'invito di ADR-0008, dove l'utente atterra entrando: senza peso corporeo
-   non c'è forza relativa, quindi niente percentile e nessuna riga in
-   classifica. È un'assenza da dichiarare, non da lasciar scoprire davanti a
-   una classifica in cui non ci si trova. #}
+{% comment %}
+L'invito di ADR-0008, dove l'utente atterra entrando: senza peso corporeo non
+c'è forza relativa, quindi niente percentile e nessuna riga in classifica. È
+un'assenza da dichiarare, non da lasciar scoprire davanti a una classifica in
+cui non ci si trova.
+
+Il tag `comment` e non la forma breve col cancelletto: quella è una comodità
+di *una riga sola*, e su più righe il lexer non la riconosce — il testo
+finisce nell'HTML della pagina. Rilevato in #69.
+{% endcomment %}
 <div class="card-ink p-3 mb-4">
   <div class="rail">
     <div class="eyebrow mb-1" style="color:var(--gold)">Manca il peso corporeo</div>

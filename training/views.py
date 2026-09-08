@@ -11,15 +11,23 @@ le view già pronte di `django.contrib.auth`, incluse in `config/urls.py` sotto
 `LoginView` sarebbe lavoro in più con meno garanzie.
 """
 
+from django.contrib import messages
 from django.contrib.auth import login
-from django.contrib.auth.mixins import LoginRequiredMixin
+from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.contrib.messages.views import SuccessMessageMixin
-from django.urls import reverse_lazy
+from django.shortcuts import redirect
+from django.urls import reverse, reverse_lazy
 from django.utils import timezone
-from django.views.generic import TemplateView
-from django.views.generic.edit import CreateView, UpdateView
+from django.views.generic import DetailView, ListView, TemplateView
+from django.views.generic.edit import CreateView, DeleteView, UpdateView
 
-from training.forms import ProfileForm, SignUpForm
+from training.forms import (
+    ProfileForm,
+    RoutineExerciseFormSet,
+    RoutineForm,
+    SignUpForm,
+)
+from training.models import Routine
 
 
 class DashboardView(LoginRequiredMixin, TemplateView):
@@ -82,3 +90,154 @@ class ProfileUpdateView(LoginRequiredMixin, SuccessMessageMixin, UpdateView):
 
     def get_object(self, queryset=None):
         return self.request.user
+
+
+class OwnerRequiredMixin(LoginRequiredMixin, UserPassesTestMixin):
+    """La proprietà dell'oggetto, col pattern del corso (#22).
+
+    `UserPassesTestMixin` + `test_func()` è la coppia che il prof ha insegnato,
+    ed è quella che va usata: all'orale è riconoscibile a colpo d'occhio.
+
+    La distinzione fra i due mixin non è ridondanza. Per un anonimo
+    `LoginRequiredMixin` devia verso il login, perché la risposta giusta è
+    «entra». Per un utente **autenticato** che punta la scheda di un altro la
+    risposta è **403**, e la dà `AccessMixin.handle_no_permission`, che solleva
+    `PermissionDenied` appena l'utente è autenticato.
+
+    403 e non 404: nascondere l'esistenza della riga sarebbe un'altra
+    decisione, e su un progetto d'esame «non è tua» è più leggibile di «non
+    esiste». Nemmeno 200 su una copia in sola lettura — la scheda di un altro
+    si guarda dalla community, e solo se lui l'ha resa pubblica.
+    """
+
+    def test_func(self):
+        return self.get_object().user == self.request.user
+
+
+class RoutineListView(LoginRequiredMixin, ListView):
+    """`/schede/` — le mie, e solo le mie.
+
+    Il filtro sta in `get_queryset`, non in un `if` nel template: un template
+    che riceve schede altrui le ha già caricate, e basta dimenticare una riga
+    perché le mostri.
+    """
+
+    model = Routine
+    context_object_name = "routines"
+    template_name = "training/routine_list.html"
+
+    def get_queryset(self):
+        # `prefetch_related` perché la lista conta gli esercizi di ogni scheda:
+        # senza, è una query per riga.
+        return (
+            Routine.objects.filter(user=self.request.user)
+            .prefetch_related("exercises")
+        )
+
+
+class RoutineDetailView(OwnerRequiredMixin, DetailView):
+    """`/schede/<pk>/` — la scheda con i suoi esercizi in ordine.
+
+    Anche la lettura passa dal mixin della proprietà: questa è la pagina della
+    *mia* scheda. La versione pubblica, con voto e commento, è un'altra rotta
+    (`routine-public-detail`) e un altro ticket.
+    """
+
+    model = Routine
+    context_object_name = "routine"
+    template_name = "training/routine_detail.html"
+
+    def get_queryset(self):
+        return Routine.objects.prefetch_related(
+            "exercises__exercise__equipment",
+            "exercises__exercise__primary_muscle",
+        )
+
+
+class RoutineCreateView(LoginRequiredMixin, SuccessMessageMixin, CreateView):
+    """`/schede/nuova/` — il nome e poco altro.
+
+    Chi crea una scheda atterra sulla gestione degli esercizi, non sulla lista:
+    una scheda senza esercizi non è ancora una scheda, e il passo successivo è
+    l'unico che abbia senso proporre.
+    """
+
+    model = Routine
+    form_class = RoutineForm
+    template_name = "training/routine_form.html"
+    success_message = "La scheda è creata. Ora mettici gli esercizi."
+
+    def form_valid(self, form):
+        # Il proprietario lo mette la view, mai il form: vedi `RoutineForm`.
+        form.instance.user = self.request.user
+        return super().form_valid(form)
+
+    def get_success_url(self):
+        return reverse("training:routine-exercises", args=[self.object.pk])
+
+
+class RoutineUpdateView(OwnerRequiredMixin, SuccessMessageMixin, UpdateView):
+    """`/schede/<pk>/modifica/` — nome, note e il flag `is_public`."""
+
+    model = Routine
+    form_class = RoutineForm
+    template_name = "training/routine_form.html"
+    success_message = "La scheda è aggiornata."
+
+    def get_success_url(self):
+        return reverse("training:routine-detail", args=[self.object.pk])
+
+
+class RoutineDeleteView(OwnerRequiredMixin, DeleteView):
+    """`/schede/<pk>/elimina/` — con la conferma, che è un POST.
+
+    Cancellare una scheda **non tocca gli allenamenti** che ne sono nati: la
+    FK è `SET_NULL` e il titolo è un'istantanea (ADR-0002). La pagina di
+    conferma lo dice, perché è la domanda che l'utente si fa proprio lì.
+    """
+
+    model = Routine
+    template_name = "training/routine_confirm_delete.html"
+    success_url = reverse_lazy("training:routine-list")
+
+    def form_valid(self, form):
+        # `SuccessMessageMixin` non copre `DeleteView` in modo utile: l'oggetto
+        # a messaggio composto non esiste più. Il nome si legge prima.
+        messages.success(self.request, f"«{self.object.name}» è eliminata.")
+        return super().form_valid(form)
+
+
+class RoutineExercisesView(OwnerRequiredMixin, UpdateView):
+    """`/schede/<pk>/esercizi/` — il primo form denso del progetto.
+
+    `fields = []` non è una dimenticanza: la pagina non modifica nessun campo
+    della scheda, modifica le sue **righe figlie**. Resta una `UpdateView`
+    perché il resto — `get_object`, il 403 del mixin, il template — è
+    esattamente quello, e riscriverlo come `View` con `get`/`post` a mano
+    perderebbe la convenzione senza guadagnare niente.
+
+    Il formset è un `inlineformset_factory`: aggiunge, modifica e cancella le
+    righe in un solo POST, dentro una transazione, e con zero JavaScript.
+    """
+
+    model = Routine
+    fields = []
+    template_name = "training/routine_exercises.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        # Se il POST è fallito, il formset in contesto è quello con gli errori
+        # e i dati dell'utente: non va ricostruito, o li si perde.
+        context.setdefault("formset", RoutineExerciseFormSet(instance=self.object))
+        return context
+
+    def post(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        formset = RoutineExerciseFormSet(request.POST, instance=self.object)
+
+        if not formset.is_valid():
+            return self.render_to_response(self.get_context_data(formset=formset))
+
+        formset.save()
+        messages.success(request, "Gli esercizi della scheda sono aggiornati.")
+        return redirect("training:routine-detail", pk=self.object.pk)

@@ -507,3 +507,340 @@ class ProfileTests(TestCase):
         self.assertIsNone(altra.body_mass_kg)
         self.user.refresh_from_db()
         self.assertEqual(self.user.body_mass_kg, Decimal("60.00"))
+
+
+class RoutineCrudTests(TestCase):
+    """Il primo dei due CRUD completi che pagano il requisito della traccia.
+
+    Due cose si proteggono qui, e sono di natura diversa. La prima è che i
+    quattro verbi funzionino davvero — creare, leggere, modificare, eliminare —
+    perché «CRUD operations on main objects» è un requisito minimo e va
+    dimostrato, non descritto. La seconda è la **proprietà dell'oggetto**: che
+    un secondo utente prenda 403 non è una raffinatezza, è ciò che distingue
+    un CRUD da un CRUD sui dati di chiunque, e non c'è vincolo di database che
+    possa imporlo al posto della view.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user(username="lorenzo", password=PASSWORD)
+        cls.altro = User.objects.create_user(username="martina", password=PASSWORD)
+
+        group = MuscleGroup.objects.create(code="chest", label_it="Petto", sort_order=1)
+        muscle = Muscle.objects.create(
+            code="chestMid", group=group, label_it="Petto medio", sort_order=1
+        )
+        cls.equipment = Equipment.objects.create(
+            code="barbell", label_it="Bilanciere", sort_order=1
+        )
+        cls.panca = Exercise.objects.create(
+            name="Panca piana", slug="panca-piana",
+            primary_muscle=muscle, equipment=cls.equipment,
+        )
+        cls.rematore = Exercise.objects.create(
+            name="Rematore con bilanciere", slug="rematore-con-bilanciere",
+            primary_muscle=muscle, equipment=cls.equipment,
+        )
+
+    def setUp(self):
+        self.client.force_login(self.user)
+        self.routine = Routine.objects.create(user=self.user, name="Spinta A")
+
+    def formset_payload(self, righe, iniziali=0):
+        """Il `management_form` più le righe: un POST di formset è metà contabilità.
+
+        Senza `TOTAL_FORMS` e `INITIAL_FORMS` il formset non è nemmeno
+        invalido, è *rotto* (`ManagementFormError`), e il test fallirebbe per
+        la ragione sbagliata.
+        """
+        payload = {
+            "exercises-TOTAL_FORMS": str(len(righe)),
+            "exercises-INITIAL_FORMS": str(iniziali),
+            "exercises-MIN_NUM_FORMS": "0",
+            "exercises-MAX_NUM_FORMS": "1000",
+        }
+        for indice, riga in enumerate(righe):
+            for campo, valore in riga.items():
+                payload[f"exercises-{indice}-{campo}"] = valore
+        return payload
+
+    # --- I quattro verbi ------------------------------------------------
+
+    def test_create_read_update_delete_a_routine(self):
+        """Il giro completo, nell'ordine in cui lo si mostra all'orale."""
+        # Create — e si atterra sugli esercizi, non sulla lista.
+        response = self.client.post(
+            reverse("training:routine-create"),
+            {"name": "Tirata B", "notes": "Giovedì", "is_public": ""},
+        )
+        routine = Routine.objects.get(name="Tirata B")
+        self.assertEqual(routine.user, self.user)
+        self.assertRedirects(
+            response, reverse("training:routine-exercises", args=[routine.pk])
+        )
+
+        # Read
+        response = self.client.get(
+            reverse("training:routine-detail", args=[routine.pk])
+        )
+        self.assertContains(response, "Tirata B")
+
+        # Update
+        self.client.post(
+            reverse("training:routine-update", args=[routine.pk]),
+            {"name": "Tirata B2", "notes": "", "is_public": "on"},
+        )
+        routine.refresh_from_db()
+        self.assertEqual(routine.name, "Tirata B2")
+        self.assertTrue(routine.is_public)
+
+        # Delete — il GET è solo la domanda, l'effetto è il POST.
+        self.client.get(reverse("training:routine-delete", args=[routine.pk]))
+        self.assertTrue(Routine.objects.filter(pk=routine.pk).exists())
+
+        response = self.client.post(
+            reverse("training:routine-delete", args=[routine.pk])
+        )
+        self.assertRedirects(response, reverse("training:routine-list"))
+        self.assertFalse(Routine.objects.filter(pk=routine.pk).exists())
+
+    def test_the_list_shows_only_my_routines(self):
+        Routine.objects.create(user=self.altro, name="Scheda di Martina")
+
+        response = self.client.get(reverse("training:routine-list"))
+
+        self.assertContains(response, "Spinta A")
+        self.assertNotContains(response, "Scheda di Martina")
+
+    def test_is_public_is_the_flag_that_opens_the_routine_to_the_community(self):
+        """Senza questo campo in pagina la sezione community non ha nulla da mostrare."""
+        self.client.post(
+            reverse("training:routine-update", args=[self.routine.pk]),
+            {"name": "Spinta A", "notes": "", "is_public": "on"},
+        )
+        self.routine.refresh_from_db()
+        self.assertTrue(self.routine.is_public)
+
+        self.client.post(
+            reverse("training:routine-update", args=[self.routine.pk]),
+            {"name": "Spinta A", "notes": "", "is_public": ""},
+        )
+        self.routine.refresh_from_db()
+        self.assertFalse(self.routine.is_public)
+
+    def test_deleting_a_routine_declares_that_workouts_survive(self):
+        """ADR-0002 detto dove la domanda nasce: sulla pagina di conferma."""
+        response = self.client.get(
+            reverse("training:routine-delete", args=[self.routine.pk])
+        )
+        self.assertContains(response, "allenamenti")
+
+    # --- La proprietà dell'oggetto --------------------------------------
+
+    def test_a_second_user_gets_403_on_every_owned_route(self):
+        """403 e non 404, e soprattutto non 200: è il punto di `test_func()`."""
+        self.client.force_login(self.altro)
+
+        for nome in (
+            "routine-detail",
+            "routine-update",
+            "routine-delete",
+            "routine-exercises",
+        ):
+            with self.subTest(rotta=nome):
+                response = self.client.get(reverse(f"training:{nome}", args=[self.routine.pk]))
+                self.assertEqual(response.status_code, 403)
+
+    def test_a_second_user_cannot_delete_or_edit_by_post_either(self):
+        """Il 403 sul GET non basta: l'effetto sta nel POST."""
+        self.client.force_login(self.altro)
+
+        response = self.client.post(
+            reverse("training:routine-delete", args=[self.routine.pk])
+        )
+        self.assertEqual(response.status_code, 403)
+        self.assertTrue(Routine.objects.filter(pk=self.routine.pk).exists())
+
+        response = self.client.post(
+            reverse("training:routine-update", args=[self.routine.pk]),
+            {"name": "Rubata", "notes": "", "is_public": "on"},
+        )
+        self.assertEqual(response.status_code, 403)
+        self.routine.refresh_from_db()
+        self.assertEqual(self.routine.name, "Spinta A")
+
+    def test_an_anonymous_visitor_is_sent_to_the_login_not_to_a_403(self):
+        """Per un anonimo la risposta giusta è «entra», e la dà `LoginRequiredMixin`."""
+        self.client.logout()
+
+        response = self.client.get(reverse("training:routine-list"))
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response.url)
+
+    def test_the_owner_is_taken_from_the_request_not_from_the_post(self):
+        """`user` non è un campo del form: un POST che lo dichiara viene ignorato."""
+        self.client.post(
+            reverse("training:routine-create"),
+            {"name": "Regalata", "notes": "", "is_public": "", "user": self.altro.pk},
+        )
+
+        self.assertEqual(Routine.objects.get(name="Regalata").user, self.user)
+
+    # --- Il formset degli esercizi --------------------------------------
+
+    def test_the_formset_adds_updates_and_removes_rows(self):
+        url = reverse("training:routine-exercises", args=[self.routine.pk])
+
+        # Aggiunge due righe (INITIAL_FORMS = 0: sono entrambe nuove).
+        response = self.client.post(
+            url,
+            self.formset_payload([
+                {"position": "1", "exercise": str(self.panca.pk),
+                 "target_sets": "3", "target_reps": "8", "target_reps_max": "12",
+                 "notes": "", "id": ""},
+                {"position": "2", "exercise": str(self.rematore.pk),
+                 "target_sets": "4", "target_reps": "6", "target_reps_max": "",
+                 "notes": "", "id": ""},
+            ]),
+        )
+        self.assertRedirects(
+            response, reverse("training:routine-detail", args=[self.routine.pk])
+        )
+        self.assertEqual(self.routine.exercises.count(), 2)
+
+        panca_riga, rematore_riga = self.routine.exercises.all()
+        self.assertEqual(panca_riga.exercise, self.panca)
+        self.assertEqual(panca_riga.target_reps_max, 12)
+        self.assertIsNone(rematore_riga.target_reps_max)
+
+        # Modifica la prima e cancella la seconda, in un solo POST.
+        self.client.post(
+            url,
+            self.formset_payload(
+                [
+                    {"position": "1", "exercise": str(self.panca.pk),
+                     "target_sets": "5", "target_reps": "5", "target_reps_max": "",
+                     "notes": "Pesante", "id": str(panca_riga.pk)},
+                    {"position": "2", "exercise": str(self.rematore.pk),
+                     "target_sets": "4", "target_reps": "6", "target_reps_max": "",
+                     "notes": "", "id": str(rematore_riga.pk), "DELETE": "on"},
+                ],
+                iniziali=2,
+            ),
+        )
+
+        self.assertEqual(self.routine.exercises.count(), 1)
+        panca_riga.refresh_from_db()
+        self.assertEqual(panca_riga.target_sets, 5)
+        self.assertEqual(panca_riga.notes, "Pesante")
+
+    def test_empty_rows_are_ignored(self):
+        """`extra=3` significa tre righe vuote in coda: non devono creare nulla."""
+        self.client.post(
+            reverse("training:routine-exercises", args=[self.routine.pk]),
+            self.formset_payload([
+                {"position": "1", "exercise": str(self.panca.pk),
+                 "target_sets": "3", "target_reps": "8", "target_reps_max": "",
+                 "notes": "", "id": ""},
+                {"position": "", "exercise": "", "target_sets": "", "target_reps": "",
+                 "target_reps_max": "", "notes": "", "id": ""},
+                {"position": "", "exercise": "", "target_sets": "", "target_reps": "",
+                 "target_reps_max": "", "notes": "", "id": ""},
+            ]),
+        )
+
+        self.assertEqual(self.routine.exercises.count(), 1)
+
+    def test_the_same_exercise_twice_is_a_form_error_not_a_500(self):
+        """`routine_exercise_unique` arriverebbe come `IntegrityError`.
+
+        Il vincolo del database resta la garanzia vera; questo test protegge
+        la *traduzione*, cioè che l'utente veda un errore di form invece di
+        una pagina d'errore.
+        """
+        response = self.client.post(
+            reverse("training:routine-exercises", args=[self.routine.pk]),
+            self.formset_payload([
+                {"position": "1", "exercise": str(self.panca.pk),
+                 "target_sets": "3", "target_reps": "8", "target_reps_max": "",
+                 "notes": "", "id": ""},
+                {"position": "2", "exercise": str(self.panca.pk),
+                 "target_sets": "3", "target_reps": "8", "target_reps_max": "",
+                 "notes": "", "id": ""},
+            ]),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.routine.exercises.count(), 0)
+        self.assertContains(response, "una volta sola")
+
+    def test_a_reversed_rep_range_is_refused(self):
+        """L'estremo alto è quello che la doppia progressione insegue."""
+        response = self.client.post(
+            reverse("training:routine-exercises", args=[self.routine.pk]),
+            self.formset_payload([
+                {"position": "1", "exercise": str(self.panca.pk),
+                 "target_sets": "3", "target_reps": "12", "target_reps_max": "8",
+                 "notes": "", "id": ""},
+            ]),
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.routine.exercises.count(), 0)
+        self.assertContains(response, "sotto il minimo")
+
+    def test_the_header_link_to_the_routines_is_a_real_route(self):
+        """#67 aveva lasciato `href="/schede/"` letterale: ora è il tag `url`."""
+        response = self.client.get(reverse("training:dashboard"))
+
+        self.assertContains(response, f'href="{reverse("training:routine-list")}"')
+
+    def test_only_one_header_section_lights_up_at_a_time(self):
+        """`/schede/<pk>/esercizi/` accendeva anche «Esercizi».
+
+        Il controllo era `'/esercizi/' in request.path`, e quella sottostringa
+        compare dentro l'URL del formset. La voce attiva si decide sul
+        prefisso; due voci accese sono peggio di nessuna.
+        """
+        response = self.client.get(
+            reverse("training:routine-exercises", args=[self.routine.pk])
+        )
+        body = response.content.decode()
+
+        self.assertIn('class="attivo">Schede</a>', body)
+        self.assertIn('class="">Esercizi</a>', body)
+
+
+class TemplateCommentTests(TestCase):
+    """I commenti di template non finiscono nella pagina.
+
+    La forma breve `{# … #}` è una comodità di **una riga sola**: il lexer di
+    Django la cerca senza `re.DOTALL`, quindi un commento che va a capo non
+    viene riconosciuto e il suo testo — note interne, riferimenti ad ADR,
+    numeri di ticket — viene reso come HTML e appare in pagina.
+
+    Quattro template lo facevano già, e nessun test se ne accorgeva: è un
+    guasto silenzioso della stessa famiglia dell'ereditarietà di `base.html`,
+    quindi prende la stessa forma di guardia. Rilevato in #69.
+    """
+
+    def test_no_template_opens_a_short_comment_it_does_not_close(self):
+        aperto = re.compile(r"{#(?!.*#})")
+
+        trovati = []
+        for root in TEMPLATE_ROOTS:
+            for path in sorted(root.rglob("*.html")):
+                for numero, riga in enumerate(
+                    path.read_text(encoding="utf-8").splitlines(), start=1
+                ):
+                    if aperto.search(riga):
+                        trovati.append(
+                            f"{path.relative_to(settings.BASE_DIR)}:{numero}"
+                        )
+
+        self.assertEqual(
+            trovati,
+            [],
+            "Commento `{# … #}` su più righe: usa il tag `comment`. "
+            + ", ".join(trovati),
+        )
