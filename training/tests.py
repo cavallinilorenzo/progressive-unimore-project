@@ -33,7 +33,7 @@ from django.test.utils import CaptureQueriesContext
 from django.urls import reverse
 from django.utils import timezone
 
-from training import views
+from training import rankings, views
 from training.exporter import (
     INTESTAZIONE_SERIE,
     INTESTAZIONE_SESSIONI,
@@ -3424,3 +3424,569 @@ class SeedSyntheticGuardTests(TestCase):
             letti, list(Exercise.objects.order_by("pk").values_list("name", flat=True))
         )
         self.assertNotEqual(letti, sorted(letti))
+
+
+class RankingTests(TestCase):
+    """Le due classifiche — il requisito «display results or rankings».
+
+    Sono la guardia di quattro cose che nessun errore segnala da solo: le tre
+    condizioni d'ammissione della classifica di forza, le **due trappole
+    silenziose** di `04-analisi.md`, il significato di `Rank()`, e il fatto che
+    la pagina sia raggiungibile dal menu — che è l'unico modo perché il
+    requisito si mostri all'orale in due secondi invece di essere cercato.
+    """
+
+    #: Quanti utenti servono perché la panca superi la soglia. Due in più della
+    #: costante, perché il test deve poter *togliere* qualcuno e restare sopra.
+    UTENTI = rankings.MIN_USERS_FOR_COMPARISON + 2
+
+    @classmethod
+    def setUpTestData(cls):
+        group = MuscleGroup.objects.create(code="chest", label_it="Petto", sort_order=1)
+        muscle = Muscle.objects.create(
+            code="chestMid", group=group, label_it="Petto medio", sort_order=1
+        )
+        cls.bilanciere = Equipment.objects.create(
+            code="barbell", label_it="Bilanciere", sort_order=1
+        )
+        cls.corpo_libero = Equipment.objects.create(
+            code="bodyweight", label_it="Corpo libero", sort_order=2
+        )
+        cls.panca = Exercise.objects.create(
+            name="Panca piana",
+            slug="panca-piana",
+            primary_muscle=muscle,
+            equipment=cls.bilanciere,
+        )
+        # Un secondo esercizio che **non** arriva in soglia: serve a provare
+        # che la soglia esclude davvero, e che il selettore non lo offre.
+        cls.curl = Exercise.objects.create(
+            name="Curl con manubri",
+            slug="curl-con-manubri",
+            primary_muscle=muscle,
+            equipment=cls.bilanciere,
+        )
+        cls.trazioni = Exercise.objects.create(
+            name="Trazioni",
+            slug="trazioni",
+            primary_muscle=muscle,
+            equipment=cls.corpo_libero,
+        )
+
+        cls.io = User.objects.create_user(
+            username="lorenzo", password=PASSWORD, body_mass_kg=Decimal("80.00")
+        )
+        # La popolazione: tutti con peso dichiarato e due allenamenti, cioè
+        # tutti ammessi. I test che escludono qualcuno lo fanno togliendogli
+        # una condizione alla volta.
+        cls.popolazione = [cls.io]
+        for indice in range(1, cls.UTENTI):
+            cls.popolazione.append(
+                User.objects.create_user(
+                    username=f"atleta{indice:02d}",
+                    password=PASSWORD,
+                    body_mass_kg=Decimal("80.00"),
+                )
+            )
+        for indice, utente in enumerate(cls.popolazione):
+            # Carico decrescente: `lorenzo` è primo, e le posizioni sono
+            # prevedibili riga per riga.
+            cls.serie(utente, cls.panca, peso=Decimal(100 - indice), reps=5, quante=2)
+
+    @classmethod
+    def serie(cls, utente, esercizio, peso, reps, quante=1, **campi):
+        """`quante` serie efficaci su altrettanti allenamenti **distinti**.
+
+        Allenamenti distinti e non serie nello stesso giorno: è la seconda
+        condizione d'ammissione, e un helper che facesse il contrario
+        renderebbe il test cieco proprio su quella.
+        """
+        istante = timezone.now() - timedelta(days=400)
+        for numero in range(quante):
+            allenamento = Workout.objects.create(
+                user=utente,
+                title=f"{esercizio.name} {numero}",
+                started_at=istante + timedelta(days=numero * 7),
+            )
+            WorkoutSet.objects.create(
+                workout=allenamento,
+                exercise=esercizio,
+                set_number=1,
+                reps=reps,
+                weight=peso,
+                **campi,
+            )
+        return allenamento
+
+    def setUp(self):
+        self.client.force_login(self.io)
+
+    def forza(self, esercizio=None):
+        return list(rankings.classifica_forza(esercizio or self.panca))
+
+    # --- Le tre condizioni d'ammissione ----------------------------------
+
+    def test_the_ranking_lists_everyone_who_qualifies(self):
+        righe = self.forza()
+
+        self.assertEqual(len(righe), self.UTENTI)
+        self.assertEqual(righe[0]["username"], "lorenzo")
+        self.assertEqual(righe[0]["posizione"], 1)
+
+    def test_an_athlete_without_a_declared_body_mass_does_not_appear(self):
+        """Senza peso corporeo non c'è forza relativa: assente, non sbagliato.
+
+        È ADR-0008 preso alla lettera, ed è una condizione *nuova* rispetto al
+        percentile: comparire con un numero inventato sarebbe peggio che non
+        comparire.
+        """
+        senza_peso = User.objects.create_user(
+            username="senzapeso", password=PASSWORD, body_mass_kg=None
+        )
+        self.serie(senza_peso, self.panca, peso=Decimal("500"), reps=5, quante=2)
+
+        nomi = [riga["username"] for riga in self.forza()]
+
+        self.assertNotIn("senzapeso", nomi)
+
+    def test_a_single_workout_is_not_enough_to_enter(self):
+        """Due serie nello stesso giorno sono lo stesso dato, non due dati.
+
+        La condizione è **due allenamenti distinti**: esclude il valore singolo
+        inserito male, che è il rumore realistico misurato in #13.
+        """
+        principiante = User.objects.create_user(
+            username="principiante", password=PASSWORD, body_mass_kg=Decimal("80.00")
+        )
+        allenamento = self.serie(principiante, self.panca, peso=Decimal("400"), reps=5)
+        WorkoutSet.objects.create(
+            workout=allenamento,
+            exercise=self.panca,
+            set_number=2,
+            reps=5,
+            weight=Decimal("400"),
+        )
+
+        nomi = [riga["username"] for riga in self.forza()]
+
+        self.assertNotIn("principiante", nomi)
+
+    def test_an_exercise_below_the_population_threshold_has_no_ranking(self):
+        """Sotto soglia la classifica non si mostra magra: non si mostra.
+
+        Una classifica su tre persone ha lo stesso difetto informativo di un
+        percentile su tre, ed è la **stessa costante** a fermarli entrambi.
+        """
+        for utente in self.popolazione[:3]:
+            self.serie(utente, self.curl, peso=Decimal("20"), reps=8, quante=2)
+
+        ammessi = [e.slug for e in rankings.esercizi_con_classifica()]
+
+        self.assertIn("panca-piana", ammessi)
+        self.assertNotIn("curl-con-manubri", ammessi)
+
+    def test_the_selector_offers_only_the_exercises_above_the_threshold(self):
+        """Offrire un esercizio che poi dice «dati insufficienti» è un vicolo
+        cieco messo nel menu apposta."""
+        response = self.client.get(reverse("training:ranking-strength"))
+
+        self.assertContains(response, "Panca piana")
+        self.assertNotContains(response, "Curl con manubri")
+
+    # --- Le tre definizioni condivise -------------------------------------
+
+    def test_a_set_above_the_rep_cap_does_not_set_the_record(self):
+        """Sopra le 12 ripetizioni Epley gonfia: quelle serie non concorrono.
+
+        Restano però nel volume, ed è la ragione per cui il tetto è un filtro
+        sulle righe e non una proprietà dell'espressione.
+        """
+        self.serie(self.io, self.panca, peso=Decimal("300"), reps=20, quante=2)
+
+        massimale = self.forza()[0]["massimale"]
+
+        # 100 kg × 5 ripetizioni, non i 300 kg della serie da 20.
+        self.assertAlmostEqual(massimale, 100 * (1 + 5 / 30), places=4)
+
+    def test_the_universal_filter_keeps_warmups_and_skipped_sets_out(self):
+        """`set_type='working'` **e** `is_completed=True`, sempre insieme.
+
+        #13 ha misurato 19% di serie non completate: farle entrare
+        significherebbe contare allenamento che non è avvenuto.
+        """
+        self.serie(
+            self.io,
+            self.panca,
+            peso=Decimal("400"),
+            reps=5,
+            quante=2,
+            set_type=WorkoutSet.SetType.WARMUP,
+        )
+        self.serie(
+            self.io,
+            self.panca,
+            peso=Decimal("500"),
+            reps=5,
+            quante=2,
+            is_completed=False,
+        )
+
+        self.assertAlmostEqual(
+            self.forza()[0]["massimale"], 100 * (1 + 5 / 30), places=4
+        )
+
+    def test_on_a_bodyweight_exercise_the_load_includes_the_body_mass(self):
+        """ADR-0006, e la discrepanza `corpo_libero` / `bodyweight`.
+
+        Su una trazione a corpo libero `weight` vale zero, e senza il `Case` il
+        massimale sarebbe zero per tutti: la classifica renderebbe una colonna
+        di zeri **senza segnalare niente**.
+        """
+        for utente in self.popolazione:
+            self.serie(utente, self.trazioni, peso=Decimal("0"), reps=5, quante=2)
+
+        righe = self.forza(self.trazioni)
+
+        self.assertAlmostEqual(righe[0]["massimale"], 80 * (1 + 5 / 30), places=4)
+
+    # --- Il pari merito ----------------------------------------------------
+
+    def test_a_tie_gives_two_firsts_and_then_a_third(self):
+        """`Rank()` e non `RowNumber()`: è il significato letterale di pari
+        merito, e sui dati veri capita davvero — 100 kg × 5 a 80 kg di peso
+        corporeo dà lo stesso valore per due persone."""
+        gemello = User.objects.create_user(
+            username="gemello", password=PASSWORD, body_mass_kg=Decimal("80.00")
+        )
+        self.serie(gemello, self.panca, peso=Decimal("100"), reps=5, quante=2)
+
+        posizioni = [riga["posizione"] for riga in self.forza()]
+
+        self.assertEqual(posizioni[:3], [1, 1, 3])
+
+    def test_the_order_inside_a_tie_is_deterministic(self):
+        """Senza un ordine interno la pagina si riordina a ogni ricarica, e il
+        paginatore mostra due volte la stessa persona a pagina diversa."""
+        gemello = User.objects.create_user(
+            username="gemello", password=PASSWORD, body_mass_kg=Decimal("80.00")
+        )
+        self.serie(gemello, self.panca, peso=Decimal("100"), reps=5, quante=2)
+
+        primi = [[riga["username"] for riga in self.forza()[:2]] for _ in range(3)]
+
+        self.assertEqual(primi[0], primi[1])
+        self.assertEqual(primi[1], primi[2])
+
+    # --- La classifica sociale --------------------------------------------
+
+    def scheda_pubblica(self, nome, esercizi=3, autore=None):
+        scheda = Routine.objects.create(
+            user=autore or self.io, name=nome, is_public=True
+        )
+        catalogo = [self.panca, self.curl, self.trazioni]
+        for posizione in range(esercizi):
+            # Il catalogo del test ha tre esercizi e una scheda ne può volere
+            # otto: `RoutineExercise` è unico per `(routine, exercise)`, quindi
+            # gli extra nascono qui.
+            esercizio = (
+                catalogo[posizione]
+                if posizione < len(catalogo)
+                else Exercise.objects.create(
+                    name=f"{nome} extra {posizione}",
+                    slug=f"{nome.lower()}-extra-{posizione}",
+                    primary_muscle=self.panca.primary_muscle,
+                    equipment=self.bilanciere,
+                )
+            )
+            RoutineExercise.objects.create(
+                routine=scheda,
+                exercise=esercizio,
+                position=posizione + 1,
+                target_sets=3,
+                target_reps=8,
+            )
+        return scheda
+
+    def vota(self, scheda, punteggi):
+        for indice, punteggio in enumerate(punteggi):
+            Vote.objects.create(
+                user=self.popolazione[indice + 1], routine=scheda, score=punteggio
+            )
+
+    # --- Le due trappole silenziose ---------------------------------------
+
+    def test_the_social_score_is_not_multiplied_by_the_number_of_exercises(self):
+        """La prima trappola di `04-analisi.md`, e non segnala errore.
+
+        Due join a molti nella stessa query moltiplicano le righe: contare gli
+        esercizi insieme ai voti farebbe diventare `Sum("votes__score")` la
+        somma **per esercizio**, e il punteggio sarebbe sbagliato con la pagina
+        che continua a rendere. Il controllo è che due schede con gli **stessi
+        voti** e un numero di esercizi diverso abbiano lo stesso punteggio.
+        """
+        magra = self.scheda_pubblica("Magra", esercizi=3)
+        grassa = self.scheda_pubblica("Grassa", esercizi=8)
+        for scheda in (magra, grassa):
+            self.vota(scheda, [5, 4, 3])
+
+        punteggi = {
+            r.name: (r.punteggio, r.somma_voti, r.n_voti)
+            for r in rankings.classifica_sociale()
+        }
+
+        self.assertEqual(punteggi["Magra"], punteggi["Grassa"])
+        self.assertEqual(punteggi["Magra"][1], 12)
+        self.assertEqual(punteggi["Magra"][2], 3)
+
+    def test_the_bayesian_average_does_not_truncate_to_an_integer(self):
+        """La seconda trappola, nella sua forma peggiore: **ordina lo stesso**.
+
+        `somma_voti` e `n_voti` sono interi, e senza `Cast` la divisione
+        tronca. Un punteggio di 4,39 diventerebbe 4, la pagina renderebbe, e
+        l'ordine sarebbe sbagliato solo dove conta — fra le prime.
+        """
+        scheda = self.scheda_pubblica("Petto e tricipiti", esercizi=3)
+        self.vota(scheda, [5, 5, 4])
+
+        riga = rankings.classifica_sociale().get(pk=scheda.pk)
+
+        media_globale = rankings.media_globale_dei_voti()
+        atteso = (3 * float(media_globale) + 14) / (3 + 3)
+        self.assertAlmostEqual(riga.punteggio, atteso, places=6)
+        self.assertNotEqual(riga.punteggio, int(riga.punteggio))
+
+    def test_a_single_five_does_not_beat_many_high_votes(self):
+        """È la ragione per cui la bayesiana esiste, e la ragione per cui la
+        community (#72) resta cronologica: su media grezza un 5 secco starebbe
+        in testa per sempre.
+
+        Le dieci sufficienze della scheda «Nella media» non sono contorno: la
+        bayesiana smorza **verso la media globale**, quindi senza un fondo di
+        voti normali la media globale sarebbe fatta dalle due schede in gara e
+        il 5 secco verrebbe smorzato verso se stesso. È il primo modo in cui
+        questo test può mentire, ed è capitato scrivendolo.
+        """
+        self.vota(self.scheda_pubblica("Nella media"), [3] * 10)
+        fortunata = self.scheda_pubblica("Un voto solo")
+        self.vota(fortunata, [5])
+        provata = self.scheda_pubblica("Molti voti")
+        self.vota(provata, [5, 5, 4, 5, 5, 5, 4, 5, 5, 5])
+
+        ordine = [r.name for r in rankings.classifica_sociale()]
+
+        self.assertLess(ordine.index("Molti voti"), ordine.index("Un voto solo"))
+
+    def test_a_routine_with_too_few_exercises_stays_out(self):
+        """L'anti-civetta: una scheda con un esercizio solo non è una scheda,
+        è un'esca per voti. È l'unica difesa **strutturale** della
+        gamificabilità che questa pagina si prende; il resto si dichiara."""
+        esca = self.scheda_pubblica("Esca", esercizi=1)
+        self.vota(esca, [5, 5, 5])
+
+        nomi = [r.name for r in rankings.classifica_sociale()]
+
+        self.assertNotIn("Esca", nomi)
+
+    def test_a_private_routine_is_not_ranked(self):
+        """`is_public` è l'unico consenso dell'autore, e vale anche qui."""
+        privata = self.scheda_pubblica("Bozza segreta")
+        privata.is_public = False
+        privata.save()
+        self.vota(privata, [5, 5])
+
+        nomi = [r.name for r in rankings.classifica_sociale()]
+
+        self.assertNotIn("Bozza segreta", nomi)
+
+    def test_a_routine_without_votes_is_not_ranked(self):
+        """Senza voti non c'è un giudizio da ordinare: la scheda vive nella
+        community, che è cronologica e le mostra tutte."""
+        self.scheda_pubblica("Mai votata")
+
+        nomi = [r.name for r in rankings.classifica_sociale()]
+
+        self.assertNotIn("Mai votata", nomi)
+
+    def test_the_global_average_is_over_all_votes_not_over_the_averages(self):
+        """Non è la media delle medie: quella peserebbe uguale una scheda con
+        un voto e una con cinquanta, che è ciò che la bayesiana esiste per non
+        fare."""
+        prima = self.scheda_pubblica("Prima")
+        Vote.objects.create(user=self.popolazione[1], routine=prima, score=5)
+        seconda = self.scheda_pubblica("Seconda")
+        for indice in range(2, 6):
+            Vote.objects.create(user=self.popolazione[indice], routine=seconda, score=1)
+
+        # Media di tutti i voti: (5 + 1 + 1 + 1 + 1) / 5 = 1,8.
+        # Media delle medie sarebbe (5 + 1) / 2 = 3.
+        self.assertAlmostEqual(float(rankings.media_globale_dei_voti()), 1.8, places=6)
+
+    # --- Le pagine ---------------------------------------------------------
+
+    def test_both_rankings_render(self):
+        for nome in ("training:ranking-strength", "training:ranking-social"):
+            with self.subTest(rotta=nome):
+                self.assertEqual(self.client.get(reverse(nome)).status_code, 200)
+
+    def test_the_rankings_need_a_login(self):
+        self.client.logout()
+
+        for nome in ("training:ranking-strength", "training:ranking-social"):
+            with self.subTest(rotta=nome):
+                response = self.client.get(reverse(nome))
+                self.assertEqual(response.status_code, 302)
+                self.assertIn("/accounts/login/", response.url)
+
+    def test_the_header_link_to_the_rankings_is_a_real_route(self):
+        """Era l'ultimo `href` letterale dell'header, e portava a un 404.
+
+        La pagina ha una voce **propria** nel menu di proposito: un requisito
+        della traccia sepolto dentro una pagina di dettaglio, all'orale, va
+        cercato.
+        """
+        response = self.client.get(reverse("training:dashboard"))
+
+        self.assertContains(response, f'href="{reverse("training:ranking-strength")}"')
+
+    def test_the_rankings_section_lights_up_and_only_that(self):
+        response = self.client.get(reverse("training:ranking-social"))
+        body = response.content.decode()
+
+        self.assertIn('class="attivo">Classifiche</a>', body)
+        self.assertIn('class="">Schede</a>', body)
+
+    def test_the_bare_prefix_redirects_to_the_strength_ranking(self):
+        """`/classifiche/` è il prefisso che l'header mostra: chi lo digita
+        deve arrivare a una pagina, non a un 404."""
+        response = self.client.get("/classifiche/")
+
+        self.assertRedirects(response, reverse("training:ranking-strength"))
+
+    def test_the_exercise_is_chosen_by_slug(self):
+        """Come i filtri del catalogo (#71): `?esercizio=panca-piana` si legge,
+        si salva e sopravvive a un ricaricamento del catalogo."""
+        for utente in self.popolazione:
+            self.serie(utente, self.trazioni, peso=Decimal("0"), reps=5, quante=2)
+
+        response = self.client.get(
+            reverse("training:ranking-strength"), {"esercizio": "trazioni"}
+        )
+
+        self.assertEqual(response.context["esercizio"], self.trazioni)
+
+    def test_an_unknown_slug_falls_back_instead_of_raising(self):
+        """Una classifica che non c'è è una domanda legittima con una risposta
+        legittima, non una porta sbattuta."""
+        response = self.client.get(
+            reverse("training:ranking-strength"), {"esercizio": "non-esiste"}
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context["esercizio"], self.panca)
+
+    def test_the_page_paginates_at_twenty_five(self):
+        """`Paginator`, 25 per pagina: qui i dati crescono senza limite, ed è
+        la ragione per cui la lista degli esercizi (#71) non pagina e questa
+        sì."""
+        response = self.client.get(reverse("training:ranking-strength"))
+
+        self.assertEqual(response.context["paginator"].per_page, 25)
+        self.assertEqual(response.context["paginator"].count, self.UTENTI)
+
+    def test_the_pagination_links_keep_the_chosen_exercise(self):
+        """Senza, «pagina 2» tornerebbe alla classifica dell'esercizio
+        sbagliato — e in silenzio, perché la pagina renderebbe lo stesso."""
+        for utente in self.popolazione:
+            self.serie(utente, self.trazioni, peso=Decimal("0"), reps=5, quante=2)
+        # Servono più di 25 righe, o una seconda pagina non esiste e il test
+        # passerebbe controllando un link che non doveva comparire.
+        for indice in range(6):
+            in_piu = User.objects.create_user(
+                username=f"extra{indice}",
+                password=PASSWORD,
+                body_mass_kg=Decimal("80.00"),
+            )
+            self.serie(in_piu, self.trazioni, peso=Decimal("0"), reps=5, quante=2)
+
+        response = self.client.get(
+            reverse("training:ranking-strength"),
+            {"esercizio": "trazioni", "page": 1},
+        )
+
+        self.assertContains(response, "esercizio=trazioni&amp;page=2")
+
+    def test_my_own_row_is_highlighted(self):
+        """Su una classifica di ottanta persone «e io dove sono?» è la prima
+        domanda, ed è anche il motivo per cui la pagina impagina tutte le righe
+        invece di mostrare una top 20."""
+        response = self.client.get(reverse("training:ranking-strength"))
+
+        self.assertContains(response, "riga-mia")
+
+    def test_the_page_says_why_i_am_missing_without_a_body_mass(self):
+        """L'assenza dalla classifica dev'essere leggibile come una condizione,
+        non come un guasto della pagina."""
+        self.io.body_mass_kg = None
+        self.io.save()
+
+        response = self.client.get(reverse("training:ranking-strength"))
+
+        self.assertContains(response, "Non sei in classifica")
+        self.assertContains(response, reverse("training:profile"))
+
+    def test_the_exercise_detail_shows_the_short_ranking(self):
+        """La stessa tabella, ridotta a cinque righe e col link all'intera: è
+        un partial incluso due volte, non una seconda query scritta apposta."""
+        response = self.client.get(
+            reverse("training:exercise-detail", args=[self.panca.slug])
+        )
+
+        self.assertEqual(len(response.context["classifica"]), 5)
+        self.assertContains(response, "Vedi tutta la classifica")
+
+    def test_the_exercise_detail_stays_quiet_below_the_threshold(self):
+        response = self.client.get(
+            reverse("training:exercise-detail", args=[self.curl.slug])
+        )
+
+        self.assertNotIn("classifica", response.context)
+
+    def test_the_number_of_queries_does_not_grow_with_the_rows(self):
+        """La guardia di #70 nella forma di #86: protegge l'**invarianza**, non
+        il numero. Una classifica che facesse una query per riga renderebbe
+        benissimo su venti utenti e morirebbe su cento."""
+
+        def rendi():
+            with CaptureQueriesContext(connection) as contesto:
+                self.assertEqual(
+                    self.client.get(reverse("training:ranking-strength")).status_code,
+                    200,
+                )
+            return len(contesto.captured_queries)
+
+        prima = rendi()
+        for indice in range(self.UTENTI, self.UTENTI + 20):
+            nuovo = User.objects.create_user(
+                username=f"extra{indice:02d}",
+                password=PASSWORD,
+                body_mass_kg=Decimal("80.00"),
+            )
+            self.serie(nuovo, self.panca, peso=Decimal("50"), reps=5, quante=2)
+
+        self.assertEqual(prima, rendi())
+
+    def test_the_social_ranking_queries_do_not_grow_with_the_routines(self):
+        def rendi():
+            with CaptureQueriesContext(connection) as contesto:
+                self.assertEqual(
+                    self.client.get(reverse("training:ranking-social")).status_code,
+                    200,
+                )
+            return len(contesto.captured_queries)
+
+        self.vota(self.scheda_pubblica("Una"), [5, 4])
+        prima = rendi()
+        for numero in range(6):
+            self.vota(self.scheda_pubblica(f"Scheda {numero}"), [5, 4, 3])
+
+        self.assertEqual(prima, rendi())

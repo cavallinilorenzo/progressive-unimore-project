@@ -55,8 +55,13 @@ EFFECTIVE_LOAD = Case(
     default=F("weight"),
     output_field=FloatField(),
 )
-EPLEY = EFFECTIVE_LOAD * (Value(1.0) + F("reps") / Value(30.0))
+EPLEY = ExpressionWrapper(
+    EFFECTIVE_LOAD * (Value(1.0) + Cast(F("reps"), FloatField()) / Value(30.0)),
+    output_field=FloatField(),
+)
 ```
+
+> Il `Cast` su `reps` non è cerimonia: `reps` è un intero e `30.0` un float, e Django rifiuta di indovinare il tipo di un'espressione mista. Senza, la divisione sarebbe intera e una serie da 8 ripetizioni varrebbe come una da 0. Scritto in #76.
 
 > **Attenzione:** #16 scriveva `equipment__code="corpo_libero"`. Il codice vero nel catalogo è **`"bodyweight"`** (`data/catalog/equipment.csv`). La query nel ticket è sbagliata; questa è corretta.
 
@@ -161,30 +166,27 @@ Nessuna finestra anche per una ragione pratica: qualsiasi finestra più corta di
 MIN_USERS_FOR_COMPARISON = 20
 MIN_WORKOUTS_FOR_RANKING = 2
 
-best_at = Subquery(                     # data del massimale, per il pari merito
-    WorkoutSet.objects.working()
-        .filter(exercise=exercise, reps__lte=12,
-                workout__user_id=OuterRef("workout__user_id"))
-        .order_by(EPLEY.desc(), "workout__started_at")
-        .values("workout__started_at")[:1]
-)
-
 (WorkoutSet.objects.working()
     .filter(exercise=exercise, reps__lte=12)
     .exclude(workout__user__body_mass_kg__isnull=True)
-    .values("workout__user_id", "workout__user__username",
-            "workout__user__body_mass_kg")
-    .annotate(best=Max(EPLEY),
-              workouts=Count("workout_id", distinct=True),
-              best_at=best_at)
-    .filter(workouts__gte=MIN_WORKOUTS_FOR_RANKING)
-    .annotate(relative=F("best") / F("workout__user__body_mass_kg"),
-              output_field=FloatField())
-    .annotate(position=Window(Rank(), order_by=F("relative").desc()))
-    .order_by("-relative", "best_at", "workout__user_id"))
+    .values(utente_id=F("workout__user_id"),
+            username=F("workout__user__username"),
+            is_synthetic=F("workout__user__is_synthetic"),
+            body_mass_kg=F("workout__user__body_mass_kg"))
+    .annotate(massimale=Max(EPLEY),
+              allenamenti=Count("workout_id", distinct=True),
+              primo_allenamento=Min("workout__started_at"))
+    .filter(allenamenti__gte=MIN_WORKOUTS_FOR_RANKING)
+    .annotate(relativa=ExpressionWrapper(
+        F("massimale") / Cast(F("body_mass_kg"), FloatField()),
+        output_field=FloatField()))
+    .annotate(posizione=Window(Rank(), order_by=F("relativa").desc()))
+    .order_by("-relativa", "primo_allenamento", "utente_id"))
 ```
 
-`best_at` è l'unico pezzo con un'incognita. **Ripiego se non regge:** pari merito rotto su `Min("workout__started_at")` — chi pratica quell'esercizio da più tempo — che è un aggregato nella stessa passata e non cambia nessuna altra regola.
+**Il pari merito si rompe sul primo allenamento, e il ripiego di #33 è stato preso.** La versione con la *data del massimale* era una `Subquery` correlata che ordina su un'espressione (`order_by(EPLEY.desc())`): SQLite la rivaluta riga per riga invece che per gruppo, e sui dati veri — 299.367 serie, 86 righe in classifica — la stessa pagina passa da **0,01 s a 31 s**. `Min("workout__started_at")` è un aggregato nella stessa passata, non cambia nessuna altra regola, e resta spiegabile: a parità di forza relativa sta sopra chi quell'esercizio lo pratica da più tempo. Misurato in #76.
+
+Due dettagli del frammento originale, corretti scrivendolo: l'`output_field` va **sull'espressione** (`ExpressionWrapper`) e non come argomento di `annotate()`, dove sarebbe una seconda annotazione di nome `output_field`; e i campi dell'utente escono **rinominati**, perché `workout__user__is_synthetic` in un template è una chiave e non un attributo, e il partial dell'«utente dimostrativo» non riuscirebbe a leggerlo.
 
 ### Classifica sociale — media bayesiana
 
@@ -204,19 +206,20 @@ Non è complicazione gratuita: è **una riga di ORM in più che elimina la sogli
 C = 3
 m = Vote.objects.aggregate(m=Avg("score"))["m"] or 0
 
-votable = (RoutineExercise.objects.values("routine")
-              .annotate(c=Count("*")).filter(c__gte=MIN_EXERCISES_FOR_RANKING)
+votabili = (RoutineExercise.objects.values("routine")
+              .annotate(n=Count("pk")).filter(n__gte=MIN_EXERCISES_FOR_RANKING)
               .values("routine"))                     # anti-civetta, >= 3 esercizi
 
-(Routine.objects.filter(is_public=True, pk__in=votable)
-    .annotate(n_votes=Count("votes"), sum_votes=Sum("votes__score"),
-              avg_votes=Avg("votes__score"))
-    .filter(n_votes__gte=1)
-    .annotate(social_score=(Value(C) * Value(m) + F("sum_votes"))
-                           / (Value(C) + F("n_votes")),
-              output_field=FloatField())
-    .annotate(position=Window(Rank(), order_by=F("social_score").desc()))
-    .order_by("-social_score", "-n_votes", "pk"))
+(Routine.objects.filter(is_public=True, pk__in=votabili)
+    .annotate(n_voti=Count("votes"), somma_voti=Sum("votes__score"),
+              media=Avg("votes__score"))
+    .filter(n_voti__gte=1)
+    .annotate(punteggio=ExpressionWrapper(
+        (Value(float(C)) * Value(m) + Cast(F("somma_voti"), FloatField()))
+        / (Value(float(C)) + Cast(F("n_voti"), FloatField())),
+        output_field=FloatField()))
+    .annotate(posizione=Window(Rank(), order_by=F("punteggio").desc()))
+    .order_by("-punteggio", "-n_voti", "pk"))
 ```
 
 ### Due trappole silenziose, entrambe trovate scrivendo la query

@@ -3,8 +3,8 @@
 `app_name` più nomi di rotta **col trattino**, come nell'esempio del corso
 (#22). La sitemap completa — cinque sezioni e i loro URL — è in
 `docs/spec/02-pagine-e-template.md`; qui ci sono la dashboard, le pagine
-dell'utente, le schede, lo storico e il catalogo; le classifiche e l'import
-ed export entrano coi ticket rimasti della mappa #53.
+dell'utente, le schede, lo storico, il catalogo, l'import,
+l'export e le classifiche.
 
 Login e logout non stanno qui: vivono sotto `/accounts/` in `config/urls.py`,
 perché sono le view di `django.contrib.auth` e i loro nomi di rotta (`login`,
@@ -13,6 +13,7 @@ dominio come le altre: `training:signup`.
 """
 
 from django.urls import path
+from django.views.generic import RedirectView
 
 from training import views
 
@@ -111,6 +112,30 @@ urlpatterns = [
         "esercizi/<slug:slug>/",
         views.ExerciseDetailView.as_view(),
         name="exercise-detail",
+    ),
+    # Classifiche — due pagine e non una con un `if` dentro, perché ordinano
+    # cose diverse: la prima gli **utenti** su un esercizio, la seconda le
+    # **schede**. Sono due classifiche di natura diversa, e la traccia si
+    # considera soddisfatta due volte proprio per quello.
+    #
+    # `/classifiche/` da sola non è una pagina: è il prefisso che l'header
+    # mostra, e chi lo digita finisce sulla classifica di forza. Una redirect e
+    # non un indice, perché un indice con due voci sarebbe un clic in più per
+    # dire ciò che le due schede in cima a ogni pagina già dicono.
+    path(
+        "classifiche/",
+        RedirectView.as_view(pattern_name="training:ranking-strength"),
+        name="ranking-index",
+    ),
+    path(
+        "classifiche/forza/",
+        views.RankingStrengthView.as_view(),
+        name="ranking-strength",
+    ),
+    path(
+        "classifiche/schede/",
+        views.RankingSocialView.as_view(),
+        name="ranking-social",
     ),
     # Import — **tre URL, non una vista con tre rami dentro `post()`**. Ogni
     # passo ha il suo indirizzo, quindi lo stato dell'import vive

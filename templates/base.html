@@ -41,8 +41,8 @@ Le rotte entrano una alla volta con i ticket della mappa #53, e ognuno
 sostituisce il proprio `href` letterale con il tag `url` quando la sua sezione
 arriva. Schede è passata al tag `url` con #69, Esercizi con #71, Storico con #70
 — e con esso il bottone «Inizia allenamento», che è la stessa rotta vista dal
-verso di chi non parte da una scheda. Resta letterale Classifiche (#76), e
-quel link porta a un 404: è l'unica lettura onesta dello stato del progetto.
+verso di chi non parte da una scheda. Classifiche con #76: era l'ultimo `href`
+letterale, e portava a un 404. Ora nessuna voce dell'header ne ha più.
 {% endcomment %}
 <header class="nav-top sticky-top">
   <div class="container-xl d-flex align-items-center gap-4 py-3">
@@ -58,7 +58,7 @@ quel link porta a un 404: è l'unica lettura onesta dello stato del progetto.
       <a href="{% url 'training:routine-list' %}" class="{% if request.path|slice:':8' == '/schede/' %}attivo{% endif %}">Schede</a>
       <a href="{% url 'training:workout-list' %}" class="{% if request.path|slice:':13' == '/allenamenti/' %}attivo{% endif %}">Storico</a>
       <a href="{% url 'training:exercise-list' %}" class="{% if request.path|slice:':10' == '/esercizi/' %}attivo{% endif %}">Esercizi</a>
-      <a href="/classifiche/" class="{% if request.path|slice:':13' == '/classifiche/' %}attivo{% endif %}">Classifiche</a>
+      <a href="{% url 'training:ranking-strength' %}" class="{% if request.path|slice:':13' == '/classifiche/' %}attivo{% endif %}">Classifiche</a>
     </nav>
     <div class="ms-auto d-flex align-items-center gap-3">
       <a href="{% url 'training:workout-create' %}" class="btn btn-volt btn-sm px-3">Inizia allenamento</a>

@@ -1,0 +1,50 @@
+{% comment %}
+La tabella della classifica di forza, in un partial perché vive in due posti:
+la pagina propria (`/classifiche/forza/`) e la sezione ridotta alle prime
+cinque righe sul dettaglio di un esercizio. Due copie divergerebbero al primo
+ripensamento sulle colonne, e nessun test lo segnalerebbe.
+
+Argomenti:
+
+    righe   le righe della classifica (`training.rankings.classifica_forza`)
+    utente  chi sta guardando, per evidenziare la propria riga
+
+Il prefisso `_` lo tiene fuori dalla guardia sull'ereditarietà di `base.html`.
+{% endcomment %}
+<div class="table-responsive">
+  <table class="table table-sm align-middle mb-0">
+    <thead>
+      <tr class="eyebrow" style="color:var(--t3)">
+        <th style="width:3.5rem">#</th>
+        <th>Utente</th>
+        <th class="text-end">Forza relativa</th>
+        <th class="text-end d-none d-md-table-cell">Massimale</th>
+        <th class="text-end d-none d-md-table-cell">Peso</th>
+        <th class="text-end d-none d-lg-table-cell">Allenamenti</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for riga in righe %}
+      {% comment %}
+      La riga di chi guarda è evidenziata: senza, su una classifica di 86
+      persone la domanda «e io dove sono?» resta senza risposta, ed è la prima
+      che uno si fa. È anche il motivo per cui la pagina impagina tutte le
+      righe invece di mostrare una top 20 — con una top 20 servirebbe una
+      seconda query solo per dire dove sei finito.
+      {% endcomment %}
+      <tr {% if riga.utente_id == utente.pk %}class="riga-mia"{% endif %}>
+        <td class="fw-bold" style="color:var(--t2)">{{ riga.posizione }}</td>
+        <td>
+          <span class="fw-bold">{{ riga.username }}</span>
+          {% if riga.utente_id == utente.pk %}<span class="eyebrow" style="color:var(--volt)">tu</span>{% endif %}
+          {% include "training/_utente_dimostrativo.html" with utente=riga %}
+        </td>
+        <td class="text-end fw-bold">{{ riga.relativa|floatformat:2 }}&times;</td>
+        <td class="text-end d-none d-md-table-cell" style="color:var(--t2)">{{ riga.massimale|floatformat:1 }} kg</td>
+        <td class="text-end d-none d-md-table-cell" style="color:var(--t3)">{{ riga.body_mass_kg|floatformat:1 }} kg</td>
+        <td class="text-end d-none d-lg-table-cell" style="color:var(--t3)">{{ riga.allenamenti }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
