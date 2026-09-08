@@ -1,10 +1,10 @@
-code,label_it,default_bar_weight_kg,sort_order
-barbell,Bilanciere,20.00,1
-ez_bar,Bilanciere EZ,10.00,2
-dumbbell,Manubri,0.00,3
-kettlebell,Kettlebell,0.00,4
-smith_machine,Multipower,15.00,5
-machine,Macchina,0.00,6
-cable,Cavi,0.00,7
-band,Elastico,0.00,8
-bodyweight,Corpo libero,0.00,9
+code,label_it,default_bar_weight_kg,load_increment_kg,sort_order
+barbell,Bilanciere,20.00,2.50,1
+ez_bar,Bilanciere EZ,10.00,2.50,2
+dumbbell,Manubri,0.00,2.00,3
+kettlebell,Kettlebell,0.00,4.00,4
+smith_machine,Multipower,15.00,2.50,5
+machine,Macchina,0.00,5.00,6
+cable,Cavi,0.00,2.50,7
+band,Elastico,0.00,0.00,8
+bodyweight,Corpo libero,0.00,0.00,9

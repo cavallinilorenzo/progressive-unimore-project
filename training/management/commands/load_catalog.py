@@ -15,6 +15,7 @@ from pathlib import Path
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 from django.db import transaction
+from django.utils.text import slugify
 
 from training.models import Equipment, Exercise, Muscle, MuscleGroup
 
@@ -64,6 +65,14 @@ class Command(BaseCommand):
         except ValueError:
             raise CommandError(f"{csv_path.name}:{lineno}: {field} non è un intero: {value!r}")
 
+    def _decimal(self, value, field, csv_path, lineno):
+        try:
+            return Decimal(value)
+        except InvalidOperation:
+            raise CommandError(
+                f"{csv_path.name}:{lineno}: {field} non è un numero: {value!r}"
+            )
+
     def _load_groups(self, csv_path):
         count = 0
         for lineno, row in self._rows(csv_path):
@@ -100,18 +109,22 @@ class Command(BaseCommand):
     def _load_equipment(self, csv_path):
         equipment = {}
         for lineno, row in self._rows(csv_path):
-            try:
-                bar_weight = Decimal(row["default_bar_weight_kg"])
-            except InvalidOperation:
-                raise CommandError(
-                    f"{csv_path.name}:{lineno}: default_bar_weight_kg non è un numero: "
-                    f"{row['default_bar_weight_kg']!r}"
-                )
             item, _ = Equipment.objects.update_or_create(
                 code=row["code"],
                 defaults={
                     "label_it": row["label_it"],
-                    "default_bar_weight_kg": bar_weight,
+                    "default_bar_weight_kg": self._decimal(
+                        row["default_bar_weight_kg"],
+                        "default_bar_weight_kg",
+                        csv_path,
+                        lineno,
+                    ),
+                    # Zero è un valore legittimo, non un vuoto: sul corpo libero
+                    # e sull'elastico il carico non sale a scatti, e il coach lo
+                    # sa. Il CSV lo deve dire esplicitamente.
+                    "load_increment_kg": self._decimal(
+                        row["load_increment_kg"], "load_increment_kg", csv_path, lineno
+                    ),
                     "sort_order": self._int(row["sort_order"], "sort_order", csv_path, lineno),
                 },
             )
@@ -120,6 +133,12 @@ class Command(BaseCommand):
 
     def _load_exercises(self, csv_path, muscles, equipment):
         count = 0
+        # Lo slug è derivato dal nome **qui**, una volta sola, e non a runtime:
+        # `/esercizi/<slug>/` è un URL pubblico e deve restare stabile finché il
+        # nome non cambia. Una collisione è un errore del catalogo, non un caso
+        # da tappare con un suffisso: due esercizi che slugificano uguale sono
+        # due nomi troppo simili, e si correggono nel CSV.
+        seen_slugs = {}
         for lineno, row in self._rows(csv_path):
             muscle = muscles.get(row["muscle_code"])
             if muscle is None:
@@ -131,9 +150,21 @@ class Command(BaseCommand):
                 raise CommandError(
                     f"{csv_path.name}:{lineno}: attrezzo sconosciuto {row['equipment_code']!r}"
                 )
+            slug = slugify(row["name"])
+            if seen_slugs.get(slug, row["name"]) != row["name"]:
+                raise CommandError(
+                    f"{csv_path.name}:{lineno}: lo slug {slug!r} è già di "
+                    f"{seen_slugs[slug]!r}"
+                )
+            seen_slugs[slug] = row["name"]
+
             Exercise.objects.update_or_create(
                 name=row["name"],
-                defaults={"primary_muscle": muscle, "equipment": item},
+                defaults={
+                    "slug": slug,
+                    "primary_muscle": muscle,
+                    "equipment": item,
+                },
             )
             count += 1
         return count
