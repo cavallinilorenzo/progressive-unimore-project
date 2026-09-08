@@ -21,4 +21,13 @@ urlpatterns = [
     path("", views.DashboardView.as_view(), name="dashboard"),
     path("registrazione/", views.SignUpView.as_view(), name="signup"),
     path("profilo/", views.ProfileUpdateView.as_view(), name="profile"),
+    # Gli esercizi vanno per `slug` e non per `pk`: lo slug è generato una
+    # volta da `load_catalog`, quindi l'URL di un esercizio è stabile e
+    # leggibile — `/esercizi/panca-piana/`, non `/esercizi/37/`.
+    path("esercizi/", views.ExerciseListView.as_view(), name="exercise-list"),
+    path(
+        "esercizi/<slug:slug>/",
+        views.ExerciseDetailView.as_view(),
+        name="exercise-detail",
+    ),
 ]

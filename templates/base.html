@@ -37,11 +37,11 @@ raggiunge da *dentro* la sezione a cui appartiene per dominio, mai da un link
 orfano. Le schede della community stanno dentro Schede, stalli e progressione
 dentro la pagina del singolo esercizio, l'import nel menu utente.
 
-Quattro delle cinque rotte non esistono ancora: la mappa #53 le costruisce una
-alla volta, e ogni ticket sostituisce il proprio `href` letterale con il tag
-`url` quando la sua sezione entra (#69 Schede, #70 Storico, #71 Esercizi,
-#76 Classifiche). Fino ad allora il link porta a un 404, che è l'unica lettura
-onesta dello stato del progetto.
+Le rotte arrivano una alla volta con la mappa #53, e ogni ticket sostituisce il
+proprio `href` letterale col tag `url` quando la sua sezione entra: Esercizi
+l'ha fatto con #71. Restano letterali Schede (#69), Storico (#70) e Classifiche
+(#76), e fino ad allora quei link portano a un 404, che è l'unica lettura onesta
+dello stato del progetto.
 {% endcomment %}
 <header class="nav-top sticky-top">
   <div class="container-xl d-flex align-items-center gap-4 py-3">
@@ -50,7 +50,7 @@ onesta dello stato del progetto.
       <a href="{% url 'training:dashboard' %}" class="{% if request.path == '/' %}attivo{% endif %}">Dashboard</a>
       <a href="/schede/" class="{% if '/schede/' in request.path %}attivo{% endif %}">Schede</a>
       <a href="/allenamenti/" class="{% if '/allenamenti/' in request.path %}attivo{% endif %}">Storico</a>
-      <a href="/esercizi/" class="{% if '/esercizi/' in request.path %}attivo{% endif %}">Esercizi</a>
+      <a href="{% url 'training:exercise-list' %}" class="{% if '/esercizi/' in request.path %}attivo{% endif %}">Esercizi</a>
       <a href="/classifiche/" class="{% if '/classifiche/' in request.path %}attivo{% endif %}">Classifiche</a>
     </nav>
     <div class="ms-auto d-flex align-items-center gap-3">

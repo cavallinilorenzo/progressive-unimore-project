@@ -16,10 +16,11 @@ from django.contrib.auth.mixins import LoginRequiredMixin
 from django.contrib.messages.views import SuccessMessageMixin
 from django.urls import reverse_lazy
 from django.utils import timezone
-from django.views.generic import TemplateView
+from django.views.generic import DetailView, ListView, TemplateView
 from django.views.generic.edit import CreateView, UpdateView
 
 from training.forms import ProfileForm, SignUpForm
+from training.models import Equipment, Exercise, Muscle, MuscleGroup, Workout, WorkoutSet
 
 
 class DashboardView(LoginRequiredMixin, TemplateView):
@@ -82,3 +83,129 @@ class ProfileUpdateView(LoginRequiredMixin, SuccessMessageMixin, UpdateView):
 
     def get_object(self, queryset=None):
         return self.request.user
+
+
+class ExerciseListView(LoginRequiredMixin, ListView):
+    """`/esercizi/` — il catalogo, in sola lettura e filtrabile su tre assi.
+
+    È la pagina che paga il requisito «select/view **grouped** objects»: gli
+    esercizi non escono come lista piatta ma **raggruppati per gruppo
+    muscolare**, e i tre filtri — gruppo, muscolo, attrezzo — restringono
+    l'insieme in AND.
+
+    `Exercise` è in **sola lettura per scelta**, non per dimenticanza
+    (ADR-0001): un esercizio inventato dall'utente sarebbe invisibile a
+    percentili e classifiche, che confrontano persone diverse sullo *stesso*
+    movimento. Il CRUD completo che la traccia chiede sta su `Routine` e
+    `Workout`. È una deviazione da dichiarare all'orale, prima che sembri un
+    CRUD mancante.
+
+    I filtri viaggiano per `code`, non per `pk`: un URL come
+    `?gruppo=petto&attrezzo=bilanciere` si legge e resta valido anche se il
+    catalogo venisse ricaricato da zero, mentre le chiavi primarie no.
+
+    Nessun `Paginator`: sono 100 esercizi, e paginarli spezzerebbe a metà i
+    gruppi che sono il punto della pagina. La paginazione arriva dove i dati
+    crescono senza limite — le classifiche (#76).
+    """
+
+    model = Exercise
+    template_name = "training/exercise_list.html"
+    context_object_name = "esercizi"
+
+    def get_queryset(self):
+        # `select_related` sui due FK e sul gruppo: il template li legge per
+        # ogni riga, e senza questo la pagina fa 300 query.
+        queryset = Exercise.objects.select_related(
+            "primary_muscle__group", "equipment"
+        ).order_by("primary_muscle__group__sort_order", "name")
+
+        gruppo = self.request.GET.get("gruppo")
+        if gruppo:
+            queryset = queryset.filter(primary_muscle__group__code=gruppo)
+
+        muscolo = self.request.GET.get("muscolo")
+        if muscolo:
+            queryset = queryset.filter(primary_muscle__code=muscolo)
+
+        attrezzo = self.request.GET.get("attrezzo")
+        if attrezzo:
+            queryset = queryset.filter(equipment__code=attrezzo)
+
+        return queryset
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+
+        gruppo = self.request.GET.get("gruppo") or ""
+        context["gruppo_scelto"] = gruppo
+        context["muscolo_scelto"] = self.request.GET.get("muscolo") or ""
+        context["attrezzo_scelto"] = self.request.GET.get("attrezzo") or ""
+
+        context["gruppi"] = MuscleGroup.objects.all()
+        # Scelto un gruppo, la tendina dei muscoli mostra solo i suoi: le due
+        # anagrafiche sono annidate, e offrire «petto» insieme a «quadricipiti»
+        # significa offrire una combinazione che non rende mai una riga.
+        muscoli = Muscle.objects.select_related("group")
+        if gruppo:
+            muscoli = muscoli.filter(group__code=gruppo)
+        context["muscoli"] = muscoli
+        context["attrezzi"] = Equipment.objects.all()
+
+        context["filtro_attivo"] = any(
+            [gruppo, context["muscolo_scelto"], context["attrezzo_scelto"]]
+        )
+        return context
+
+
+class ExerciseDetailView(LoginRequiredMixin, DetailView):
+    """`/esercizi/<slug>/` — in fase 1 un guscio, e per una ragione.
+
+    La spec la chiama «la pagina più densa del progetto», ma quella densità è
+    fase 2 e 3: progressione del massimale, PR, percentile, stato di stallo,
+    consiglio di carico, classifica ridotta. Qui ci sono l'anagrafica e lo
+    **storico grezzo** delle serie dell'utente su questo esercizio — il dato
+    su cui quelle analisi si costruiranno, mostrato senza interpretarlo.
+
+    L'URL poggia sullo `slug`, generato una volta da `load_catalog` e non a
+    runtime (`training.models.Exercise.slug`): gli URL degli esercizi devono
+    restare stabili, perché è da lì che passeranno i link della progressione.
+
+    Niente `UserPassesTestMixin`: l'esercizio è del catalogo globale, non di
+    un utente. Ciò che è personale è lo storico, ed è filtrato per
+    `request.user` nel queryset, non protetto da un mixin.
+    """
+
+    model = Exercise
+    template_name = "training/exercise_detail.html"
+    context_object_name = "esercizio"
+
+    #: Quante sessioni recenti mostrare. Lo storico completo di un esercizio
+    #: fondamentale è lungo anni; qui serve a far vedere che il dato c'è.
+    SESSIONI_RECENTI = 10
+
+    def get_queryset(self):
+        return Exercise.objects.select_related("primary_muscle__group", "equipment")
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+
+        # Due query invece di una: prima gli ultimi allenamenti che toccano
+        # questo esercizio, poi le loro serie. Un `[:N]` sulle serie taglierebbe
+        # a metà l'ultima sessione, e una sessione monca si legge come una
+        # sessione fatta male.
+        allenamenti_recenti = (
+            Workout.objects.filter(
+                user=self.request.user, sets__exercise=self.object
+            )
+            .distinct()
+            .order_by("-started_at")[: self.SESSIONI_RECENTI]
+        )
+        context["serie"] = (
+            WorkoutSet.objects.filter(
+                workout__in=list(allenamenti_recenti), exercise=self.object
+            )
+            .select_related("workout")
+            .order_by("-workout__started_at", "set_number")
+        )
+        return context

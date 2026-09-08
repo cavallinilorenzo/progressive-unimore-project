@@ -1,0 +1,114 @@
+{% extends "base.html" %}
+{% comment %}
+La pagina del singolo esercizio. La spec la chiama «la pagina più densa del
+progetto», ed è vero — ma di quella densità qui non c'è ancora niente:
+progressione del massimale, PR, percentile, stato di stallo, consiglio di
+carico e classifica ridotta sono fase 2 e 3 (`docs/spec/04-analisi.md`).
+
+In fase 1 questa pagina porta l'anagrafica e lo STORICO GREZZO delle serie
+dell'utente su questo esercizio: il dato su cui quelle analisi si costruiranno,
+mostrato senza interpretarlo. Un numero calcolato a metà sarebbe peggio di un
+numero assente, perché all'orale sembrerebbe l'analisi finita.
+
+Il riquadro «in arrivo» in coda non è un segnaposto decorativo: dice cosa
+mancherà di vedere a chi apre la pagina oggi, invece di lasciar credere che
+questo sia tutto ciò che la pagina sarà.
+{% endcomment %}
+
+{% block title %}{{ esercizio.name }} — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="mb-4">
+  <div class="eyebrow">
+    {# Il ritorno alla sezione: la regola di navigazione vuole che ogni pagina
+       si raggiunga da dentro la sua sezione, e che ci si possa tornare. #}
+    <a href="{% url 'training:exercise-list' %}" style="color:var(--t2)">Esercizi</a>
+    &rsaquo; {{ esercizio.primary_muscle.group.label_it }}
+  </div>
+  <h1 class="h4 fw-bold mb-0">{{ esercizio.name }}</h1>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-12 col-md-4">
+    <div class="card-ink p-3 h-100">
+      <div class="eyebrow mb-2">Gruppo</div>
+      <div class="fw-bold">{{ esercizio.primary_muscle.group.label_it }}</div>
+    </div>
+  </div>
+  <div class="col-12 col-md-4">
+    <div class="card-ink p-3 h-100">
+      <div class="eyebrow mb-2">Muscolo primario</div>
+      <div class="fw-bold">{{ esercizio.primary_muscle.label_it }}</div>
+    </div>
+  </div>
+  <div class="col-12 col-md-4">
+    <div class="card-ink p-3 h-100">
+      <div class="eyebrow mb-2">Attrezzo</div>
+      <div class="fw-bold">{{ esercizio.equipment.label_it }}</div>
+    </div>
+  </div>
+</div>
+
+<div class="card-ink p-3 mb-4">
+  <div class="eyebrow mb-2" style="color:var(--volt)">Le tue serie</div>
+
+  {% if serie %}
+  {# Raggruppate per allenamento: una serie fuori dalla sua sessione non si
+     legge. Il queryset arriva ordinato per data discendente, che è la
+     condizione perché `regroup` non spezzi una sessione in due blocchi. #}
+  {% regroup serie by workout as sessioni %}
+  <table class="table table-sm align-middle mb-0">
+    <thead>
+      <tr class="eyebrow">
+        <th scope="col">Data</th>
+        <th scope="col">Serie</th>
+        <th scope="col">Ripetizioni</th>
+        <th scope="col">Carico</th>
+        <th scope="col">Tipo</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for sessione in sessioni %}
+      {% for s in sessione.list %}
+      <tr>
+        <td style="color:var(--t2)">
+          {% if forloop.first %}
+          <a href="/allenamenti/{{ sessione.grouper.pk }}/" style="color:var(--t2)">{{ sessione.grouper.started_at|date:"j M Y" }}</a>
+          {% endif %}
+        </td>
+        <td>{{ s.set_number }}</td>
+        {# Una serie saltata non ha ripetizioni né carico, e il trattino lo dice:
+           uno zero si leggerebbe come «zero ripetizioni fatte». #}
+        <td>{% if s.reps is not None %}{{ s.reps }}{% else %}<span style="color:var(--t3)">&mdash;</span>{% endif %}</td>
+        <td>{% if s.weight is not None %}{{ s.weight|floatformat:"-2" }} kg{% else %}<span style="color:var(--t3)">&mdash;</span>{% endif %}</td>
+        <td style="color:var(--t2)">
+          {{ s.get_set_type_display }}{% if not s.is_completed %} <span style="color:var(--t3)">&middot; saltata</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div style="color:var(--t2);font-size:.9rem">
+    Non hai ancora registrato una serie su questo esercizio. Comparirà qui
+    appena lo inserisci in un allenamento.
+  </div>
+  {% endif %}
+</div>
+
+<div class="card-ink p-3">
+  <div class="rail">
+    <div class="eyebrow mb-1">Cosa arriva qui</div>
+    <div style="color:var(--t2);font-size:.88rem">
+      Questa diventerà la storia dell'esercizio: progressione del massimale
+      stimato, record personali, il tuo percentile fra gli utenti, lo stato di
+      stallo col consiglio di carico, e le prime righe della classifica di
+      forza. Sono il motore analitico, e arrivano dopo: prima serve il dato
+      qui sopra.
+    </div>
+  </div>
+</div>
+
+{% endblock %}
