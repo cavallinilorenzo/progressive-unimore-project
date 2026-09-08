@@ -31,7 +31,7 @@ Due, entrambe già segnalate in [01-modelli.md](01-modelli.md):
 
 ### 4. L'import, sui CSV di prova
 
-I CSV in `training/tests/` sono fabbricati a mano perché contengano **uno per uno** i casi decisi in [03-import-ed-export.md](03-import-ed-export.md). Un test per caso:
+I CSV in `training/tests/fixtures/` sono fabbricati a mano perché contengano **uno per uno** i casi decisi in [03-import-ed-export.md](03-import-ed-export.md). Un test per caso:
 
 | Caso nel file | Atteso |
 |---|---|

@@ -68,6 +68,15 @@ quel link porta a un 404: è l'unica lettura onesta dello stato del progetto.
         <ul class="dropdown-menu dropdown-menu-end">
           <li><a class="dropdown-item" href="{% url 'training:profile' %}">Profilo</a></li>
           <li><a class="dropdown-item" href="{% url 'training:import-upload' %}">Importa storico</a></li>
+          {% comment %}
+          «Esporta» sta accanto a «Importa» perché sono lo stesso giro visto dai
+          due lati: i due file che si scaricano di qui sono esattamente quelli
+          che la pagina di import legge. Due voci e non una, perché i file sono
+          due — comprimerli in uno ZIP avrebbe voluto dire spacchettarli prima
+          di ricaricarli, cioè toccare i dati fuori dall'app.
+          {% endcomment %}
+          <li><a class="dropdown-item" href="{% url 'training:export-csv' 'allenamenti' %}">Esporta allenamenti (CSV)</a></li>
+          <li><a class="dropdown-item" href="{% url 'training:export-csv' 'serie' %}">Esporta serie (CSV)</a></li>
           <li><hr class="dropdown-divider"></li>
           {% comment %}
           Uscire è un POST, non un link: da Django 5 `LogoutView` rifiuta il GET

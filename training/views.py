@@ -23,10 +23,12 @@ from django.core.exceptions import PermissionDenied
 from django.core.files.storage import FileSystemStorage
 from django.db import transaction
 from django.db.models import Avg, Count, Prefetch, Q
+from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse, reverse_lazy
 from django.utils import timezone
 from django.utils.functional import cached_property
+from django.views import View
 from django.views.generic import DetailView, ListView, TemplateView
 from django.views.generic.edit import CreateView, DeleteView, FormView, UpdateView
 
@@ -41,6 +43,8 @@ from training.forms import (
     WorkoutForm,
     WorkoutSetFormSet,
 )
+from training.exporter import FILE as FILE_EXPORT
+from training.exporter import esporta
 from training.importer import FormatoNonValido, leggi, ricorda, risolvi, scrivi
 from training.models import (
     Equipment,
@@ -969,7 +973,7 @@ class ImportPreviewView(LoginRequiredMixin, FormView):
             for campo in ("sessioni", "serie", "esercizi"):
                 nome = depositati.get(campo)
                 aperti.append(archivio.open(nome) if nome else None)
-            return leggi(*aperti)
+            return leggi(*aperti, user=self.request.user)
         finally:
             for file in aperti:
                 if file is not None:
@@ -1049,3 +1053,36 @@ class ImportResultView(LoginRequiredMixin, TemplateView):
         contesto = super().get_context_data(**kwargs)
         contesto["esito"] = self.request.session.pop(CHIAVE_ESITO, None)
         return contesto
+
+
+class ExportCsvView(LoginRequiredMixin, View):
+    """`/export/<quale>/` — i due CSV che l'import sa leggere.
+
+    **Il giro si chiude qui.** Finché Progressive sapeva solo leggere quel
+    formato, il formato era di un'altra app e nessuno tranne Lorenzo poteva
+    produrne uno; da qui in avanti Progressive è **uno dei produttori** del
+    proprio formato, e chi si iscrive oggi ha qualcosa da reimportare domani.
+
+    **Perché il file sta nell'URL e non in query string.** `02`-e-dintorni
+    tengono in query string ciò che *non* identifica la risorsa — `?scheda=`
+    su «avvia allenamento» lascia la pagina la stessa — e qui vale il
+    contrario: `allenamenti` e `serie` sono due risorse diverse, due file con
+    due intestazioni. Due link e non un solo `/export/` perché l'import ne
+    vuole due, e uno ZIP obbligherebbe a spacchettare prima di ricaricare —
+    cioè a trasformare i dati **fuori** dall'app, che è esattamente ciò che
+    `03-import-ed-export.md` rifiuta quando scarta il CSV denormalizzato.
+
+    L'export **non scrive niente**: il `nome_pubblico` di una riga nata in-app
+    si calcola, quindi qui non c'è nessun effetto da nascondere dietro una GET.
+    """
+
+    def get(self, request, quale):
+        if quale not in FILE_EXPORT:
+            raise Http404("Non c'è nessun file con questo nome.")
+
+        risposta = HttpResponse(content_type="text/csv; charset=utf-8")
+        risposta["Content-Disposition"] = (
+            f'attachment; filename="{FILE_EXPORT[quale]}"'
+        )
+        esporta(risposta, quale, request.user)
+        return risposta

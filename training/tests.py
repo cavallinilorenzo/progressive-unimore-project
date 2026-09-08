@@ -16,8 +16,9 @@ import tempfile
 from collections import Counter
 from datetime import timedelta
 from decimal import Decimal
-from io import StringIO
+from io import BytesIO, StringIO
 from pathlib import Path
+from unittest.mock import patch
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
@@ -33,6 +34,19 @@ from django.urls import reverse
 from django.utils import timezone
 
 from training import views
+from training.exporter import (
+    INTESTAZIONE_SERIE,
+    INTESTAZIONE_SESSIONI,
+    esporta,
+)
+from training.importer import (
+    COLONNE_SERIE,
+    COLONNE_SESSIONI,
+    leggi,
+    nome_pubblico,
+    risolvi,
+    scrivi,
+)
 from training.forms import VoteForm
 from training.management.commands import seed_synthetic
 from training.models import (
@@ -2610,6 +2624,422 @@ class CsvImportTests(TestCase):
                 risposta = self.client.get(reverse(f"training:{nome}"))
                 self.assertEqual(risposta.status_code, 302)
                 self.assertIn("/accounts/login/", risposta["Location"])
+
+
+# --- L'export, i CSV di prova e l'idempotenza (#74) -------------------------
+#
+# Qui il giro si chiude, e sono tre cose in una.
+#
+# **I file.** I CSV di `training/tests/fixtures/` sono fabbricati a mano e
+# versionati, e ogni riga è un caso deciso in `03-import-ed-export.md`: la
+# tabella completa sta nel loro README. `CsvImportTests` costruisce invece i
+# suoi file in memoria, e le due cose non si sovrappongono — là ogni test vuole
+# variare una cella sola, qui il file è **uno solo e sta fermo**, perché è
+# quello che si apre e si legge quando un test fallisce.
+#
+# **L'export.** Una ventina di righe di view, ma è ciò che toglie all'import la
+# sua debolezza vera: finché Progressive sapeva solo *leggere* quel formato, il
+# formato era di un'altra app e nessuno tranne Lorenzo poteva produrne uno.
+#
+# **L'idempotenza, e il punto delicato.** «Esporta e reimporta» non aggiunge
+# niente **anche per un allenamento nato in-app**, che in database ha
+# `external_id` nullo e nel file ha invece un `id`. Quell'`id` è il
+# `nome_pubblico`: una funzione della chiave primaria, calcolata e mai
+# memorizzata. È la sola forma che tiene insieme le due regole della spec — un
+# file ha bisogno di un `id` su ogni riga, e una riga nata qui non deve
+# fingersi importata — e il test che conta è che dopo il giro completo la
+# colonna sia **ancora nulla**.
+
+
+class CsvFixtureAndExportTests(TestCase):
+    """I sette casi di `07-test.md` §4, più la transazione, più l'export.
+
+    Il catalogo è quello **vero** (`load_catalog`, 100 esercizi): i nomi nei
+    file di prova sono nomi che esistono, ed è ciò che li rende file di
+    Progressive e non stringhe scelte per far passare un test. L'unica
+    eccezione è `RDL`, che non esiste di proposito.
+    """
+
+    FIXTURES = Path(__file__).resolve().parent / "tests" / "fixtures"
+
+    #: Le tre sessioni e le dieci serie del file, per numero di riga reale.
+    S1 = "11111111-1111-4111-8111-000000000001"
+    S2 = "11111111-1111-4111-8111-000000000002"
+    RIGA_2 = "22222222-2222-4222-8222-000000000001"
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user(username="lorenzo", password=PASSWORD)
+        cls.altro = User.objects.create_user(username="martina", password=PASSWORD)
+        call_command("load_catalog", stdout=StringIO())
+        cls.panca = Exercise.objects.get(name="Panca piana con bilanciere")
+        cls.trazioni = Exercise.objects.get(name="Trazioni alla sbarra")
+        cls.leg_press = Exercise.objects.get(name="Leg press")
+        cls.stacco = Exercise.objects.get(name="Stacco rumeno con bilanciere")
+
+    def setUp(self):
+        self.client.force_login(self.user)
+        self.deposito = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.deposito, ignore_errors=True)
+        override = override_settings(MEDIA_ROOT=self.deposito)
+        override.enable()
+        self.addCleanup(override.disable)
+
+    # ------------------------------------------------------------------ utili
+
+    def byte(self, nome):
+        return (self.FIXTURES / nome).read_bytes()
+
+    def leggi_fixture(self, user=None):
+        """Il parser sui due file, senza HTTP: è il livello a cui i casi si
+        guardano uno per uno, e la ragione per cui `importer.py` esiste."""
+        return leggi(
+            BytesIO(self.byte("workout_sessions.csv")),
+            BytesIO(self.byte("session_sets.csv")),
+            user=user,
+        )
+
+    def carica_fixture(self):
+        return self.client.post(
+            reverse("training:import-upload"),
+            {
+                "sessioni": SimpleUploadedFile(
+                    "workout_sessions.csv",
+                    self.byte("workout_sessions.csv"),
+                    content_type="text/csv",
+                ),
+                "serie": SimpleUploadedFile(
+                    "session_sets.csv",
+                    self.byte("session_sets.csv"),
+                    content_type="text/csv",
+                ),
+            },
+        )
+
+    def carica(self, sessioni, serie):
+        """Gli stessi due passi, ma su due testi qualunque: serve al giro
+        export → import, dove i file arrivano dall'export e non dal disco."""
+        return self.client.post(
+            reverse("training:import-upload"),
+            {
+                "sessioni": SimpleUploadedFile(
+                    "workout_sessions.csv", sessioni.encode("utf-8"),
+                    content_type="text/csv",
+                ),
+                "serie": SimpleUploadedFile(
+                    "session_sets.csv", serie.encode("utf-8"),
+                    content_type="text/csv",
+                ),
+            },
+        )
+
+    def conferma(self, abbinamenti=()):
+        dati = {
+            "form-TOTAL_FORMS": str(len(abbinamenti)),
+            "form-INITIAL_FORMS": "0",
+            "form-MIN_NUM_FORMS": "0",
+            "form-MAX_NUM_FORMS": "1000",
+        }
+        for indice, (nome, esercizio) in enumerate(abbinamenti):
+            dati[f"form-{indice}-raw_name"] = nome
+            dati[f"form-{indice}-exercise"] = str(esercizio.pk)
+        return self.client.post(reverse("training:import-preview"), dati)
+
+    def importa_le_fixture(self):
+        """Il giro completo dei tre URL: `RDL` è l'unico nome da abbinare."""
+        self.carica_fixture()
+        self.client.get(reverse("training:import-preview"))
+        return self.conferma([("RDL", self.stacco)])
+
+    def esporta(self, quale):
+        uscita = StringIO()
+        esporta(uscita, quale, self.user)
+        return uscita.getvalue()
+
+    # --------------------------------------------- i sette casi, uno per test
+
+    def test_una_serie_non_eseguita_entra_senza_numeri(self):
+        """Riga 5: «non l'ho fatta» non è «non l'avevo prevista», quindi la
+        riga entra — ma `reps` e `weight` restano nulli, perché il file non
+        porta numeri su una serie saltata e inventarli qui sarebbe la stessa
+        cosa che correggere una durata assurda."""
+        lettura = self.leggi_fixture()
+        saltata = [riga for riga in lettura.serie if not riga.is_completed]
+
+        self.assertEqual(len(saltata), 1)
+        self.assertEqual(saltata[0].numero, 5)
+        self.assertIsNone(saltata[0].reps)
+        self.assertIsNone(saltata[0].weight)
+
+    def test_una_serie_completata_senza_peso_e_valida(self):
+        """Riga 4: `Trazioni alla sbarra` a 10 ripetizioni e nessun carico. È
+        il corpo libero — sullo storico reale sono 25 righe su 317 — e una
+        validazione che pretendesse `weight` le rifiuterebbe tutte."""
+        lettura = self.leggi_fixture()
+        riga = next(riga for riga in lettura.serie if riga.numero == 4)
+
+        self.assertEqual(riga.raw_name, "Trazioni alla sbarra")
+        self.assertTrue(riga.is_completed)
+        self.assertEqual(riga.reps, 10)
+        self.assertIsNone(riga.weight)
+        # E non è fra le scartate: l'unico errore del file è quello di riga 6.
+        self.assertNotIn(4, [errore.numero for errore in lettura.errori])
+
+    def test_una_serie_completata_senza_reps_e_scartata_col_suo_motivo(self):
+        """Riga 6, e l'unico errore vero del file: la casella «eseguita» è
+        vera e il numero manca, che è il `CheckConstraint`
+        `workout_set_completed_has_reps` visto dal lato del report. Il numero
+        di riga è quello **reale**, intestazione compresa: serve ad aprire il
+        file e andarci."""
+        lettura = self.leggi_fixture()
+
+        self.assertEqual(len(lettura.errori), 1)
+        errore = lettura.errori[0]
+        self.assertEqual(errore.file, "session_sets.csv")
+        self.assertEqual(errore.numero, 6)
+        self.assertEqual(errore.colonna, "reps")
+        self.assertIn("ripetizioni", errore.motivo)
+        # Lo scarto è della **riga**, non della sessione: la seconda serie di
+        # `Leg press`, riga 7, entra regolarmente.
+        self.assertIn(7, [riga.numero for riga in lettura.serie])
+
+    def test_una_durata_assurda_e_un_avviso_e_la_sessione_entra_intatta(self):
+        """Riga 3 delle sessioni: venti secondi di allenamento. Assurdo non è
+        impossibile — l'unico bloccante resta `ended_at >= started_at` — e
+        correggere la durata significherebbe inventare un dato."""
+        lettura = self.leggi_fixture()
+
+        self.assertEqual(len(lettura.avvisi), 1)
+        self.assertEqual(lettura.avvisi[0].numero, 3)
+        self.assertEqual(len(lettura.sessioni), 3)
+        lampo = next(s for s in lettura.sessioni if s.chiave == self.S2)
+        self.assertEqual(lampo.ended_at - lampo.started_at, timedelta(seconds=20))
+
+    def test_un_nome_non_abbinabile_va_nel_form_e_non_fa_fallire_niente(self):
+        """`RDL` non assomiglia a «Stacco rumeno con bilanciere», e nessuna
+        normalizzazione lo risolverà mai: è una scelta, e la fa l'utente
+        (ADR-0010). Gli altri quattro nomi sono nomi del catalogo e si
+        risolvono da soli — è il caso del file esportato da Progressive."""
+        lettura = self.leggi_fixture()
+        risolti, da_chiedere = risolvi(lettura.nomi_grezzi, self.user)
+
+        self.assertEqual([nome for nome, _ in da_chiedere], ["RDL"])
+        self.assertEqual(len(risolti), 4)
+        # E l'import non fallisce: le righe degli altri quattro sono già valide.
+        self.assertEqual(len(lettura.serie), 9)
+
+    def test_una_riga_gia_importata_e_saltata_e_le_sue_sorelle_non_sono_orfane(self):
+        """`external_id` già noto: la riga si salta, e **non** è un errore.
+
+        La sessione già presente resta una chiave valida, o le sue serie nuove
+        diventerebbero orfane e l'idempotenza sarebbe una porta chiusa invece
+        che un no-op: ricaricare un file con una sessione vecchia e tre serie
+        nuove deve aggiungere quelle tre.
+        """
+        gia_presente = Workout.objects.create(
+            user=self.user,
+            title="Spinta A",
+            started_at=timezone.now(),
+            external_id=self.S1,
+        )
+        WorkoutSet.objects.create(
+            workout=gia_presente,
+            exercise=self.panca,
+            set_number=1,
+            reps=8,
+            weight=Decimal("60.00"),
+            external_id=self.RIGA_2,
+        )
+
+        lettura = self.leggi_fixture(user=self.user)
+
+        self.assertEqual(lettura.sessioni_duplicate, 1)
+        self.assertEqual(lettura.serie_duplicate, 1)
+        self.assertEqual(len(lettura.sessioni), 2)
+        # Le altre serie di quella sessione non sono errori: hanno dove andare.
+        self.assertEqual([riga.numero for riga in lettura.serie], [3, 4, 5, 7, 8, 9, 10, 11])
+        self.assertEqual(lettura.errori[0].numero, 6)
+
+        risolti, _ = risolvi(lettura.nomi_grezzi, self.user)
+        esito = scrivi(lettura, {**risolti, "RDL": self.stacco}, self.user)
+
+        self.assertEqual(esito.allenamenti, 2)
+        self.assertEqual(esito.allenamenti_saltati, 1)
+        self.assertEqual(esito.serie_saltate, 1)
+        self.assertEqual(Workout.objects.count(), 3)
+        # Le serie appese alla sessione già presente sono davvero sue.
+        self.assertEqual(gia_presente.sets.count(), 4)
+
+    def test_lo_stesso_file_due_volte_non_aggiunge_niente(self):
+        """L'idempotenza dal lato dell'utente: si ricarica lo stesso file e non
+        succede niente. La seconda volta non c'è nemmeno più niente da
+        abbinare, perché `RDL` è diventato un `ExerciseAlias`."""
+        self.importa_le_fixture()
+        allenamenti, serie = Workout.objects.count(), WorkoutSet.objects.count()
+        self.assertEqual((allenamenti, serie), (3, 9))
+
+        self.carica_fixture()
+        anteprima = self.client.get(reverse("training:import-preview"))
+        self.assertEqual(len(anteprima.context["form"].forms), 0)
+        self.assertEqual(anteprima.context["lettura"].sessioni_duplicate, 3)
+        self.conferma()
+
+        self.assertEqual(Workout.objects.count(), allenamenti)
+        self.assertEqual(WorkoutSet.objects.count(), serie)
+
+    def test_un_errore_in_conferma_non_lascia_meta_storico_dentro(self):
+        """La transazione, ed è il punto per cui `scrivi` ha un `atomic` solo.
+
+        «Parziale in anteprima, atomico in conferma»: le righe rotte sono già
+        state messe da parte e mostrate, quindi qui non resta nessuna decisione
+        — o entra tutto ciò che l'utente ha visto, o non entra niente. Un
+        guasto a metà scrittura lascerebbe altrimenti uno storico che non è né
+        quello di prima né quello del file, e nessuno saprebbe quale.
+        """
+        lettura = self.leggi_fixture(user=self.user)
+        risolti, _ = risolvi(lettura.nomi_grezzi, self.user)
+        vera = WorkoutSet.objects.create
+        chiamate = []
+
+        def crolla(**kwargs):
+            chiamate.append(kwargs)
+            if len(chiamate) > 3:
+                raise IntegrityError("guasto simulato a metà scrittura")
+            return vera(**kwargs)
+
+        with patch.object(WorkoutSet.objects, "create", crolla):
+            with self.assertRaises(IntegrityError):
+                scrivi(lettura, {**risolti, "RDL": self.stacco}, self.user)
+
+        # Non «meno righe»: **zero**. I tre allenamenti erano già stati creati
+        # quando la quarta serie è esplosa, e sono tornati indietro con lei.
+        self.assertEqual(Workout.objects.count(), 0)
+        self.assertEqual(WorkoutSet.objects.count(), 0)
+
+    # ------------------------------------------------------- l'export, e il giro
+
+    def test_lexport_scrive_le_colonne_che_il_parser_pretende(self):
+        """La guardia che tiene i due file *lo stesso* formato.
+
+        Le intestazioni dell'export e le colonne obbligatorie dell'import sono
+        due elenchi di stringhe in due moduli diversi: divergono in silenzio, e
+        il sintomo sarebbe un export che l'import rifiuta — cioè il giro aperto
+        di nuovo, senza che niente lo segnali.
+        """
+        self.assertLessEqual(COLONNE_SESSIONI, set(INTESTAZIONE_SESSIONI))
+        self.assertLessEqual(COLONNE_SERIE, set(INTESTAZIONE_SERIE))
+        # `exercise_name` e non `exercise_id`: la chiave privata del catalogo
+        # di questo database non significa niente altrove.
+        self.assertIn("exercise_name", INTESTAZIONE_SERIE)
+        self.assertNotIn("exercise_id", INTESTAZIONE_SERIE)
+
+    def test_lexport_e_un_csv_scaricabile_coi_nomi_del_formato(self):
+        self.importa_le_fixture()
+        risposta = self.client.get(
+            reverse("training:export-csv", args=["allenamenti"])
+        )
+
+        self.assertEqual(risposta.status_code, 200)
+        self.assertTrue(risposta["Content-Type"].startswith("text/csv"))
+        self.assertIn("workout_sessions.csv", risposta["Content-Disposition"])
+        righe = risposta.content.decode("utf-8").splitlines()
+        self.assertEqual(righe[0], ",".join(INTESTAZIONE_SESSIONI))
+        self.assertEqual(len(righe), 4)
+
+    def test_lexport_porta_via_solo_le_proprie_righe(self):
+        """Lo storico è dell'utente, e l'export non è una scorciatoia per
+        leggerlo altrove: il filtro è sul queryset, come per lo storico
+        dell'esercizio in #71."""
+        self.importa_le_fixture()
+        estraneo = Workout.objects.create(
+            user=self.altro, title="Roba di Martina", started_at=timezone.now()
+        )
+
+        testo = self.esporta("allenamenti")
+
+        self.assertNotIn("Roba di Martina", testo)
+        self.assertNotIn(str(nome_pubblico("workout", estraneo.pk)), testo)
+
+    def test_il_giro_completo_non_aggiunge_una_riga(self):
+        """**La condizione di chiusura del ticket**: export → import dello
+        stesso file → zero righe nuove.
+
+        È l'idempotenza vista dall'unico lato che conta davvero, perché il file
+        non arriva più da un altro software: lo ha prodotto Progressive.
+        """
+        self.importa_le_fixture()
+        allenamenti, serie = Workout.objects.count(), WorkoutSet.objects.count()
+
+        self.carica(self.esporta("allenamenti"), self.esporta("serie"))
+        anteprima = self.client.get(reverse("training:import-preview"))
+        # Niente da abbinare: i nomi sono quelli del catalogo, e si risolvono
+        # per nome esatto. È il caso che `risolvi` chiama «il file esportato da
+        # Progressive stesso».
+        self.assertEqual(len(anteprima.context["form"].forms), 0)
+        self.conferma()
+
+        self.assertEqual(Workout.objects.count(), allenamenti)
+        self.assertEqual(WorkoutSet.objects.count(), serie)
+
+    def test_il_giro_si_chiude_anche_su_un_allenamento_nato_in_app(self):
+        """Il caso delicato, e la ragione per cui `nome_pubblico` esiste.
+
+        Un allenamento registrato a mano ha `external_id` **nullo**, e la spec
+        dice che il nullable è essenziale: non deve fingersi importato. Ma un
+        CSV ha bisogno di un `id` su ogni riga, o il file non è reimportabile.
+        La risposta è un id **calcolato** dalla chiave primaria: stabile fra
+        due export, riconosciuto al ritorno, e mai scritto in database.
+
+        Il test che conta è l'ultima riga: dopo il giro completo la colonna è
+        ancora nulla.
+        """
+        allenamento = Workout.objects.create(
+            user=self.user,
+            title="Serata a mano",
+            started_at=timezone.now() - timedelta(hours=2),
+            ended_at=timezone.now() - timedelta(hours=1),
+        )
+        WorkoutSet.objects.create(
+            workout=allenamento, exercise=self.panca, set_number=1,
+            reps=8, weight=Decimal("70.00"),
+        )
+        WorkoutSet.objects.create(
+            workout=allenamento, exercise=self.trazioni, set_number=1, reps=6,
+        )
+
+        sessioni, serie = self.esporta("allenamenti"), self.esporta("serie")
+        self.assertIn(str(nome_pubblico("workout", allenamento.pk)), sessioni)
+
+        self.carica(sessioni, serie)
+        self.client.get(reverse("training:import-preview"))
+        self.conferma()
+
+        self.assertEqual(Workout.objects.count(), 1)
+        self.assertEqual(WorkoutSet.objects.count(), 2)
+        allenamento.refresh_from_db()
+        self.assertIsNone(allenamento.external_id)
+
+    def test_due_export_di_fila_danno_lo_stesso_file(self):
+        """Il nome pubblico è una **funzione**, non un caso: se cambiasse a
+        ogni export, ogni reimport aggiungerebbe una copia."""
+        self.importa_le_fixture()
+        Workout.objects.create(
+            user=self.user, title="Serata a mano", started_at=timezone.now()
+        )
+
+        self.assertEqual(self.esporta("allenamenti"), self.esporta("allenamenti"))
+        self.assertEqual(self.esporta("serie"), self.esporta("serie"))
+
+    def test_lexport_vuole_il_login_e_un_nome_di_file_che_esiste(self):
+        risposta = self.client.get(reverse("training:export-csv", args=["allenamenti"]))
+        self.assertEqual(risposta.status_code, 200)
+
+        self.assertEqual(self.client.get("/export/tutto/").status_code, 404)
+
+        self.client.logout()
+        risposta = self.client.get(reverse("training:export-csv", args=["serie"]))
+        self.assertEqual(risposta.status_code, 302)
+        self.assertIn("/accounts/login/", risposta["Location"])
 
 
 # --- La popolazione sintetica (#75) ----------------------------------------

@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from decimal import Decimal, InvalidOperation
 from difflib import get_close_matches
-from uuid import UUID
+from uuid import UUID, uuid5
 
 from django.db import transaction
 from django.utils.dateparse import parse_datetime
@@ -59,6 +59,33 @@ FILE_ESERCIZI = "exercises.csv"
 
 COLONNE_SESSIONI = {"id", "title", "started_at"}
 COLONNE_SERIE = {"id", "session_id", "set_number"}
+
+#: Il namespace UUID di Progressive, fisso e scritto qui una volta sola.
+#:
+#: Serve al **nome pubblico** di una riga nata in-app (`nome_pubblico`), ed è
+#: la metà del giro che l'export chiude: si esporta anche ciò che non è mai
+#: stato importato, e in un file ogni riga ha bisogno di un `id`.
+NAMESPACE_PROGRESSIVE = UUID("6f3b1c2e-5a4d-4e7b-9c81-0a2b3c4d5e6f")
+
+
+def nome_pubblico(modello, pk):
+    """L'`id` con cui una riga **nata in Progressive** compare in un export.
+
+    Si **calcola e non si memorizza**, ed è la decisione che tiene in piedi due
+    regole insieme. `03-import-ed-export.md` dice che il nullable di
+    `external_id` è essenziale — «un allenamento nato dentro Progressive non ha
+    nessun `external_id` e non deve fingerne uno» — quindi l'export non può
+    timbrare la colonna al passaggio; ma un CSV senza `id` non è
+    reimportabile, e il giro export → import non si chiuderebbe.
+
+    Un UUID versione 5 risolve entrambe: è una **funzione** della chiave
+    primaria, quindi due export della stessa riga portano lo stesso `id` e il
+    reimport la riconosce come duplicato, mentre la colonna in database resta
+    nulla. Il costo dichiarato: il nome pubblico vive quanto la chiave
+    primaria, quindi un database ricreato da zero riusa i numeri e riuserebbe i
+    nomi — che è un limite dei backup, non dell'import.
+    """
+    return uuid5(NAMESPACE_PROGRESSIVE, f"progressive:{modello}:{pk}")
 
 #: Sotto e sopra queste soglie la durata è **sospetta, non impossibile**: lo
 #: storico reale contiene una sessione da 0 minuti e una da 25 ore, ed entrano
@@ -142,6 +169,10 @@ class Lettura:
     serie_duplicate: int = 0
     lette_sessioni: int = 0
     lette_serie: int = 0
+    #: Chi sta importando, e **solo** per riconoscere i propri `nome_pubblico`
+    #: (vedi `leggi`). Non entra in nessuna riga scritta: quello lo fa `scrivi`
+    #: col `request.user` che riceve a parte.
+    user: object = None
 
     @property
     def nomi_grezzi(self):
@@ -218,13 +249,47 @@ def leggi_dizionario_esercizi(fileobj):
     }
 
 
-def leggi(file_sessioni, file_serie, file_esercizi=None):
-    """I due file (più il dizionario facoltativo) in una `Lettura`."""
+def leggi(file_sessioni, file_serie, file_esercizi=None, user=None):
+    """I due file (più il dizionario facoltativo) in una `Lettura`.
+
+    `user` serve **solo all'idempotenza**, e non all'identità: chi importa
+    resta `request.user` e il `user_id` del CSV continua a non contare niente.
+    Serve perché le righe nate in-app hanno un `id` nel file — il loro
+    `nome_pubblico` — che in database non c'è, e senza sapere di chi sono non
+    si potrebbe riconoscerle al ritorno. Omettendolo l'import funziona
+    esattamente come prima e vede i soli `external_id` memorizzati.
+    """
     dizionario = leggi_dizionario_esercizi(file_esercizi) if file_esercizi else {}
     lettura = Lettura()
+    lettura.user = user
     _leggi_sessioni(file_sessioni, lettura)
     _leggi_serie(file_serie, lettura, dizionario)
     return lettura
+
+
+def _nomi_sessioni_note(user):
+    """Gli `id` di sessione che il database **già conosce**, come stringhe.
+
+    Due provenienze e un solo insieme: gli `external_id` memorizzati (le righe
+    arrivate da un import) e i `nome_pubblico` calcolati delle righe nate
+    in-app dell'utente. Dal punto di vista del file sono la stessa cosa — un
+    `id` che c'è già — ed è ciò che rende «esporta e reimporta» un no-op anche
+    per un allenamento che nessuno ha mai importato.
+    """
+    noti = {
+        str(external_id)
+        for external_id in Workout.objects.exclude(external_id=None).values_list(
+            "external_id", flat=True
+        )
+    }
+    if user is not None:
+        noti |= {
+            str(nome_pubblico("workout", pk))
+            for pk in Workout.objects.filter(user=user, external_id=None).values_list(
+                "pk", flat=True
+            )
+        }
+    return noti
 
 
 def _leggi_sessioni(fileobj, lettura):
@@ -235,9 +300,7 @@ def _leggi_sessioni(fileobj, lettura):
     # l'idempotenza dichiarata da `03-import-ed-export.md`. Il confronto si fa
     # in una query sola invece che una per riga: su 317 serie la differenza fra
     # un `in` su un insieme e 317 `exists()` è tutto il tempo dell'anteprima.
-    noti = set(
-        Workout.objects.exclude(external_id=None).values_list("external_id", flat=True)
-    )
+    noti = _nomi_sessioni_note(lettura.user)
 
     chiavi = set()
     for riga in reader:
@@ -271,7 +334,7 @@ def _leggi_sessioni(fileobj, lettura):
         chiavi.add(chiave)
 
         external_id = _uuid(chiave)
-        if external_id is not None and external_id in noti:
+        if external_id is not None and str(external_id) in noti:
             # Non è un errore: la sessione c'è già. Le sue serie però possono
             # essere nuove, quindi la chiave resta valida e le righe di
             # `session_sets.csv` che la citano non diventano orfane.
@@ -356,11 +419,19 @@ def _leggi_serie(fileobj, lettura, dizionario):
             f"«exercise_id» insieme al file «{FILE_ESERCIZI}» che ne porta i nomi."
         )
 
-    noti = set(
-        WorkoutSet.objects.exclude(external_id=None).values_list(
+    noti = {
+        str(external_id)
+        for external_id in WorkoutSet.objects.exclude(external_id=None).values_list(
             "external_id", flat=True
         )
-    )
+    }
+    if lettura.user is not None:
+        noti |= {
+            str(nome_pubblico("workoutset", pk))
+            for pk in WorkoutSet.objects.filter(
+                workout__user=lettura.user, external_id=None
+            ).values_list("pk", flat=True)
+        }
     # Le sessioni scartate sopra non sono qui dentro: le loro serie diventano
     # orfane, ed è giusto che lo diventino — una serie senza il suo allenamento
     # non ha dove andare.
@@ -373,7 +444,7 @@ def _leggi_serie(fileobj, lettura, dizionario):
         lettura.lette_serie += 1
 
         external_id = _uuid(_testo(riga, "id"))
-        if external_id is not None and external_id in noti:
+        if external_id is not None and str(external_id) in noti:
             lettura.serie_duplicate += 1
             continue
 
@@ -547,12 +618,7 @@ def _chiavi_gia_presenti(lettura):
     """
     if not lettura.sessioni_duplicate:
         return set()
-    return {
-        str(external_id)
-        for external_id in Workout.objects.exclude(external_id=None).values_list(
-            "external_id", flat=True
-        )
-    }
+    return _nomi_sessioni_note(lettura.user)
 
 
 def risolvi(nomi_grezzi, user):
@@ -658,10 +724,16 @@ def scrivi(lettura, abbinamenti, user):
 
     # Le sessioni già presenti: le loro serie nuove vanno appese al loro
     # allenamento, o ricaricare un file aggiornato non aggiungerebbe mai niente.
-    duplicate = {
-        str(allenamento.external_id): allenamento
-        for allenamento in Workout.objects.filter(user=user).exclude(external_id=None)
-    }
+    duplicate = {}
+    for allenamento in Workout.objects.filter(user=user):
+        # Le due provenienze dell'`id` di un file, di nuovo insieme: la riga
+        # importata si riconosce dal suo `external_id`, quella nata in-app dal
+        # suo `nome_pubblico`. Senza la seconda, una serie **nuova** appesa a
+        # un allenamento nato qui non troverebbe il suo allenamento e sparirebbe
+        # in silenzio — e i no muti in questo progetto si chiudono, non si
+        # accettano.
+        chiave = allenamento.external_id or nome_pubblico("workout", allenamento.pk)
+        duplicate[str(chiave)] = allenamento
 
     # `(allenamento, esercizio, numero)` è `workout_set_unique`. Due nomi
     # grezzi diversi possono essere abbinati **allo stesso** esercizio — è una
@@ -669,12 +741,14 @@ def scrivi(lettura, abbinamenti, user):
     # movimento — e allora due serie possono collidere sul numero. Il database
     # lo rifiuterebbe con un `IntegrityError`, cioè un 500 in fondo a una
     # transazione: qui si vede prima e diventa una riga del report.
-    presenti = set()
-    for allenamento in duplicate.values():
-        for esercizio_id, numero in allenamento.sets.values_list(
-            "exercise_id", "set_number"
-        ):
-            presenti.add((allenamento.pk, esercizio_id, numero))
+    # Una query sola su tutte le serie dell'utente, non una per allenamento:
+    # `duplicate` ora contiene anche gli allenamenti nati in-app, e un ciclo di
+    # `values_list` su ognuno sarebbe stato un N+1 che cresce con lo storico.
+    presenti = set(
+        WorkoutSet.objects.filter(workout__user=user).values_list(
+            "workout_id", "exercise_id", "set_number"
+        )
+    )
 
     for serie in lettura.serie:
         allenamento = per_chiave.get(serie.chiave_sessione) or duplicate.get(

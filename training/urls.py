@@ -4,7 +4,7 @@
 (#22). La sitemap completa — cinque sezioni e i loro URL — è in
 `docs/spec/02-pagine-e-template.md`; qui ci sono la dashboard, le pagine
 dell'utente, le schede, lo storico e il catalogo; le classifiche e l'import
-entrano coi ticket rimasti della mappa #53.
+ed export entrano coi ticket rimasti della mappa #53.
 
 Login e logout non stanno qui: vivono sotto `/accounts/` in `config/urls.py`,
 perché sono le view di `django.contrib.auth` e i loro nomi di rotta (`login`,
@@ -128,4 +128,11 @@ urlpatterns = [
         name="import-preview",
     ),
     path("import/esito/", views.ImportResultView.as_view(), name="import-result"),
+    # Export — la seconda metà del giro, e la ragione per cui l'import non è
+    # «il formato di un'altra app»: Progressive produce i due file che sa
+    # leggere. Il nome del file sta **nell'URL** e non in query string, perché
+    # qui il parametro identifica davvero la risorsa — `allenamenti` e `serie`
+    # sono due file con due intestazioni — al contrario di `?scheda=<pk>` su
+    # «avvia allenamento», che lascia la pagina la stessa.
+    path("export/<slug:quale>/", views.ExportCsvView.as_view(), name="export-csv"),
 ]
