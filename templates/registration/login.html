@@ -51,8 +51,10 @@ Sovrascriverli non è saltare il guscio: la pagina estende comunque
                  class="form-control" autocomplete="current-password" required>
         </div>
 
-        {# Dopo il login si torna dove si stava andando: è `next`, che il
-           `LoginRequiredMixin` mette in querystring quando devia una pagina. #}
+        {% comment %}
+        Dopo il login si torna dove si stava andando: è `next`, che il
+        `LoginRequiredMixin` mette in querystring quando devia una pagina.
+        {% endcomment %}
         <input type="hidden" name="next" value="{{ next }}">
 
         <button type="submit" class="btn btn-volt w-100 py-2">Entra</button>

@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% comment %}
+`/schede/` — le mie schede.
+
+La lista mostra il conto degli esercizi e lo stato pubblico, perché sono le
+due cose che si vogliono sapere senza aprire: quante voci ha la scheda, e se
+è esposta alla community. Il filtro per proprietario sta nella view, non qui.
+{% endcomment %}
+
+{% block title %}Schede — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-baseline justify-content-between mb-4">
+  <div>
+    <div class="eyebrow">Le mie schede</div>
+    <h1 class="h4 fw-bold mb-0">Schede</h1>
+  </div>
+  <a href="{% url 'training:routine-create' %}" class="btn btn-volt px-3">Nuova scheda</a>
+</div>
+
+{% for messaggio in messages %}
+<div class="card-ink p-3 mb-3">
+  <div class="rail">
+    <div class="eyebrow" style="color:var(--volt)">Fatto</div>
+    <div style="color:var(--t2);font-size:.9rem">{{ messaggio }}</div>
+  </div>
+</div>
+{% endfor %}
+
+{% if routines %}
+<div class="row g-3">
+  {% for routine in routines %}
+  <div class="col-12 col-lg-6">
+    <div class="card-ink p-3 h-100">
+      <div class="d-flex align-items-baseline justify-content-between">
+        <a href="{% url 'training:routine-detail' routine.pk %}"
+           class="h6 fw-bold mb-0 text-decoration-none" style="color:var(--t1)">
+          {{ routine.name }}
+        </a>
+        {% if routine.is_public %}
+        <span class="delta delta-up">Pubblica</span>
+        {% else %}
+        <span class="eyebrow" style="color:var(--t3)">Privata</span>
+        {% endif %}
+      </div>
+
+      <div class="mt-2" style="color:var(--t2);font-size:.88rem">
+        {{ routine.exercises.count }} eserciz{{ routine.exercises.count|pluralize:"io,i" }}
+        &middot; creata il {{ routine.created_at|date:"j F Y" }}
+      </div>
+
+      {% if routine.notes %}
+      <div class="mt-2" style="color:var(--t3);font-size:.82rem">{{ routine.notes|truncatewords:18 }}</div>
+      {% endif %}
+
+      <div class="mt-3 d-flex gap-3">
+        <a href="{% url 'training:routine-exercises' routine.pk %}" style="color:var(--volt);font-size:.85rem">Esercizi</a>
+        <a href="{% url 'training:routine-update' routine.pk %}" style="color:var(--t2);font-size:.85rem">Modifica</a>
+        <a href="{% url 'training:routine-delete' routine.pk %}" style="color:var(--t2);font-size:.85rem">Elimina</a>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+{% comment %}
+Il vuoto si dichiara e propone il passo successivo, invece di lasciare una
+pagina bianca che sembra un guasto.
+{% endcomment %}
+<div class="card-ink p-4 text-center">
+  <div class="eyebrow mb-2">Nessuna scheda</div>
+  <p style="color:var(--t2);max-width:34rem;margin:0 auto">
+    Una scheda è il piano: quali esercizi fare, in che ordine, con quante serie
+    e quante ripetizioni obiettivo. È da lì che il coach prende il bersaglio
+    della doppia progressione.
+  </p>
+  <a href="{% url 'training:routine-create' %}" class="btn btn-volt px-4 mt-3">Crea la prima</a>
+</div>
+{% endif %}
+
+{% endblock %}
