@@ -1,0 +1,30 @@
+{% comment %}
+La paginazione, uguale su tutte le pagine che ne hanno una.
+
+È il `Paginator` di Django, quindi si legge `page_obj` e `paginator` dal
+contesto che `ListView` mette già lì: nessun argomento da passare.
+
+I filtri della pagina viaggiano in query string, e senza `querystring` il
+«pagina 2» li perderebbe — si tornerebbe alla classifica dell'esercizio
+sbagliato. `{% querystring %}` è il tag che Django 5.1 ha aggiunto proprio per
+questo: riscrive la query string corrente cambiando **solo** i parametri
+indicati.
+
+Il prefisso `_` lo tiene fuori dalla guardia sull'ereditarietà di `base.html`.
+{% endcomment %}
+{% if page_obj.has_other_pages %}
+<nav class="d-flex align-items-center justify-content-between mt-3">
+  <div class="eyebrow" style="color:var(--t3)">
+    {{ page_obj.start_index }}–{{ page_obj.end_index }} di {{ paginator.count }}
+  </div>
+  <div class="d-flex gap-2 align-items-center">
+    {% if page_obj.has_previous %}
+    <a class="btn btn-sm btn-outline-secondary" href="{% querystring page=page_obj.previous_page_number %}">Precedente</a>
+    {% endif %}
+    <span class="eyebrow" style="color:var(--t2)">pagina {{ page_obj.number }} di {{ paginator.num_pages }}</span>
+    {% if page_obj.has_next %}
+    <a class="btn btn-sm btn-outline-secondary" href="{% querystring page=page_obj.next_page_number %}">Successiva</a>
+    {% endif %}
+  </div>
+</nav>
+{% endif %}

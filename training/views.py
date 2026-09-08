@@ -32,6 +32,7 @@ from django.views import View
 from django.views.generic import DetailView, ListView, TemplateView
 from django.views.generic.edit import CreateView, DeleteView, FormView, UpdateView
 
+from training import rankings
 from training.forms import (
     AbbinamentoFormSet,
     ImportUploadForm,
@@ -370,6 +371,10 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
     #: fondamentale è lungo anni; qui serve a far vedere che il dato c'è.
     SESSIONI_RECENTI = 10
 
+    #: Quante righe di classifica mostrare qui: un assaggio con il link alla
+    #: pagina intera, non una seconda classifica.
+    RIGHE_DI_CLASSIFICA = 5
+
     def get_queryset(self):
         return Exercise.objects.select_related("primary_muscle__group", "equipment")
 
@@ -394,6 +399,19 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
             .select_related("workout")
             .order_by("-workout__started_at", "set_number")
         )
+
+        # La classifica di forza ridotta alle prime cinque righe (#33): è la
+        # stessa tabella della pagina propria, inclusa come partial, non una
+        # seconda query scritta apposta. Compare solo se **questo** esercizio è
+        # sopra soglia — l'`exists()` è la stessa domanda che il selettore fa
+        # per tutti, ristretta a uno.
+        contesto_classifica = rankings.esercizi_con_classifica().filter(
+            pk=self.object.pk
+        )
+        if contesto_classifica.exists():
+            context["classifica"] = rankings.classifica_forza(self.object)[
+                : self.RIGHE_DI_CLASSIFICA
+            ]
         return context
 
 
@@ -1086,3 +1104,121 @@ class ExportCsvView(LoginRequiredMixin, View):
         )
         esporta(risposta, quale, request.user)
         return risposta
+
+
+# --- Le due classifiche ---------------------------------------------------
+#
+# Il requisito «display results or rankings» della traccia, pagato **due volte
+# e in due modi**: una graduatoria di persone su un esercizio, e una di schede
+# per giudizio. Che siano di natura diversa non è un vezzo — è ciò che rende la
+# seconda non una copia della prima.
+#
+# Le query non stanno qui ma in `training/rankings.py`, che non conosce HTTP:
+# stessa scelta di `importer.py`, perché ciò che va provato riga per riga sono
+# i numeri e non l'HTML che li mostra. Qui restano le tre decisioni che *sono*
+# di presentazione: quale esercizio si guarda, quante righe per pagina, quale
+# riga è la tua.
+
+
+class RankingStrengthView(LoginRequiredMixin, ListView):
+    """`/classifiche/forza/` — la forza relativa su un esercizio, di sempre.
+
+    **Non esiste una classifica di forza generale**, e la ragione è misurata,
+    non stimata: un punteggio composito sui tre fondamentali escluderebbe 45
+    utenti su 100, perché panca, squat e stacco compaiono insieme in soli 55
+    storici (`docs/spec/00-indice.md`, §Confini). Esiste quindi una classifica
+    **per esercizio**, e il selettore offre solo quelli la cui popolazione
+    supera la soglia: un esercizio che poi dice «dati insufficienti» sarebbe un
+    vicolo cieco messo nel menu apposta.
+
+    Senza `?esercizio=`, si apre il **più praticato**: è la classifica più
+    piena, quindi quella che dimostra meglio la pagina, e ordinare il selettore
+    per popolazione rende la scelta del default una conseguenza dell'ordine
+    invece di una seconda regola.
+
+    `Paginator` a 25 righe. Qui la paginazione ha senso e sulla lista degli
+    esercizi non ne aveva (#71): 100 esercizi sono un numero chiuso, gli utenti
+    di una classifica no.
+    """
+
+    template_name = "training/ranking_strength.html"
+    context_object_name = "righe"
+    paginate_by = 25
+
+    @cached_property
+    def esercizi_ammessi(self):
+        """Gli esercizi sopra soglia, una volta sola per richiesta.
+
+        Sono letti due volte — per il selettore e per risolvere `?esercizio=` —
+        e senza `cached_property` sarebbero due query identiche.
+        """
+        return list(rankings.esercizi_con_classifica())
+
+    @cached_property
+    def esercizio(self):
+        """L'esercizio guardato, scelto per **slug** e non per `pk`.
+
+        È la stessa regola dei filtri del catalogo (#71): `?esercizio=panca-piana`
+        si legge, si salva nei preferiti e sopravvive a un ricaricamento del
+        catalogo, mentre una chiave primaria no.
+
+        Uno slug che non è in soglia non è un errore da 404: è una domanda
+        legittima con una risposta legittima — quella classifica non c'è — e la
+        pagina ricade sul default invece di sbattere una porta.
+        """
+        slug = self.request.GET.get("esercizio")
+        if slug:
+            for esercizio in self.esercizi_ammessi:
+                if esercizio.slug == slug:
+                    return esercizio
+        return self.esercizi_ammessi[0] if self.esercizi_ammessi else None
+
+    def get_queryset(self):
+        if self.esercizio is None:
+            return WorkoutSet.objects.none()
+        return rankings.classifica_forza(self.esercizio)
+
+    def get_context_data(self, **kwargs):
+        contesto = super().get_context_data(**kwargs)
+        contesto["esercizi"] = self.esercizi_ammessi
+        contesto["esercizio"] = self.esercizio
+        contesto["soglia_utenti"] = rankings.MIN_USERS_FOR_COMPARISON
+        contesto["min_allenamenti"] = rankings.MIN_WORKOUTS_FOR_RANKING
+        # Il peso corporeo non è un dettaglio del profilo: senza, non esiste
+        # forza relativa e l'utente **non compare** (ADR-0008). Dirglielo qui è
+        # l'unico modo perché la sua assenza dalla classifica si legga come una
+        # condizione e non come un guasto.
+        contesto["senza_peso"] = not self.request.user.has_body_mass
+        return contesto
+
+
+class RankingSocialView(LoginRequiredMixin, ListView):
+    """`/classifiche/schede/` — le schede pubbliche per media bayesiana.
+
+    Ordina **schede** e non utenti: è questo a renderla di natura diversa dalla
+    classifica di forza, ed è la ragione per cui il requisito della traccia si
+    considera pagato due volte e in due modi.
+
+    Il punteggio è la media smorzata verso la media globale di tutti i voti
+    (`training.rankings.classifica_sociale`), e non la media grezza: con la
+    media grezza una scheda con un solo 5 starebbe in testa per sempre. È la
+    stessa ragione per cui la community (#72) resta **cronologica** — ordinare
+    è un atto che va dichiarato, e si dichiara qui.
+
+    Media grezza e numero di voti restano in colonna: il punteggio che ordina
+    dev'essere ispezionabile, o la pagina chiede di fidarsi.
+    """
+
+    template_name = "training/ranking_social.html"
+    context_object_name = "righe"
+    paginate_by = 25
+
+    def get_queryset(self):
+        return rankings.classifica_sociale()
+
+    def get_context_data(self, **kwargs):
+        contesto = super().get_context_data(**kwargs)
+        contesto["media_globale"] = rankings.media_globale_dei_voti()
+        contesto["prior"] = rankings.C_PRIOR_VOTI
+        contesto["min_esercizi"] = rankings.MIN_EXERCISES_FOR_RANKING
+        return contesto

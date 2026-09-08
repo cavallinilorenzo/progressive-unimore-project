@@ -8,6 +8,7 @@ Tutto vive in **una sola app, `training`**. Nessuna seconda app: `analytics/` è
 training/
 ├── models.py            # tutti i modelli, in un file solo come nell'esempio del prof
 ├── querysets.py         # il custom QuerySet di WorkoutSet (vedi 04-analisi.md)
+├── rankings.py          # le due classifiche come query, senza HTTP (#76)
 ├── forms.py
 ├── admin.py
 ├── urls.py

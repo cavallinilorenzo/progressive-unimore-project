@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% comment %}
+`/classifiche/schede/` — la seconda classifica, e ordina **schede**, non
+utenti: è questo a renderla di natura diversa dalla prima.
+
+Il punteggio che ordina è la media bayesiana, e la pagina lo mostra **accanto**
+alla media grezza e al numero di voti. Non è ridondanza: un numero che decide
+l'ordine e non si può ispezionare chiede di fidarsi, e qui la differenza fra
+«4,7 su tre voti» e «4,4 su cinquanta» è esattamente il punto.
+{% endcomment %}
+
+{% block title %}Classifica delle schede — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="mb-4">
+  <div class="eyebrow">Classifiche</div>
+  <h1 class="h4 fw-bold mb-0">Classifica delle schede</h1>
+</div>
+
+{% include "training/_classifiche_schede.html" with attiva="schede" %}
+
+{% if righe %}
+<div class="card-ink p-3">
+  <div class="eyebrow mb-2">{{ paginator.count }} schede in classifica</div>
+
+  <div class="table-responsive">
+    <table class="table table-sm align-middle mb-0">
+      <thead>
+        <tr class="eyebrow" style="color:var(--t3)">
+          <th style="width:3.5rem">#</th>
+          <th>Scheda</th>
+          <th class="text-end">Punteggio</th>
+          <th class="text-end d-none d-md-table-cell">Media</th>
+          <th class="text-end d-none d-md-table-cell">Voti</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for riga in righe %}
+        <tr {% if riga.user_id == user.pk %}class="riga-mia"{% endif %}>
+          <td class="fw-bold" style="color:var(--t2)">{{ riga.posizione }}</td>
+          <td>
+            <a href="{% url 'training:routine-public-detail' riga.pk %}"
+               class="fw-bold text-decoration-none" style="color:var(--t1)">{{ riga.name }}</a>
+            <div style="color:var(--t3);font-size:.82rem">
+              di {{ riga.user.get_username }}
+              {% if riga.user_id == user.pk %}<span class="eyebrow" style="color:var(--volt)">tua</span>{% endif %}
+              {% include "training/_utente_dimostrativo.html" with utente=riga.user %}
+            </div>
+          </td>
+          <td class="text-end fw-bold">{{ riga.punteggio|floatformat:2 }}</td>
+          <td class="text-end d-none d-md-table-cell" style="color:var(--t2)">{{ riga.media|floatformat:2 }}</td>
+          <td class="text-end d-none d-md-table-cell" style="color:var(--t3)">{{ riga.n_voti }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% include "training/_paginazione.html" %}
+</div>
+
+<div class="mt-3 eyebrow" style="color:var(--t3);line-height:1.7">
+  Il punteggio è la <span style="color:var(--t2)">media bayesiana</span>: la
+  media dei voti della scheda smorzata verso la media di tutti i voti
+  ({{ media_globale|floatformat:2 }}), con un peso pari a {{ prior }} voti. Serve
+  a impedire che una scheda con un solo 5 superi una scheda con cinquanta voti
+  alti — e lo fa senza una soglia minima di voti, che sarebbe un numero
+  arbitrario in più. Entrano le schede pubbliche con almeno
+  {{ min_esercizi }} esercizi e almeno un voto.
+</div>
+
+{% else %}
+{% comment %}
+Il vuoto dice da dove nasce: la classifica sociale è fatta di schede pubbliche
+votate, e finché nessuno pubblica o vota è vuota **per costruzione**.
+{% endcomment %}
+<div class="card-ink p-4 text-center">
+  <div class="eyebrow mb-2">Nessuna scheda in classifica</div>
+  <p style="color:var(--t2);max-width:34rem;margin:0 auto">
+    Entra in classifica una scheda pubblica con almeno {{ min_esercizi }}
+    esercizi che abbia ricevuto almeno un voto. Nella community le trovi tutte,
+    anche quelle che nessuno ha ancora votato.
+  </p>
+  <a href="{% url 'training:routine-public-list' %}" class="btn btn-volt px-4 mt-3">Vai alla community</a>
+</div>
+{% endif %}
+
+{% endblock %}

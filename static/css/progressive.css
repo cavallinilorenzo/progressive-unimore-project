@@ -95,3 +95,10 @@ footer { color: var(--t3); font-size: .8rem; border-top: 1px solid var(--surface
   font-size: 6rem; font-weight: 800; line-height: 1;
   letter-spacing: -.04em; color: var(--volt);
 }
+
+/* --- classifiche --------------------------------------------------------- */
+
+/* La propria riga, su una classifica di ottanta persone. Un bordo e un fondo
+   appena acceso: la riga va trovata scorrendo, non deve gridare. */
+.riga-mia > * { background: rgba(201, 255, 61, .06); }
+.riga-mia > td:first-child { box-shadow: inset 2px 0 0 var(--volt); }

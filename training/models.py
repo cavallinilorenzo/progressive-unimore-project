@@ -18,6 +18,8 @@ from django.contrib.auth.models import AbstractUser
 from django.db import models
 from django.db.models.functions import Lower
 
+from training.querysets import WorkoutSetQuerySet
+
 
 class User(AbstractUser):
     """L'utente di Progressive.
@@ -298,6 +300,12 @@ class WorkoutSet(models.Model):
         WORKING = "working", "Efficace"
         WARMUP = "warmup", "Riscaldamento"
         RAMP_UP = "rampUp", "Avvicinamento"
+
+    #: Il custom QuerySet di `training/querysets.py`: `WorkoutSet.objects` resta
+    #: un manager normale e in più sa `.working()`, `.with_effective_load()` e
+    #: `.with_estimated_1rm()`. Non è `use_in_migrations`, quindi non genera
+    #: nessuna migrazione: cambia l'API, non lo schema.
+    objects = WorkoutSetQuerySet.as_manager()
 
     workout = models.ForeignKey(Workout, on_delete=models.CASCADE, related_name="sets")
     # Punta a `Exercise`, mai a `RoutineExercise`: la serie sopravvive alla

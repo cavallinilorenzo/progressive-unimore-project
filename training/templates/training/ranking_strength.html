@@ -1,0 +1,110 @@
+{% extends "base.html" %}
+{% comment %}
+`/classifiche/forza/` — la prima delle due classifiche.
+
+La pagina dice **tre** cose prima della tabella, e nessuna è decorazione: su
+quale esercizio si sta guardando, con quale criterio si ordina, e chi entra.
+Una graduatoria che non dichiara le proprie regole d'ammissione si legge come
+una graduatoria di tutti, e chi non c'è pensa a un guasto.
+{% endcomment %}
+
+{% block title %}Classifica di forza — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="mb-4">
+  <div class="eyebrow">Classifiche</div>
+  <h1 class="h4 fw-bold mb-0">Classifica di forza</h1>
+</div>
+
+{% include "training/_classifiche_schede.html" with attiva="forza" %}
+
+{% if esercizio %}
+
+<div class="card-ink p-3 mb-3">
+  <form method="get" class="row g-2 align-items-end">
+    <div class="col-12 col-md-8">
+      <label for="esercizio" class="form-label eyebrow mb-1">Esercizio</label>
+      {% comment %}
+      Il selettore offre **solo** gli esercizi sopra soglia, col numero di
+      persone accanto: sono gli unici su cui una classifica ha senso, e
+      metterne altri sarebbe mettere in menu un vicolo cieco. L'ordine è per
+      popolazione, ed è lo stesso ordine che decide quale si apre per primo.
+      {% endcomment %}
+      <select name="esercizio" id="esercizio" class="form-select">
+        {% for opzione in esercizi %}
+        <option value="{{ opzione.slug }}" {% if opzione.pk == esercizio.pk %}selected{% endif %}>
+          {{ opzione.name }} — {{ opzione.n_utenti }} utenti
+        </option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 col-md-4">
+      <button type="submit" class="btn btn-volt w-100">Mostra</button>
+    </div>
+  </form>
+</div>
+
+{% if senza_peso %}
+{% comment %}
+Il peso corporeo è una **condizione d'ammissione**, non un campo facoltativo
+del profilo (ADR-0008): senza, non esiste forza relativa. Dirlo qui è l'unico
+modo perché la propria assenza dalla tabella si legga come una condizione e non
+come un guasto della pagina.
+{% endcomment %}
+<div class="card-ink p-3 mb-3" style="border-left:3px solid var(--volt)">
+  <div class="eyebrow mb-1">Non sei in classifica</div>
+  <p class="mb-2" style="color:var(--t2);font-size:.9rem">
+    La forza relativa è il massimale diviso il peso corporeo: senza un peso
+    dichiarato non c'è un numero da confrontare, e comparire con un numero
+    sbagliato sarebbe peggio che non comparire.
+  </p>
+  <a href="{% url 'training:profile' %}" style="color:var(--volt);font-size:.9rem">Dichiara il peso corporeo</a>
+</div>
+{% endif %}
+
+<div class="card-ink p-3">
+  <div class="d-flex align-items-baseline justify-content-between mb-2">
+    <div class="eyebrow">{{ esercizio.name }} &middot; {{ paginator.count }} in classifica</div>
+    <a href="{% url 'training:exercise-detail' esercizio.slug %}" style="color:var(--t2);font-size:.85rem">La pagina dell'esercizio</a>
+  </div>
+
+  {% if righe %}
+  {% include "training/_classifica_forza_tabella.html" with righe=righe utente=user %}
+  {% include "training/_paginazione.html" %}
+  {% else %}
+  <p class="mb-0" style="color:var(--t2);font-size:.9rem">
+    Nessuno ha ancora abbastanza dati su questo esercizio.
+  </p>
+  {% endif %}
+</div>
+
+<div class="mt-3 eyebrow" style="color:var(--t3);line-height:1.7">
+  Ordina per <span style="color:var(--t2)">forza relativa</span> — massimale
+  stimato diviso peso corporeo — su tutto lo storico, senza finestra temporale:
+  è una classifica di record, non di attività. Entra chi ha un peso corporeo
+  dichiarato e almeno {{ min_allenamenti }} allenamenti distinti con questo
+  esercizio; la classifica esiste solo sopra i {{ soglia_utenti }} utenti. A
+  pari merito la posizione è la stessa per entrambi, e sopra sta chi pratica
+  l'esercizio da più tempo.
+</div>
+
+{% else %}
+{% comment %}
+Il vuoto si spiega, e la spiegazione è la soglia: con pochi dati la classifica
+non si mostra magra, non si mostra affatto. È la stessa regola che in fase 2
+farà tacere il percentile, e la stessa costante.
+{% endcomment %}
+<div class="card-ink p-4 text-center">
+  <div class="eyebrow mb-2">Nessuna classifica disponibile</div>
+  <p style="color:var(--t2);max-width:34rem;margin:0 auto">
+    Una classifica di forza esiste solo per gli esercizi su cui si sono
+    allenate almeno {{ soglia_utenti }} persone con un peso corporeo
+    dichiarato: sotto quella soglia il confronto direbbe più sul caso che sulla
+    forza. Nessun esercizio del catalogo ci arriva ancora.
+  </p>
+  <a href="{% url 'training:ranking-social' %}" class="btn btn-volt px-4 mt-3">Vai alla classifica delle schede</a>
+</div>
+{% endif %}
+
+{% endblock %}

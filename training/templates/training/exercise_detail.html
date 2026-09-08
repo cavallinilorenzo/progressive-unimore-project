@@ -104,15 +104,36 @@ questo sia tutto ciò che la pagina sarà.
   {% endif %}
 </div>
 
+{% if classifica %}
+{% comment %}
+La classifica di forza ridotta alle prime cinque righe (#33), con il link alla
+pagina intera. È la **stessa tabella** della pagina propria, inclusa come
+partial: due copie divergerebbero al primo ripensamento sulle colonne, e nessun
+test lo segnalerebbe.
+
+Compare solo se questo esercizio è sopra soglia. La pagina propria resta quella
+che si mostra all'orale — un requisito sepolto in un dettaglio va cercato — e
+questa è il collegamento nell'altro verso: si sta guardando un esercizio, e la
+classifica è una cosa che di quell'esercizio si vuole sapere.
+{% endcomment %}
+<div class="card-ink p-3 mb-3">
+  <div class="d-flex align-items-baseline justify-content-between mb-2">
+    <div class="eyebrow">Classifica di forza</div>
+    <a href="{% url 'training:ranking-strength' %}?esercizio={{ esercizio.slug }}"
+       style="color:var(--t2);font-size:.85rem">Vedi tutta la classifica</a>
+  </div>
+  {% include "training/_classifica_forza_tabella.html" with righe=classifica utente=user %}
+</div>
+{% endif %}
+
 <div class="card-ink p-3">
   <div class="rail">
     <div class="eyebrow mb-1">Cosa arriva qui</div>
     <div style="color:var(--t2);font-size:.88rem">
       Questa diventerà la storia dell'esercizio: progressione del massimale
-      stimato, record personali, il tuo percentile fra gli utenti, lo stato di
-      stallo col consiglio di carico, e le prime righe della classifica di
-      forza. Sono il motore analitico, e arrivano dopo: prima serve il dato
-      qui sopra.
+      stimato, record personali, il tuo percentile fra gli utenti, e lo stato
+      di stallo col consiglio di carico. Sono il motore analitico, e arrivano
+      dopo: prima serve il dato qui sopra.
     </div>
   </div>
 </div>

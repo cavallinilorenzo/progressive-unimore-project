@@ -1,0 +1,18 @@
+{% comment %}
+Le due schede che passano da una classifica all'altra.
+
+Stanno in un partial perché sono la stessa navigazione vista da due pagine, e
+perché sono anche l'unica cosa che dice, in due parole, che le classifiche sono
+**due e di natura diversa**: una ordina persone, l'altra schede. Chi apre solo
+la prima non lo saprebbe.
+
+    {% include "training/_classifiche_schede.html" with attiva="forza" %}
+
+Il prefisso `_` lo tiene fuori dalla guardia sull'ereditarietà di `base.html`.
+{% endcomment %}
+<div class="d-flex gap-2 mb-3">
+  <a href="{% url 'training:ranking-strength' %}"
+     class="btn btn-sm {% if attiva == 'forza' %}btn-volt{% else %}btn-outline-secondary{% endif %}">Forza per esercizio</a>
+  <a href="{% url 'training:ranking-social' %}"
+     class="btn btn-sm {% if attiva == 'schede' %}btn-volt{% else %}btn-outline-secondary{% endif %}">Schede della community</a>
+</div>
