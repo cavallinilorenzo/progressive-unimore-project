@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% comment %}
+`/import/` — il primo dei tre passi.
+
+QUESTA PAGINA HA UN LAVORO SOLO: prendere i file. Non valida il contenuto e
+non anticipa niente, perché ciò che c'è dentro lo dice l'anteprima, che è il
+passo dopo e ha una pagina sua. Tre URL e non tre rami dentro un `post()`.
+
+Il testo dice **da dove si prendono quei file**, ed è l'unica cosa che qui
+serve davvero: un form che chiede due CSV senza dire quali è un form che
+funziona solo per chi l'ha scritto. Il giro si chiude con l'export (#74), che
+produce esattamente i due file che questa pagina legge.
+{% endcomment %}
+
+{% block title %}Importa lo storico — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="mb-4">
+  <div class="eyebrow">Importa</div>
+  <h1 class="h4 fw-bold mb-0">Lo storico da CSV</h1>
+</div>
+
+{% for messaggio in messages %}
+<div class="card-ink p-3 mb-3">
+  <div class="rail" style="border-color:var(--red)">
+    <div class="eyebrow mb-1" style="color:var(--red)">Non si può procedere</div>
+    <div style="color:var(--t2);font-size:.9rem">{{ messaggio }}</div>
+  </div>
+</div>
+{% endfor %}
+
+<div class="card-ink p-3 mb-3">
+  <div class="rail">
+    <div class="eyebrow mb-1">Come funziona</div>
+    <div style="color:var(--t2);font-size:.88rem">
+      Si caricano <strong>due file in una volta sola</strong>: gli allenamenti e
+      le loro serie. Nel passo successivo Progressive mostra un'anteprima —
+      quanto entra, cosa viene scartato e perché — e ti chiede di
+      <strong>abbinare i nomi</strong> degli esercizi a quelli del catalogo:
+      niente entra nel tuo storico prima di quella conferma.
+      Gli esercizi <strong>non</strong> vengono creati: il catalogo è comune a
+      tutti, e l'import ci si aggancia.
+      Ricaricare lo stesso file una seconda volta non duplica niente.
+    </div>
+  </div>
+</div>
+
+<form method="post" enctype="multipart/form-data" novalidate>
+  {% csrf_token %}
+
+  {% if form.non_field_errors %}
+  {% for errore in form.non_field_errors %}
+  <div class="mb-2" style="color:var(--red);font-size:.82rem">{{ errore }}</div>
+  {% endfor %}
+  {% endif %}
+
+  {% for campo in form %}
+  <div class="card-ink p-3 mb-3">
+    <label for="{{ campo.id_for_label }}" class="eyebrow d-block mb-1">
+      {{ campo.label }}{% if not campo.field.required %} <span style="color:var(--t3)">— facoltativo</span>{% endif %}
+    </label>
+    {{ campo }}
+    <div class="mt-2" style="color:var(--t3);font-size:.82rem">{{ campo.help_text }}</div>
+    {% for errore in campo.errors %}
+    <div class="mt-1" style="color:var(--red);font-size:.82rem">{{ errore }}</div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+
+  <div class="d-flex gap-3 align-items-center">
+    <button type="submit" class="btn btn-volt px-4 py-2">Controlla i file</button>
+    <a href="{% url 'training:workout-list' %}" style="color:var(--t2);font-size:.9rem">Annulla</a>
+  </div>
+</form>
+
+{% endblock %}

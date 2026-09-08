@@ -9,6 +9,8 @@ qualcuno non li rimuove da `Meta` senza accorgersene.
 """
 
 import re
+import shutil
+import tempfile
 from datetime import timedelta
 from decimal import Decimal
 from io import StringIO
@@ -16,6 +18,7 @@ from pathlib import Path
 
 from django.conf import settings
 from django.contrib.auth import get_user_model
+from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.db import IntegrityError, connection, transaction
 from django.template import TemplateDoesNotExist
@@ -30,6 +33,7 @@ from training.forms import VoteForm
 from training.models import (
     Equipment,
     Exercise,
+    ExerciseAlias,
     Muscle,
     MuscleGroup,
     Routine,
@@ -2119,3 +2123,422 @@ class PublicRoutineAndVoteTests(TestCase):
             "Non si vota la propria scheda: il voto è il giudizio degli altri.",
             form.non_field_errors(),
         )
+
+
+class CsvImportTests(TestCase):
+    """L'import CSV lato utente: il canale che si mostra al prof.
+
+    `load_catalog` paga lo stesso requisito dal lato amministratore ed è già
+    provato sopra; questo è il canale **utente**, tre URL e un form.
+
+    I casi qui sotto sono quelli **misurati sui dati veri**
+    (`docs/overload-export.md`), non immaginati: è la differenza fra un import
+    che regge lo storico di Lorenzo e uno che rifiuta 25 serie legittime di
+    corpo libero perché pretende un peso.
+
+    I CSV di prova sono costruiti **in memoria** e non versionati: i file
+    fabbricati a mano in `training/tests/fixtures/`, con un caso per riga e la
+    copertura dell'export, sono il ticket #74, che chiude il giro. Qui il file
+    nasce nel test perché ogni test vuole variarne una cella sola.
+    """
+
+    #: Due sessioni: una normale, e una da trenta secondi che è il caso
+    #: «durata assurda» — entra intatta, con un avviso.
+    SESSIONI = (
+        "id,user_id,routine_id,title,started_at,ended_at,notes\n"
+        "11111111-1111-4111-8111-111111111111,{estraneo},{routine},Spinta A,"
+        "2026-08-10T06:00:00+00:00,2026-08-10T07:00:00+00:00,\n"
+        "22222222-2222-4222-8222-222222222222,{estraneo},,Sessione lampo,"
+        "2026-08-11T06:00:00+00:00,2026-08-11T06:00:30+00:00,\n"
+    )
+
+    #: Le righe, in ordine, con il numero **reale** che avranno nel file:
+    #: 2 normale, 3 corpo libero, 4 non eseguita, 5 eseguita senza ripetizioni
+    #: (l'unico errore vero), 6 nome non abbinabile.
+    SERIE = (
+        "id,session_id,exercise_name,set_number,reps,weight,set_type,is_completed\n"
+        "aaaaaaaa-0001-4000-8000-000000000000,11111111-1111-4111-8111-111111111111,"
+        "Panca piana,1,8,60,working,true\n"
+        "aaaaaaaa-0002-4000-8000-000000000000,11111111-1111-4111-8111-111111111111,"
+        "Trazioni,1,10,,working,true\n"
+        "aaaaaaaa-0003-4000-8000-000000000000,11111111-1111-4111-8111-111111111111,"
+        "Panca piana,2,,,working,false\n"
+        "aaaaaaaa-0004-4000-8000-000000000000,11111111-1111-4111-8111-111111111111,"
+        "Panca piana,3,,80,working,true\n"
+        "aaaaaaaa-0005-4000-8000-000000000000,22222222-2222-4222-8222-222222222222,"
+        "RDL,1,8,100,working,true\n"
+    )
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user(username="lorenzo", password=PASSWORD)
+        cls.altro = User.objects.create_user(username="martina", password=PASSWORD)
+
+        group = MuscleGroup.objects.create(code="chest", label_it="Petto", sort_order=1)
+        muscle = Muscle.objects.create(
+            code="chestMid", group=group, label_it="Petto medio", sort_order=1
+        )
+        bilanciere = Equipment.objects.create(
+            code="barbell",
+            label_it="Bilanciere",
+            default_bar_weight_kg=Decimal("20.00"),
+            sort_order=1,
+        )
+        corpo_libero = Equipment.objects.create(
+            code="bodyweight",
+            label_it="Corpo libero",
+            default_bar_weight_kg=Decimal("0.00"),
+            load_increment_kg=Decimal("0.00"),
+            sort_order=2,
+        )
+        cls.panca = Exercise.objects.create(
+            name="Panca piana", slug="panca-piana",
+            primary_muscle=muscle, equipment=bilanciere,
+        )
+        cls.trazioni = Exercise.objects.create(
+            name="Trazioni", slug="trazioni",
+            primary_muscle=muscle, equipment=corpo_libero,
+        )
+        cls.stacco = Exercise.objects.create(
+            name="Stacco rumeno con bilanciere", slug="stacco-rumeno-con-bilanciere",
+            primary_muscle=muscle, equipment=bilanciere,
+        )
+
+    def setUp(self):
+        self.client.force_login(self.user)
+        self.deposito = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, self.deposito, ignore_errors=True)
+        override = override_settings(MEDIA_ROOT=self.deposito)
+        override.enable()
+        self.addCleanup(override.disable)
+
+    # ------------------------------------------------------------------ utili
+
+    def files(self, sessioni=None, serie=None, esercizi=None):
+        """I due file come li manda un browser. `SimpleUploadedFile` è
+        binario, che è esattamente ciò che il parser riceve in produzione."""
+        dati = {
+            "sessioni": SimpleUploadedFile(
+                "workout_sessions.csv",
+                (sessioni if sessioni is not None else self.sessioni()).encode("utf-8"),
+                content_type="text/csv",
+            ),
+            "serie": SimpleUploadedFile(
+                "session_sets.csv",
+                (serie if serie is not None else self.SERIE).encode("utf-8"),
+                content_type="text/csv",
+            ),
+        }
+        if esercizi is not None:
+            dati["esercizi"] = SimpleUploadedFile(
+                "exercises.csv", esercizi.encode("utf-8"), content_type="text/csv"
+            )
+        return dati
+
+    def sessioni(self):
+        """Il `user_id` del CSV è quello di **un altro utente**, di proposito:
+        è il dato di un altro sistema e non deve avere nessuna autorità qui."""
+        return self.SESSIONI.format(estraneo=self.altro.pk, routine="99")
+
+    def carica(self, **kwargs):
+        risposta = self.client.post(
+            reverse("training:import-upload"), self.files(**kwargs)
+        )
+        return risposta
+
+    def conferma(self, abbinamenti):
+        """Il POST dell'anteprima: il formset degli abbinamenti.
+
+        `abbinamenti` è la lista `(nome grezzo, esercizio)` nell'ordine in cui
+        la pagina li ha chiesti.
+        """
+        dati = {
+            "form-TOTAL_FORMS": str(len(abbinamenti)),
+            "form-INITIAL_FORMS": "0",
+            "form-MIN_NUM_FORMS": "0",
+            "form-MAX_NUM_FORMS": "1000",
+        }
+        for indice, (nome, esercizio) in enumerate(abbinamenti):
+            dati[f"form-{indice}-raw_name"] = nome
+            dati[f"form-{indice}-exercise"] = str(esercizio.pk)
+        return self.client.post(reverse("training:import-preview"), dati)
+
+    # ------------------------------------------------------------- l'anteprima
+
+    def test_anteprima_non_scrive_niente(self):
+        """La regola che dà senso a tutti e tre gli URL: **niente entra prima
+        della conferma**. Un'anteprima che avesse già scritto sarebbe un
+        resoconto, non un'anteprima, e la tabella di abbinamento non avrebbe
+        nessuno da servire."""
+        self.carica()
+        risposta = self.client.get(reverse("training:import-preview"))
+
+        self.assertEqual(risposta.status_code, 200)
+        self.assertEqual(Workout.objects.count(), 0)
+        self.assertEqual(WorkoutSet.objects.count(), 0)
+
+    def test_anteprima_conta_e_scarta(self):
+        self.carica()
+        contesto = self.client.get(reverse("training:import-preview")).context
+
+        self.assertEqual(contesto["valide_sessioni"], 2)
+        # Cinque righe lette, una sola scartata: quella eseguita senza
+        # ripetizioni. La serie senza peso NON è fra loro — è il corpo libero.
+        self.assertEqual(contesto["lettura"].lette_serie, 5)
+        self.assertEqual(len(contesto["lettura"].serie), 4)
+        self.assertEqual(len(contesto["lettura"].errori), 1)
+
+    def test_riga_in_errore_porta_il_numero_reale_del_csv(self):
+        """Il numero serve ad aprire il file e andarci: l'intestazione è la
+        riga 1, quindi la quarta riga di dati è la riga 5."""
+        self.carica()
+        contesto = self.client.get(reverse("training:import-preview")).context
+        errore = contesto["lettura"].errori[0]
+
+        self.assertEqual(errore.numero, 5)
+        self.assertEqual(errore.file, "session_sets.csv")
+        self.assertEqual(errore.colonna, "reps")
+        self.assertIn("ripetizioni", errore.motivo)
+
+    def test_durata_assurda_e_un_avviso_non_bloccante(self):
+        """Trenta secondi di allenamento sono assurdi ma non impossibili.
+        Correggerli sarebbe inventare un dato; scartarli, sullo storico reale,
+        perderebbe 2 sessioni su 15."""
+        self.carica()
+        contesto = self.client.get(reverse("training:import-preview")).context
+
+        self.assertEqual(len(contesto["lettura"].avvisi), 1)
+        self.assertEqual(contesto["valide_sessioni"], 2)
+
+    def test_il_nome_non_abbinabile_finisce_nel_form_e_non_blocca(self):
+        """`RDL` non assomiglia a «Stacco rumeno con bilanciere» e nessuna
+        normalizzazione lo risolverà mai: è una **scelta**, e la fa l'utente
+        (ADR-0010). Intanto le altre righe restano importabili."""
+        self.carica()
+        risposta = self.client.get(reverse("training:import-preview"))
+        formset = risposta.context["form"]
+
+        self.assertEqual(len(formset.forms), 1)
+        self.assertEqual(formset.forms[0].initial["raw_name"], "RDL")
+        # Panca piana e Trazioni si sono risolti da soli, per nome esatto.
+        self.assertEqual(len(risposta.context["risolti"]), 2)
+
+    def test_la_tendina_del_catalogo_si_legge_una_volta_sola(self):
+        """La guardia ereditata da #70, e protegge l'**invarianza**, non il
+        numero: aggiungere esercizi al catalogo non deve aggiungere query.
+        `ModelChoiceField` interroga il database ogni volta che il campo viene
+        reso, e qui le righe sono una per nome non abbinato."""
+        self.carica()
+        with CaptureQueriesContext(connection) as prima:
+            self.client.get(reverse("training:import-preview"))
+
+        for numero in range(30):
+            Exercise.objects.create(
+                name=f"Esercizio {numero}", slug=f"esercizio-{numero}",
+                primary_muscle=self.panca.primary_muscle,
+                equipment=self.panca.equipment,
+            )
+
+        with CaptureQueriesContext(connection) as dopo:
+            self.client.get(reverse("training:import-preview"))
+
+        self.assertEqual(len(dopo), len(prima))
+
+    # -------------------------------------------------------------- la conferma
+
+    def test_import_completo(self):
+        self.carica()
+        self.client.get(reverse("training:import-preview"))
+        risposta = self.conferma([("RDL", self.stacco)])
+
+        self.assertRedirects(risposta, reverse("training:import-result"))
+        self.assertEqual(Workout.objects.count(), 2)
+        self.assertEqual(WorkoutSet.objects.count(), 4)
+
+    def test_accettare_il_suggerimento_cosi_com_e_importa_lo_stesso(self):
+        """LA GUARDIA SU UN NO MUTO, e l'ha trovato lo storico reale.
+
+        Il gesto più normale su quella pagina è **accettare il suggerimento**:
+        la `<select>` arriva già selezionata, si guarda, si conferma. Ma quella
+        riga resta allora identica ai propri valori iniziali, e Django tratta
+        le righe senza istanza come righe `extra`, cioè con
+        `empty_permitted=True`: riga non cambiata, `cleaned_data` vuoto,
+        abbinamento perso. Il formset resta valido, la pagina rimanda
+        all'esito, e le serie di quel nome semplicemente non entrano — con
+        nessuno a dirlo. È la famiglia di guasti di #69, #71 e #72.
+
+        Il test copre il caso in cui il POST **coincide** col suggerimento, che
+        è l'unico in cui il bug si manifesta: un abbinamento corretto a mano
+        cambia la riga e passa comunque.
+        """
+        # `Trazioni` è nel catalogo, quindi si risolve da solo: serve un nome
+        # che il suggeritore indovini. `Panca Piana` con la P maiuscola no —
+        # quello lo prende il confronto esatto — ma `Panca piena` sì.
+        serie = (
+            "id,session_id,exercise_name,set_number,reps,weight,set_type,is_completed\n"
+            "aaaaaaaa-0001-4000-8000-000000000000,"
+            "11111111-1111-4111-8111-111111111111,Panca piena,1,8,60,working,true\n"
+        )
+        self.carica(serie=serie)
+        formset = self.client.get(reverse("training:import-preview")).context["form"]
+
+        suggerito = formset.forms[0].initial["exercise"]
+        self.assertEqual(suggerito, self.panca, "il suggeritore non ha proposto nulla")
+
+        # Si conferma esattamente ciò che la pagina proponeva.
+        self.conferma([("Panca piena", suggerito)])
+
+        self.assertEqual(WorkoutSet.objects.count(), 1)
+        self.assertEqual(WorkoutSet.objects.get().exercise, self.panca)
+
+    def test_il_user_id_del_csv_si_ignora(self):
+        """L'unica fonte dell'identità è `request.user`. Il file porta il
+        `user_id` di un altro sistema — qui, di proposito, quello di un altro
+        utente registrato — e non gli si dà nessuna autorità: nessun import per
+        conto di altri, nemmeno da admin."""
+        self.carica()
+        self.client.get(reverse("training:import-preview"))
+        self.conferma([("RDL", self.stacco)])
+
+        self.assertEqual(Workout.objects.filter(user=self.user).count(), 2)
+        self.assertEqual(Workout.objects.filter(user=self.altro).count(), 0)
+
+    def test_la_serie_non_eseguita_entra_vuota(self):
+        """61 righe su 317 nello storico reale. Entrano, ed è la differenza fra
+        «non l'ho fatta» e «non l'avevo prevista»."""
+        self.carica()
+        self.client.get(reverse("training:import-preview"))
+        self.conferma([("RDL", self.stacco)])
+
+        serie = WorkoutSet.objects.get(exercise=self.panca, set_number=2)
+        self.assertFalse(serie.is_completed)
+        self.assertIsNone(serie.reps)
+        self.assertIsNone(serie.weight)
+
+    def test_la_serie_a_corpo_libero_entra_senza_peso(self):
+        """25 righe nello storico reale, e sono trazioni e leg raises. Un
+        import che pretende `weight` non nullo su una serie completata
+        rifiuterebbe dati legittimi: è la trappola misurata in #13."""
+        self.carica()
+        self.client.get(reverse("training:import-preview"))
+        self.conferma([("RDL", self.stacco)])
+
+        serie = WorkoutSet.objects.get(exercise=self.trazioni)
+        self.assertTrue(serie.is_completed)
+        self.assertEqual(serie.reps, 10)
+        self.assertIsNone(serie.weight)
+
+    def test_la_scheda_non_si_importa_e_il_titolo_sopravvive(self):
+        """`routine_id` non punta a niente, avendo escluso le schede: resta il
+        solo `title`, che è un'istantanea e non un riferimento. È esattamente
+        il caso che ADR-0002 descrive."""
+        self.carica()
+        self.client.get(reverse("training:import-preview"))
+        self.conferma([("RDL", self.stacco)])
+
+        allenamento = Workout.objects.get(title="Spinta A")
+        self.assertIsNone(allenamento.routine)
+
+    def test_labbinamento_si_ricorda(self):
+        """Metà del valore di ADR-0010: la scelta si fa una volta. L'altra metà
+        è che a farla sia un umano."""
+        self.carica()
+        self.client.get(reverse("training:import-preview"))
+        self.conferma([("RDL", self.stacco)])
+
+        alias = ExerciseAlias.objects.get(user=self.user, raw_name="RDL")
+        self.assertEqual(alias.exercise, self.stacco)
+
+        # Secondo import dello stesso file: `RDL` non si chiede più.
+        self.carica()
+        formset = self.client.get(reverse("training:import-preview")).context["form"]
+        self.assertEqual(len(formset.forms), 0)
+
+    def test_lo_stesso_file_due_volte_non_duplica(self):
+        """L'idempotenza di `external_id`, e il motivo per cui quei due campi
+        esistono. Il ticket #74 la verifica anche dal lato export."""
+        self.carica()
+        self.client.get(reverse("training:import-preview"))
+        self.conferma([("RDL", self.stacco)])
+        allenamenti, serie = Workout.objects.count(), WorkoutSet.objects.count()
+
+        self.carica()
+        self.client.get(reverse("training:import-preview"))
+        self.conferma([])
+
+        self.assertEqual(Workout.objects.count(), allenamenti)
+        self.assertEqual(WorkoutSet.objects.count(), serie)
+
+    def test_lesito_si_consuma(self):
+        """Ricaricare la pagina d'esito non ripete l'import: la scrittura è
+        avvenuta nel POST dell'anteprima, e questa è una GET dopo una
+        redirect. È il motivo pratico dei tre URL."""
+        self.carica()
+        self.client.get(reverse("training:import-preview"))
+        self.conferma([("RDL", self.stacco)])
+
+        primo = self.client.get(reverse("training:import-result"))
+        self.assertEqual(primo.context["esito"]["allenamenti"], 2)
+
+        secondo = self.client.get(reverse("training:import-result"))
+        self.assertIsNone(secondo.context["esito"])
+        self.assertEqual(Workout.objects.count(), 2)
+
+    # ------------------------------------------------------------ i due canali
+
+    def test_il_dizionario_degli_esercizi_traduce_ma_non_crea(self):
+        """`exercises.csv` è accettato **come dizionario** `id → nome`, ed è
+        ciò che rende leggibile l'export di Overload, dove le serie portano un
+        UUID al posto del nome. Nessun `Exercise` nasce da qui: il catalogo è
+        globale e chiuso (ADR-0001)."""
+        serie = (
+            "id,session_id,exercise_id,set_number,reps,weight,set_type,is_completed\n"
+            "aaaaaaaa-0001-4000-8000-000000000000,"
+            "11111111-1111-4111-8111-111111111111,ext-1,1,8,60,working,true\n"
+        )
+        esercizi = "id,name\next-1,Panca piana\n"
+        catalogo = Exercise.objects.count()
+
+        self.carica(serie=serie, esercizi=esercizi)
+        contesto = self.client.get(reverse("training:import-preview")).context
+
+        self.assertEqual(len(contesto["lettura"].serie), 1)
+        self.assertEqual(contesto["lettura"].serie[0].raw_name, "Panca piana")
+        self.assertEqual(Exercise.objects.count(), catalogo)
+
+    def test_un_file_senza_le_colonne_torna_allupload(self):
+        """Colonne mancanti non sono un errore di riga da elencare nel report:
+        non c'è nessuna riga da leggere. La risposta giusta è rimandare al
+        primo passo dicendo cosa manca, non un'anteprima vuota."""
+        risposta = self.client.post(
+            reverse("training:import-upload"),
+            self.files(sessioni="titolo,quando\nSpinta A,ieri\n"),
+            follow=True,
+        )
+
+        self.assertRedirects(risposta, reverse("training:import-upload"))
+        self.assertContains(risposta, "mancano le colonne")
+
+    def test_il_form_rifiuta_ciò_che_non_e_un_csv(self):
+        risposta = self.client.post(
+            reverse("training:import-upload"),
+            {
+                "sessioni": SimpleUploadedFile(
+                    "storico.txt", b"id,title\n", content_type="text/plain"
+                ),
+                "serie": SimpleUploadedFile(
+                    "session_sets.csv", self.SERIE.encode("utf-8")
+                ),
+            },
+        )
+
+        self.assertEqual(risposta.status_code, 200)
+        self.assertIn("sessioni", risposta.context["form"].errors)
+
+    def test_le_tre_pagine_vogliono_il_login(self):
+        self.client.logout()
+        for nome in ("import-upload", "import-preview", "import-result"):
+            with self.subTest(rotta=nome):
+                risposta = self.client.get(reverse(f"training:{nome}"))
+                self.assertEqual(risposta.status_code, 302)
+                self.assertIn("/accounts/login/", risposta["Location"])

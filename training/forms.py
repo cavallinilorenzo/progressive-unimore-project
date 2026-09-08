@@ -12,6 +12,7 @@ from django import forms
 from django.contrib.auth.forms import UserCreationForm
 from django.utils.functional import cached_property
 
+from training import importer
 from training.models import (
     Exercise,
     Routine,
@@ -581,3 +582,158 @@ class VoteForm(forms.ModelForm):
             )
 
         return cleaned
+
+
+class CsvField(forms.FileField):
+    """Un file CSV, con le due sole difese che il form può davvero fare.
+
+    **Estensione e dimensione**, e nient'altro: il contenuto lo giudica il
+    parser, che è l'unico che sa cosa cerca. Un controllo sul `content_type`
+    sarebbe teatro — lo dichiara il browser, e su un `.csv` dice
+    `text/csv`, `application/vnd.ms-excel` o `application/octet-stream` a
+    seconda di cosa è installato sulla macchina di chi carica.
+
+    I 5 MB sono ~25.000 serie contro le 317 dello storico reale: il limite non
+    è lì per l'uso normale, è lì perché il campo accetta un upload e un campo
+    che accetta un upload senza tetto è un modo di restare in piedi finché
+    qualcuno non prova.
+    """
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault(
+            "widget", forms.ClearableFileInput(attrs={"class": "form-control", "accept": ".csv"})
+        )
+        super().__init__(*args, **kwargs)
+
+    def clean(self, data, initial=None):
+        file = super().clean(data, initial)
+        if not file:
+            return file
+
+        if not file.name.lower().endswith(".csv"):
+            raise forms.ValidationError(
+                "Serve un file con estensione .csv: questo si chiama "
+                f"«{file.name}»."
+            )
+
+        if file.size > importer.LIMITE_BYTE:
+            limite = importer.LIMITE_BYTE // (1024 * 1024)
+            raise forms.ValidationError(
+                f"Il file supera i {limite} MB. Se lo storico è davvero così "
+                "grande, caricalo diviso per periodo."
+            )
+
+        return file
+
+
+class ImportUploadForm(forms.Form):
+    """`/import/` — i due file in **un solo POST**.
+
+    Due campi e non due passaggi: le serie senza le loro sessioni non si
+    possono nemmeno leggere (`session_id` non punterebbe a niente), quindi
+    caricarli separatamente vorrebbe dire tenere metà import in sospeso fra
+    due richieste per non guadagnare nulla.
+
+    Il terzo campo è **facoltativo ed è un dizionario**, non una sorgente:
+    l'export di Overload tiene i nomi degli esercizi in un file a parte e
+    mette solo l'`exercise_id` nelle serie. Senza quel file quei nomi
+    arriverebbero all'utente come UUID da abbinare a mano, che è un
+    abbinamento impossibile. Nessuna riga di `Exercise` nasce da qui: il
+    catalogo resta globale e chiuso (ADR-0001).
+    """
+
+    sessioni = CsvField(
+        label="workout_sessions.csv",
+        help_text="Gli allenamenti: una riga per sessione.",
+    )
+    serie = CsvField(
+        label="session_sets.csv",
+        help_text="Le serie: una riga per serie, legate alle sessioni da «session_id».",
+    )
+    esercizi = CsvField(
+        label="exercises.csv",
+        required=False,
+        help_text=(
+            "Facoltativo, e serve solo se le serie portano un «exercise_id» "
+            "invece del nome — è il caso dell'export di Overload. Si usa come "
+            "elenco di nomi: nessun esercizio viene creato."
+        ),
+    )
+
+
+class AbbinamentoForm(forms.Form):
+    """Una riga della tabella di abbinamento: un nome estraneo, un esercizio.
+
+    Questa è la riga in cui l'import **chiede** invece di informare, ed è tutto
+    ADR-0010 in un form: l'abbinamento non è un problema di stringhe, è una
+    scelta, e la fa l'utente. Il suggerimento arriva già selezionato e può
+    essere sbagliato senza danno — c'è un umano che lo guarda.
+
+    `raw_name` è nascosto perché non è modificabile: è ciò che c'è scritto nel
+    file. È in pagina come `hidden` e non tenuto in sessione perché il formset
+    deve poter ricostruire la coppia da solo, anche se fra i due POST l'utente
+    ha ricaricato la pagina.
+    """
+
+    raw_name = forms.CharField(widget=forms.HiddenInput)
+    exercise = forms.ModelChoiceField(
+        queryset=Exercise.objects.all(),
+        label="Esercizio del catalogo",
+        empty_label="— scegli un esercizio —",
+        widget=forms.Select(attrs={"class": "form-select"}),
+    )
+
+
+class BaseAbbinamentoFormSet(forms.BaseFormSet):
+    """Il catalogo si legge **una volta per pagina**, non una per riga.
+
+    È la guardia che #70 ha lasciato in eredità: `ModelChoiceField` costruisce
+    le sue opzioni con un iteratore che interroga il database ogni volta che il
+    campo viene reso, e qui le righe sono ventiquattro sullo storico reale —
+    una `<select>` da cento opzioni per ciascuna. Valorizzare `choices` con una
+    lista già pronta sostituisce l'iteratore; la validazione non cambia, perché
+    `to_python` risolve comunque sul `queryset` del form.
+    """
+
+    def get_form_kwargs(self, index):
+        """`empty_permitted=False` su **ogni** riga, e senza questa riga
+        l'import perde in silenzio gli abbinamenti accettati così com'erano.
+
+        Il meccanismo: le righe di questo formset non hanno un'istanza, quindi
+        Django le tratta tutte come righe `extra` e concede loro
+        `empty_permitted=True`, che significa «se non è cambiata rispetto ai
+        valori iniziali, `cleaned_data` resta vuoto». Ma qui i valori iniziali
+        sono **il suggerimento**, e accettare il suggerimento — cioè il gesto
+        più normale che l'utente possa fare su questa pagina — lascia la riga
+        identica a com'è nata. Risultato: il formset è valido, la pagina
+        rimanda all'esito, e quelle serie non entrano perché il loro nome non
+        risulta abbinato a niente.
+
+        È di nuovo la famiglia di guasti di #69, #71 e #72: un no muto, con la
+        pagina che continua a rendere. Qui una riga vuota non è mai legittima —
+        ogni riga è una domanda a cui bisogna rispondere — quindi il permesso
+        si toglie a tutte.
+        """
+        kwargs = super().get_form_kwargs(index)
+        kwargs["empty_permitted"] = False
+        return kwargs
+
+    def add_fields(self, form, index):
+        super().add_fields(form, index)
+        form.fields["exercise"].choices = self.scelte_esercizio
+
+    @cached_property
+    def scelte_esercizio(self):
+        esercizi = Exercise.objects.select_related("equipment", "primary_muscle")
+        return [("", "— scegli un esercizio —")] + [
+            (esercizio.pk, str(esercizio)) for esercizio in esercizi
+        ]
+
+
+#: `extra=0` e `can_delete=False`: le righe sono esattamente i nomi che il file
+#: porta e che non si sono risolti da soli. Non se ne aggiungono e non se ne
+#: tolgono — toglierne una vorrebbe dire scartare delle serie, e per farlo
+#: basta non importare quel file.
+AbbinamentoFormSet = forms.formset_factory(
+    AbbinamentoForm, formset=BaseAbbinamentoFormSet, extra=0, can_delete=False
+)
