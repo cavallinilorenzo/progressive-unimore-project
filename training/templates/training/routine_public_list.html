@@ -41,7 +41,7 @@ ordinerà per media bayesiana e non per questa.
       <div class="mt-2" style="color:var(--t2);font-size:.88rem">
         di <span class="fw-bold">{{ routine.user.get_username }}</span>
         &middot; {{ routine.voti }} vot{{ routine.voti|pluralize:"o,i" }}
-        {% if routine.user.is_synthetic %}<span class="eyebrow" style="color:var(--t3)"> &middot; utente generato</span>{% endif %}
+        {% if routine.user.is_synthetic %}&middot; {% include "training/_utente_dimostrativo.html" with utente=routine.user %}{% endif %}
       </div>
 
       {% if routine.notes %}

@@ -162,10 +162,21 @@ equivalente ne peserebbe molti di più in un repo d'esame che il prof deve clona
 Il seed è `20260907` e l'esecuzione è **verificata identica** fra due esecuzioni
 consecutive: è quello a tenere fermi i numeri fra oggi e l'orale.
 
-Il prototipo di oggi **non è** ancora quel comando. Il progetto Django non esiste (non c'è
-`manage.py`), quindi genera su CSV; la sessione di costruzione riscrive la stessa logica
-dentro `training/management/commands/`, dove scriverà nei modelli con `bulk_create`
-invece che su file.
+Il prototipo **non è** quel comando: è stato scritto quando il progetto Django non
+esisteva (non c'era `manage.py`), quindi genera su CSV. Il comando esiste da
+[#75](https://github.com/cavallinilorenzo/progetto-django-uni/issues/75), sta in
+`training/management/commands/seed_synthetic.py` e scrive nei modelli con `bulk_create`.
+Il prototipo resta nel repo come sorgente del ragionamento e del rapporto qui sopra.
+
+Il porting ha una proprietà che vale la pena dichiarare: il comando produce **la stessa
+popolazione**, non una equivalente. Consuma il generatore casuale nello stesso ordine del
+prototipo, ed è stato verificato riga per riga contro i suoi CSV su tutte e sei le
+tabelle — 299.367 serie comprese. È da lì che discende il fatto che le misure di questo
+documento restino valide senza essere ri-misurate a ogni seeding: in particolare le due
+sullo stallo, che sono proprietà della **regola di etichettatura** applicata a questa
+popolazione, e riscriverle nel comando significherebbe tenerne una seconda copia dentro
+il seeding. A tenerle ferme sono i conteggi esatti, che i test di `training/tests.py`
+proteggono.
 
 ## Volume prodotto
 
@@ -175,7 +186,7 @@ invece che su file.
 | allenamenti | 11.916 |
 | serie | 299.367 |
 | schede (di cui pubbliche) | 187 (55) |
-| voti | 438 |
+| voti | 728 |
 
 I voti hanno distribuzione **a coda lunga con un livello di fondo**: la scheda più votata
 ne ha 43, la **mediana è 10**, dieci schede pubbliche ne hanno zero. La mediana non è

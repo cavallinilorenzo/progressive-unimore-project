@@ -1,0 +1,17 @@
+{% comment %}
+L'etichetta che ADR-0009 chiede accanto al nome di un utente sintetico.
+
+Si include dovunque il nome di un utente compaia insieme a quello degli altri —
+community, e in fase 2 classifiche e percentile — passando l'utente:
+
+    {% include "training/_utente_dimostrativo.html" with utente=routine.user %}
+
+Sta in un partial e non copiata tre volte perché la formula è una decisione, non
+una scelta grafica: cento profili inventati attorno all'unico utente vero sono
+esattamente la cosa che un esaminatore nota, e la risposta buona è che c'era già
+scritto. Se la formula cambia, deve cambiare in un posto solo.
+
+Il prefisso `_` la tiene fuori dalla guardia sull'ereditarietà di `base.html`:
+un partial non estende niente per definizione.
+{% endcomment %}
+{% if utente.is_synthetic %}<span class="eyebrow" style="color:var(--t3)">utente dimostrativo</span>{% endif %}
