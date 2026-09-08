@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% comment %}
+La dashboard in fase 1 è un GUSCIO, ed è una scelta della mappa #53 (regola 5).
+La spec elenca 13 passi e nessuno è «dashboard», perché le sei analisi che la
+riempiono sono fase 2 — ma `/` è una delle cinque voci dell'header, quindi la
+pagina entra ora, vuota e onesta, e si riempie dopo.
+
+Il markup è quello della variante A del prototipo #19 (`dashboard_a.html`):
+la gerarchia è il numero, la riga di cifre hero apre la pagina e il resto la
+spiega. Qui le cifre non ci sono ancora, e i riquadri lo dicono invece di
+mostrare uno zero che sembrerebbe un dato.
+{% endcomment %}
+
+{% block title %}Dashboard — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-baseline justify-content-between mb-4">
+  <div>
+    <div class="eyebrow">Settimana corrente</div>
+    <h1 class="h4 fw-bold mb-0">
+      {% if user.is_authenticated %}Ciao, {{ user.get_username }}{% else %}Progressive{% endif %}
+    </h1>
+  </div>
+  <div class="eyebrow">{{ oggi|date:"j F Y" }}</div>
+</div>
+
+{# La riga di cifre hero: i quattro riquadri della variante A, ancora spenti. #}
+<div class="row g-3 mb-4">
+  <div class="col-6 col-lg-3">
+    <div class="card-ink p-3 h-100">
+      <div class="eyebrow mb-2">Volume settimanale</div>
+      <div class="hero-num" style="color:var(--t3)">&mdash;</div>
+      <div class="mt-2" style="color:var(--t3);font-size:.82rem">Analisi in arrivo</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card-ink p-3 h-100">
+      <div class="eyebrow mb-2">Allenamenti</div>
+      <div class="hero-num" style="color:var(--t3)">&mdash;</div>
+      <div class="mt-2" style="color:var(--t3);font-size:.82rem">Analisi in arrivo</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card-ink p-3 h-100">
+      <div class="eyebrow mb-2">Costanza</div>
+      <div class="hero-num" style="color:var(--t3)">&mdash;</div>
+      <div class="mt-2" style="color:var(--t3);font-size:.82rem">Analisi in arrivo</div>
+    </div>
+  </div>
+  <div class="col-6 col-lg-3">
+    <div class="card-ink p-3 h-100">
+      <div class="eyebrow mb-2">Record del mese</div>
+      <div class="hero-num" style="color:var(--t3)">&mdash;</div>
+      <div class="mt-2" style="color:var(--t3);font-size:.82rem">Analisi in arrivo</div>
+    </div>
+  </div>
+</div>
+
+{# Il coach come avviso sul rail volt, non come pannello: avvisa, non è il prodotto. #}
+<div class="card-ink p-3 mb-4">
+  <div class="rail">
+    <div class="eyebrow mb-1" style="color:var(--volt)">Il coach dice</div>
+    <div class="fw-bold">Non c'è ancora niente da dire.</div>
+    <div style="color:var(--t2);font-size:.88rem">
+      Il rilevatore di stallo e il consiglio di carico arrivano con il motore
+      analitico. Intanto registra gli allenamenti: sono loro il dato.
+    </div>
+  </div>
+</div>
+
+<div class="card-ink p-4 text-center">
+  <div class="eyebrow mb-2">Da qui si comincia</div>
+  <p style="color:var(--t2);max-width:38rem;margin:0 auto">
+    Progressive è un registro degli allenamenti che misura la progressione del
+    carico. Crea una scheda, registrala mentre ti alleni, e la dashboard inizia
+    a rispondere.
+  </p>
+</div>
+
+{% endblock %}

@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% comment %}
+Come la 404, estende il guscio. Attenzione a una differenza: Django rende la
+500 *senza* request e senza context processor, quindi qui dentro non si può
+contare su `request` né su `user` — il guscio li tratta come vuoti e degrada
+senza rompersi, ed è il motivo per cui il test rende anche questa pagina.
+{% endcomment %}
+
+{% block title %}Errore del server — Progressive{% endblock %}
+
+{% block content %}
+<div class="text-center py-5">
+  <div class="codice-errore">500</div>
+  <div class="eyebrow mt-3">Errore del server</div>
+  <p style="color:var(--t2)" class="mt-2">Qualcosa si è rotto da questa parte. Riprova fra poco.</p>
+  <a href="{% url 'training:dashboard' %}" class="btn btn-volt btn-sm px-3 mt-2">Torna alla dashboard</a>
+</div>
+{% endblock %}

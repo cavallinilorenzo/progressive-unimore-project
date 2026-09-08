@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% comment %}
+Le pagine d'errore estendono `base.html` come tutte le altre. Sono la
+scorciatoia più facile per violare il requisito «tutte le pagine estendono
+base.html»: Django le serve da sole, nessuno le guarda, e un `<h1>` nudo qui
+dentro passerebbe inosservato fino all'orale. Il test le scandisce.
+{% endcomment %}
+
+{% block title %}Pagina non trovata — Progressive{% endblock %}
+
+{% block content %}
+<div class="text-center py-5">
+  <div class="codice-errore">404</div>
+  <div class="eyebrow mt-3">Pagina non trovata</div>
+  <p style="color:var(--t2)" class="mt-2">Questo indirizzo non porta da nessuna parte.</p>
+  <a href="{% url 'training:dashboard' %}" class="btn btn-volt btn-sm px-3 mt-2">Torna alla dashboard</a>
+</div>
+{% endblock %}
