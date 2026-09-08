@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% comment %}
+Il catalogo, e il requisito «select/view GROUPED objects» della traccia: gli
+esercizi non escono in lista piatta ma raggruppati per gruppo muscolare, con
+tre filtri — gruppo, muscolo, attrezzo — che restringono in AND.
+
+Il form dei filtri è un GET, non un POST: filtrare è una lettura, e l'URL che
+ne esce (`/esercizi/?gruppo=petto&attrezzo=bilanciere`) si può salvare e
+mostrare. Niente JavaScript: il bottone «Filtra» è la conferma, e le tendine
+sono `<select>` nativi.
+
+Sola lettura per scelta (ADR-0001), e la pagina lo dichiara invece di lasciarlo
+sembrare un CRUD dimenticato: vedi `training.views.ExerciseListView`.
+{% endcomment %}
+
+{% block title %}Esercizi — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-baseline justify-content-between mb-4">
+  <div>
+    <div class="eyebrow">Catalogo</div>
+    <h1 class="h4 fw-bold mb-0">Esercizi</h1>
+  </div>
+  <div class="eyebrow">{{ esercizi|length }} esercizi</div>
+</div>
+
+<form method="get" class="card-ink p-3 mb-4">
+  <div class="row g-2 align-items-end">
+    <div class="col-12 col-md-3">
+      <label for="filtro-gruppo" class="eyebrow d-block mb-1">Gruppo</label>
+      <select name="gruppo" id="filtro-gruppo" class="form-select form-select-sm">
+        <option value="">Tutti</option>
+        {% for g in gruppi %}
+        <option value="{{ g.code }}" {% if g.code == gruppo_scelto %}selected{% endif %}>{{ g.label_it }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 col-md-3">
+      {% comment %}
+      Se un gruppo è scelto, questa tendina porta solo i suoi muscoli: la view
+      la restringe, così non si può comporre un filtro che non rende mai una
+      riga.
+      {% endcomment %}
+      <label for="filtro-muscolo" class="eyebrow d-block mb-1">Muscolo</label>
+      <select name="muscolo" id="filtro-muscolo" class="form-select form-select-sm">
+        <option value="">Tutti</option>
+        {% for m in muscoli %}
+        <option value="{{ m.code }}" {% if m.code == muscolo_scelto %}selected{% endif %}>{{ m.label_it }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 col-md-3">
+      <label for="filtro-attrezzo" class="eyebrow d-block mb-1">Attrezzo</label>
+      <select name="attrezzo" id="filtro-attrezzo" class="form-select form-select-sm">
+        <option value="">Tutti</option>
+        {% for a in attrezzi %}
+        <option value="{{ a.code }}" {% if a.code == attrezzo_scelto %}selected{% endif %}>{{ a.label_it }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="col-12 col-md-3 d-flex gap-2">
+      <button type="submit" class="btn btn-volt btn-sm px-3">Filtra</button>
+      {% if filtro_attivo %}
+      <a href="{% url 'training:exercise-list' %}" class="btn btn-sm px-3" style="color:var(--t2)">Azzera</a>
+      {% endif %}
+    </div>
+  </div>
+</form>
+
+{% comment %}
+`regroup` è ciò che rende la pagina «grouped»: il queryset arriva ordinato per
+`group__sort_order` dalla view, che è la condizione perché regroup non spezzi
+lo stesso gruppo in due blocchi.
+{% endcomment %}
+{% regroup esercizi by primary_muscle.group as gruppi_di_esercizi %}
+
+{% for blocco in gruppi_di_esercizi %}
+<div class="card-ink p-3 mb-3">
+  <div class="eyebrow mb-2" style="color:var(--volt)">{{ blocco.grouper.label_it }}</div>
+  <table class="table table-sm align-middle mb-0">
+    <thead>
+      <tr class="eyebrow">
+        <th scope="col">Esercizio</th>
+        <th scope="col">Muscolo</th>
+        <th scope="col">Attrezzo</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for esercizio in blocco.list %}
+      <tr>
+        <th scope="row" class="fw-normal">
+          <a href="{% url 'training:exercise-detail' esercizio.slug %}" style="color:var(--volt)">{{ esercizio.name }}</a>
+        </th>
+        <td style="color:var(--t2)">{{ esercizio.primary_muscle.label_it }}</td>
+        <td style="color:var(--t2)">{{ esercizio.equipment.label_it }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% empty %}
+<div class="card-ink p-4 text-center">
+  <div class="eyebrow mb-2">Nessun esercizio</div>
+  <p style="color:var(--t2);margin:0">
+    Nessun esercizio del catalogo risponde a questi filtri.
+    <a href="{% url 'training:exercise-list' %}" style="color:var(--volt)">Azzerali</a> per rivederli tutti.
+  </p>
+</div>
+{% endfor %}
+
+{# La sola lettura si dichiara qui, dove all'orale nasce la domanda. #}
+<div class="card-ink p-3 mt-4">
+  <div class="rail">
+    <div class="eyebrow mb-1">Catalogo chiuso, per scelta</div>
+    <div style="color:var(--t2);font-size:.88rem">
+      Gli esercizi non si creano né si modificano: percentili e classifiche
+      confrontano persone diverse sullo <em>stesso</em> movimento, e un esercizio
+      inventato da un solo utente non avrebbe nessuno con cui confrontarsi.
+      Quello che si crea e si modifica sono le schede e gli allenamenti.
+    </div>
+  </div>
+</div>
+
+{% endblock %}

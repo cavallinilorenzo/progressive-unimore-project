@@ -43,4 +43,15 @@ urlpatterns = [
         views.RoutineExercisesView.as_view(),
         name="routine-exercises",
     ),
+    # Esercizi — e qui l'avvertenza di sopra si vede all'opera: `<slug:slug>`
+    # cattura anche «panca-piana», quindi nessuna rotta letterale può stargli
+    # sotto. Lo slug è generato una volta da `load_catalog`, non a runtime,
+    # perché l'URL di un esercizio dev'essere stabile e leggibile —
+    # `/esercizi/panca-piana/`, non `/esercizi/37/`.
+    path("esercizi/", views.ExerciseListView.as_view(), name="exercise-list"),
+    path(
+        "esercizi/<slug:slug>/",
+        views.ExerciseDetailView.as_view(),
+        name="exercise-detail",
+    ),
 ]

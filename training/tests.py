@@ -24,6 +24,7 @@ from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
+from training import views
 from training.models import (
     Equipment,
     Exercise,
@@ -844,3 +845,308 @@ class TemplateCommentTests(TestCase):
             "Commento `{# … #}` su più righe: usa il tag `comment`. "
             + ", ".join(trovati),
         )
+
+
+# --- Il catalogo esercizi (#71) --------------------------------------------
+#
+# La lista è ciò che paga il requisito «select/view **grouped** objects», e i
+# test lo prendono alla lettera: non basta che la pagina renda, deve
+# raggruppare e deve filtrare sui tre assi. Il dettaglio in fase 1 è un guscio,
+# e ciò che va protetto è che apra dallo slug e che lo storico sia *dell'utente
+# che guarda*.
+
+
+class ExerciseListTests(TestCase):
+    """`/esercizi/`: raggruppa, filtra sui tre assi, e non si modifica."""
+
+    @classmethod
+    def setUpTestData(cls):
+        # Due gruppi, tre muscoli, due attrezzi: il minimo che rende
+        # distinguibili i tre filtri e il raggruppamento.
+        petto = MuscleGroup.objects.create(code="chest", label_it="Petto", sort_order=1)
+        gambe = MuscleGroup.objects.create(code="legs", label_it="Gambe", sort_order=2)
+        petto_medio = Muscle.objects.create(
+            code="chestMid", group=petto, label_it="Petto medio", sort_order=1
+        )
+        petto_alto = Muscle.objects.create(
+            code="chestUpper", group=petto, label_it="Petto alto", sort_order=2
+        )
+        quadricipiti = Muscle.objects.create(
+            code="quads", group=gambe, label_it="Quadricipiti", sort_order=3
+        )
+        bilanciere = Equipment.objects.create(
+            code="barbell", label_it="Bilanciere", sort_order=1
+        )
+        corpo_libero = Equipment.objects.create(
+            code="bodyweight",
+            label_it="Corpo libero",
+            load_increment_kg=Decimal("0"),
+            sort_order=2,
+        )
+        cls.panca = Exercise.objects.create(
+            name="Panca piana",
+            slug="panca-piana",
+            primary_muscle=petto_medio,
+            equipment=bilanciere,
+        )
+        cls.inclinata = Exercise.objects.create(
+            name="Panca inclinata",
+            slug="panca-inclinata",
+            primary_muscle=petto_alto,
+            equipment=bilanciere,
+        )
+        cls.piegamenti = Exercise.objects.create(
+            name="Piegamenti",
+            slug="piegamenti",
+            primary_muscle=petto_medio,
+            equipment=corpo_libero,
+        )
+        cls.squat = Exercise.objects.create(
+            name="Squat",
+            slug="squat",
+            primary_muscle=quadricipiti,
+            equipment=bilanciere,
+        )
+
+    def setUp(self):
+        self.client.force_login(
+            User.objects.create_user(username="lorenzo", password=PASSWORD)
+        )
+
+    def nomi(self, response):
+        """I nomi degli esercizi che la pagina ha davvero selezionato."""
+        return sorted(e.name for e in response.context["esercizi"])
+
+    def test_the_catalogue_is_grouped_by_muscle_group(self):
+        """Il requisito «grouped objects»: non una lista piatta, blocchi.
+
+        Il raggruppamento passa da `regroup`, che spezza in due blocchi lo
+        stesso gruppo se il queryset non arriva ordinato: il test guarda
+        l'ordine del queryset, che è la condizione, non solo l'HTML.
+        """
+        response = self.client.get(reverse("training:exercise-list"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "training/exercise_list.html")
+        self.assertTemplateUsed(response, BASE_TEMPLATE)
+
+        gruppi = [e.primary_muscle.group.label_it for e in response.context["esercizi"]]
+        self.assertEqual(gruppi, ["Petto", "Petto", "Petto", "Gambe"])
+
+        body = response.content.decode()
+        self.assertIn("Petto</div>", body)
+        self.assertIn("Gambe</div>", body)
+
+    def test_the_group_filter_narrows_the_catalogue(self):
+        response = self.client.get(
+            reverse("training:exercise-list"), {"gruppo": "legs"}
+        )
+
+        self.assertEqual(self.nomi(response), ["Squat"])
+
+    def test_the_muscle_filter_narrows_the_catalogue(self):
+        response = self.client.get(
+            reverse("training:exercise-list"), {"muscolo": "chestMid"}
+        )
+
+        self.assertEqual(self.nomi(response), ["Panca piana", "Piegamenti"])
+
+    def test_the_equipment_filter_narrows_the_catalogue(self):
+        response = self.client.get(
+            reverse("training:exercise-list"), {"attrezzo": "bodyweight"}
+        )
+
+        self.assertEqual(self.nomi(response), ["Piegamenti"])
+
+    def test_the_three_filters_combine_with_and(self):
+        """Combinati restringono, non sommano: è un AND, non un OR."""
+        response = self.client.get(
+            reverse("training:exercise-list"),
+            {"gruppo": "chest", "muscolo": "chestMid", "attrezzo": "barbell"},
+        )
+
+        self.assertEqual(self.nomi(response), ["Panca piana"])
+
+    def test_choosing_a_group_narrows_the_muscle_dropdown(self):
+        """Offrire «quadricipiti» sotto «petto» è offrire un filtro vuoto."""
+        response = self.client.get(
+            reverse("training:exercise-list"), {"gruppo": "chest"}
+        )
+
+        muscoli = sorted(m.code for m in response.context["muscoli"])
+        self.assertEqual(muscoli, ["chestMid", "chestUpper"])
+
+    def test_an_empty_result_says_so_instead_of_rendering_nothing(self):
+        response = self.client.get(
+            reverse("training:exercise-list"),
+            {"gruppo": "legs", "attrezzo": "bodyweight"},
+        )
+
+        self.assertEqual(self.nomi(response), [])
+        self.assertIn("Nessun esercizio", response.content.decode())
+
+    def test_the_catalogue_declares_that_it_is_read_only(self):
+        """ADR-0001: la sola lettura è una scelta, e va dichiarata all'orale.
+
+        Senza questa riga in pagina il catalogo si legge come un CRUD
+        dimenticato — che è esattamente l'equivoco che costerebbe voto.
+        """
+        response = self.client.get(reverse("training:exercise-list"))
+        body = response.content.decode()
+
+        self.assertIn("Catalogo chiuso, per scelta", body)
+        # E il catalogo non offre nessuna rotta di scrittura.
+        for verbo in ("nuovo", "modifica", "elimina"):
+            with self.subTest(verbo=verbo):
+                self.assertNotIn(f"/esercizi/{verbo}", body)
+
+
+class ExerciseDetailTests(TestCase):
+    """`/esercizi/<slug>/`: apre dallo slug, e lo storico è di chi guarda."""
+
+    @classmethod
+    def setUpTestData(cls):
+        gruppo = MuscleGroup.objects.create(
+            code="chest", label_it="Petto", sort_order=1
+        )
+        muscolo = Muscle.objects.create(
+            code="chestMid", group=gruppo, label_it="Petto medio", sort_order=1
+        )
+        attrezzo = Equipment.objects.create(
+            code="barbell", label_it="Bilanciere", sort_order=1
+        )
+        cls.panca = Exercise.objects.create(
+            name="Panca piana",
+            slug="panca-piana",
+            primary_muscle=muscolo,
+            equipment=attrezzo,
+        )
+        cls.squat = Exercise.objects.create(
+            name="Squat",
+            slug="squat",
+            primary_muscle=muscolo,
+            equipment=attrezzo,
+        )
+        cls.user = User.objects.create_user(username="lorenzo", password=PASSWORD)
+        cls.altra = User.objects.create_user(username="martina", password=PASSWORD)
+
+    def setUp(self):
+        self.client.force_login(self.user)
+
+    def serie(self, user, exercise, weight, giorni_fa=0):
+        workout = Workout.objects.create(
+            user=user,
+            title="Spinta A",
+            started_at=timezone.now() - timedelta(days=giorni_fa),
+        )
+        return WorkoutSet.objects.create(
+            workout=workout,
+            exercise=exercise,
+            set_number=1,
+            reps=5,
+            weight=Decimal(weight),
+        )
+
+    def test_the_page_opens_from_the_slug(self):
+        response = self.client.get(
+            reverse("training:exercise-detail", args=[self.panca.slug])
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "training/exercise_detail.html")
+        self.assertTemplateUsed(response, BASE_TEMPLATE)
+        self.assertEqual(response.context["esercizio"], self.panca)
+        body = response.content.decode()
+        self.assertIn("Panca piana", body)
+        self.assertIn("Petto medio", body)
+        self.assertIn("Bilanciere", body)
+
+    def test_an_unknown_slug_is_a_404(self):
+        response = self.client.get(
+            reverse("training:exercise-detail", args=["esercizio-inventato"])
+        )
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_the_list_links_to_the_detail_by_slug(self):
+        """I due URL sono una sezione sola: la lista deve aprirci il dettaglio."""
+        response = self.client.get(reverse("training:exercise-list"))
+
+        self.assertIn(
+            reverse("training:exercise-detail", args=[self.panca.slug]),
+            response.content.decode(),
+        )
+
+    def test_the_history_holds_only_my_sets_on_this_exercise(self):
+        """Due confini in uno: l'utente e l'esercizio.
+
+        Lo storico è la sola parte personale della pagina, e non è protetta da
+        un mixin — l'esercizio è del catalogo globale — ma dal filtro sul
+        queryset. Se quel filtro cade, un utente legge gli allenamenti di un
+        altro senza che niente lo segnali.
+        """
+        mia = self.serie(self.user, self.panca, "100.00")
+        self.serie(self.user, self.squat, "140.00")
+        self.serie(self.altra, self.panca, "60.00")
+
+        response = self.client.get(
+            reverse("training:exercise-detail", args=[self.panca.slug])
+        )
+
+        self.assertEqual(list(response.context["serie"]), [mia])
+        self.assertIn("100 kg", response.content.decode())
+
+    def test_the_history_keeps_the_most_recent_sessions_whole(self):
+        """Il taglio è per sessione, non per serie.
+
+        Un `[:N]` sulle serie taglierebbe a metà l'ultima sessione mostrata, e
+        una sessione monca si legge come una sessione fatta male.
+        """
+        limite = views.ExerciseDetailView.SESSIONI_RECENTI
+        for giorni in range(limite + 3):
+            self.serie(self.user, self.panca, "100.00", giorni_fa=giorni)
+
+        response = self.client.get(
+            reverse("training:exercise-detail", args=[self.panca.slug])
+        )
+
+        serie = list(response.context["serie"])
+        self.assertEqual(len(serie), limite)
+        # Le più recenti, e in ordine: la pagina racconta all'indietro.
+        date = [s.workout.started_at for s in serie]
+        self.assertEqual(date, sorted(date, reverse=True))
+
+    def test_an_empty_history_says_so(self):
+        response = self.client.get(
+            reverse("training:exercise-detail", args=[self.panca.slug])
+        )
+
+        self.assertEqual(list(response.context["serie"]), [])
+        self.assertIn("Non hai ancora registrato una serie", response.content.decode())
+
+    def test_the_shell_does_not_pretend_the_analyses_are_there(self):
+        """Fase 1 è un guscio, e la pagina lo dichiara.
+
+        `04-analisi.md` è fase 2: mostrare un massimale o un percentile
+        calcolati a metà sarebbe peggio che non mostrarli, perché all'orale
+        sembrerebbero l'analisi finita.
+        """
+        response = self.client.get(
+            reverse("training:exercise-detail", args=[self.panca.slug])
+        )
+
+        self.assertIn("Cosa arriva qui", response.content.decode())
+
+    def test_the_catalogue_is_private_like_the_rest(self):
+        """Le due rotte seguono il pattern di #68: niente login, niente pagina."""
+        self.client.logout()
+
+        for url in (
+            reverse("training:exercise-list"),
+            reverse("training:exercise-detail", args=[self.panca.slug]),
+        ):
+            with self.subTest(url=url):
+                response = self.client.get(url)
+
+                self.assertRedirects(response, f"{reverse('login')}?next={url}")
+

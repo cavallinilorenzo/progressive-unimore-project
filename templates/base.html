@@ -39,8 +39,8 @@ dentro la pagina del singolo esercizio, l'import nel menu utente.
 
 Le rotte entrano una alla volta con i ticket della mappa #53, e ognuno
 sostituisce il proprio `href` letterale con il tag `url` quando la sua sezione
-arriva. Schede è passata al tag `url` con #69; restano letterali Storico
-(#70), Esercizi (#71) e Classifiche (#76). Fino ad allora quei link portano a
+arriva. Schede è passata al tag `url` con #69, Esercizi con #71; restano
+letterali Storico (#70) e Classifiche (#76). Fino ad allora quei link portano a
 un 404, che è l'unica lettura onesta dello stato del progetto.
 {% endcomment %}
 <header class="nav-top sticky-top">
@@ -56,7 +56,7 @@ un 404, che è l'unica lettura onesta dello stato del progetto.
       <a href="{% url 'training:dashboard' %}" class="{% if request.path == '/' %}attivo{% endif %}">Dashboard</a>
       <a href="{% url 'training:routine-list' %}" class="{% if request.path|slice:':8' == '/schede/' %}attivo{% endif %}">Schede</a>
       <a href="/allenamenti/" class="{% if request.path|slice:':13' == '/allenamenti/' %}attivo{% endif %}">Storico</a>
-      <a href="/esercizi/" class="{% if request.path|slice:':10' == '/esercizi/' %}attivo{% endif %}">Esercizi</a>
+      <a href="{% url 'training:exercise-list' %}" class="{% if request.path|slice:':10' == '/esercizi/' %}attivo{% endif %}">Esercizi</a>
       <a href="/classifiche/" class="{% if request.path|slice:':13' == '/classifiche/' %}attivo{% endif %}">Classifiche</a>
     </nav>
     <div class="ms-auto d-flex align-items-center gap-3">
