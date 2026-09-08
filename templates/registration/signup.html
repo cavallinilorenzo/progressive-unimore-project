@@ -1,0 +1,61 @@
+{% extends "base.html" %}
+{% comment %}
+La registrazione, l'unica pagina di autenticazione con una view scritta da noi
+(`training.views.SignUpView`): `django.contrib.auth` porta login e logout ma
+non questa. Sta comunque in `templates/registration/` insieme alle sorelle,
+perché è lì che si va a cercarla.
+
+Stessa eccezione delle altre: `header` e `footer` svuotati, `base.html` esteso.
+{% endcomment %}
+
+{% block title %}Registrati — Progressive{% endblock %}
+
+{% block header %}{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center py-5">
+  <div class="col-12 col-sm-9 col-md-6 col-lg-4">
+
+    <div class="text-center mb-4">
+      <span class="wordmark">Progressive<span style="color:var(--volt)">.</span></span>
+      <div class="eyebrow mt-2">Registro degli allenamenti</div>
+    </div>
+
+    <div class="card-ink p-4">
+      <h1 class="h5 fw-bold mb-3">Crea il tuo account</h1>
+
+      <form method="post" novalidate>
+        {% csrf_token %}
+
+        {% for field in form %}
+        <div class="mb-3">
+          <label for="{{ field.id_for_label }}" class="eyebrow d-block mb-1">{{ field.label }}</label>
+          {{ field }}
+
+          {% if field.errors %}
+          <div class="mt-1" style="color:var(--red);font-size:.82rem">
+            {% for errore in field.errors %}<div>{{ errore }}</div>{% endfor %}
+          </div>
+          {% elif field.help_text %}
+          <div class="mt-1" style="color:var(--t3);font-size:.78rem">{{ field.help_text|safe }}</div>
+          {% endif %}
+        </div>
+        {% endfor %}
+
+        <button type="submit" class="btn btn-volt w-100 py-2 mt-2">Registrati</button>
+      </form>
+    </div>
+
+    {# Il peso corporeo non si chiede qui: è facoltativo (ADR-0008) e in un
+       form di registrazione sembrerebbe obbligatorio. Si dichiara subito
+       dopo, dal profilo, dove la pagina può dire a cosa serve. #}
+    <p class="text-center mt-3 mb-0" style="color:var(--t2);font-size:.88rem">
+      Hai già un account?
+      <a href="{% url 'login' %}" style="color:var(--volt)">Entra</a>
+    </p>
+
+  </div>
+</div>
+{% endblock %}
+
+{% block footer %}{% endblock %}

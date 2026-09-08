@@ -1,0 +1,116 @@
+{% extends "base.html" %}
+{% comment %}
+`/profilo/` — la pagina di un campo solo, e di una regola da dichiarare.
+
+`body_mass_kg` è facoltativo (ADR-0008) e senza di esso l'utente **non**
+compare in classifica e non riceve un percentile. Questa pagina lo dice
+apertamente, in due stati diversi: se il peso manca, l'invito a compilarlo con
+la conseguenza scritta; se c'è, il valore in cifra hero, perché è un numero e
+la gerarchia di Pulse è il numero.
+
+Il limite più largo — sul corpo libero il peso corporeo entra anche nel
+*numeratore*, quindi cambiarlo riscrive volume, massimali e PR all'indietro
+(ADR-0008 §«Il limite non si ferma alla forza relativa», ADR-0006) — sta in
+fondo, dichiarato. È una delle cose da portare all'orale.
+{% endcomment %}
+
+{% block title %}Profilo — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="row justify-content-center">
+  <div class="col-12 col-lg-8">
+
+    <div class="mb-4">
+      <div class="eyebrow">Profilo</div>
+      <h1 class="h4 fw-bold mb-0">{{ user.get_username }}</h1>
+    </div>
+
+    {% for messaggio in messages %}
+    <div class="card-ink p-3 mb-3">
+      <div class="rail">
+        <div class="eyebrow" style="color:var(--volt)">Salvato</div>
+        <div style="color:var(--t2);font-size:.9rem">{{ messaggio }}</div>
+      </div>
+    </div>
+    {% endfor %}
+
+    <div class="card-ink p-4 mb-3">
+      <div class="row g-4 align-items-center">
+
+        <div class="col-12 col-sm-5">
+          <div class="eyebrow mb-2">Peso corporeo</div>
+          {% if user.has_body_mass %}
+          <div class="hero-num">{{ user.body_mass_kg|floatformat:1 }}<span style="font-size:1.1rem;color:var(--t2)"> kg</span></div>
+          {% else %}
+          <div class="hero-num" style="color:var(--t3)">&mdash;</div>
+          {% endif %}
+        </div>
+
+        <div class="col-12 col-sm-7">
+          <form method="post" novalidate>
+            {% csrf_token %}
+
+            <label for="{{ form.body_mass_kg.id_for_label }}" class="eyebrow d-block mb-1">
+              Dichiara il tuo peso in kg
+            </label>
+            {{ form.body_mass_kg }}
+
+            {% if form.body_mass_kg.errors %}
+            <div class="mt-1" style="color:var(--red);font-size:.82rem">
+              {% for errore in form.body_mass_kg.errors %}<div>{{ errore }}</div>{% endfor %}
+            </div>
+            {% endif %}
+
+            <div class="mt-1" style="color:var(--t3);font-size:.78rem">
+              Un solo valore corrente, non uno storico. Lasciarlo vuoto è una
+              risposta valida.
+            </div>
+
+            <button type="submit" class="btn btn-volt px-4 py-2 mt-3">Salva</button>
+          </form>
+        </div>
+
+      </div>
+    </div>
+
+    {# La conseguenza, detta e non taciuta: è il punto del ticket #68. #}
+    <div class="card-ink p-3 mb-3">
+      <div class="rail">
+        {% if user.has_body_mass %}
+        <div class="eyebrow mb-1" style="color:var(--volt)">A cosa serve</div>
+        <div style="color:var(--t2);font-size:.9rem">
+          È il denominatore della <strong>forza relativa</strong> — massimale
+          diviso peso corporeo — il criterio con cui atleti di taglia diversa
+          diventano confrontabili. Alimenta il tuo percentile su ogni esercizio
+          e la tua riga nella classifica di forza.
+        </div>
+        {% else %}
+        <div class="eyebrow mb-1" style="color:var(--gold)">Manca il peso corporeo</div>
+        <div style="color:var(--t2);font-size:.9rem">
+          Finché non lo dichiari <strong>non compari in classifica</strong> e
+          <strong>non ricevi un percentile</strong>: la forza relativa è
+          massimale diviso peso corporeo, e senza denominatore non si calcola.
+          Preferiamo un valore assente a uno inventato.
+        </div>
+        {% endif %}
+      </div>
+    </div>
+
+    <details class="card-ink p-3">
+      <summary class="eyebrow" style="cursor:pointer;color:var(--t2)">
+        Un limite dichiarato
+      </summary>
+      <p class="mt-3 mb-0" style="color:var(--t3);font-size:.85rem">
+        Progressive conserva <em>un solo</em> peso corrente, non uno storico, e
+        lo applica anche ai massimali di mesi fa. Aggiornarlo riscrive quindi
+        all'indietro tutta la forza relativa — e sugli esercizi a corpo libero
+        anche volume, massimali e record, perché lì il peso corporeo è parte
+        del carico e non solo il divisore.
+      </p>
+    </details>
+
+  </div>
+</div>
+
+{% endblock %}

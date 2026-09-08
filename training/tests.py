@@ -331,7 +331,17 @@ class TemplateInheritanceTests(TestCase):
 
 
 class ShellTests(TestCase):
-    """Il guscio rende, e le pagine d'errore lo rendono anche loro."""
+    """Il guscio rende, e le pagine d'errore lo rendono anche loro.
+
+    La dashboard è dietro `LoginRequiredMixin` dal ticket #68 — è una pagina
+    personale — quindi qui si entra prima di guardarla. Che *senza* login
+    devii verso il login è invece un requisito, ed è testato in
+    `AuthenticationTests`.
+    """
+
+    def setUp(self):
+        user = User.objects.create_user(username="lorenzo", password="passphrase-1")
+        self.client.force_login(user)
 
     def test_dashboard_renders_the_shell(self):
         response = self.client.get(reverse("training:dashboard"))
@@ -365,3 +375,135 @@ class ShellTests(TestCase):
 
         self.assertIn("500", html)
         self.assertIn("Progressive", html)
+
+
+# --- Autenticazione e profilo (#68) ----------------------------------------
+#
+# Il giro completo — registrarsi, entrare, uscire — più le due regole che
+# questo ticket introduce e che da qui in avanti valgono per ogni pagina:
+# ciò che non è pubblico sta dietro `LoginRequiredMixin`, e il peso corporeo è
+# facoltativo con una conseguenza dichiarata (ADR-0008).
+
+PASSWORD = "una-passphrase-lunga-1"
+
+
+class AuthenticationTests(TestCase):
+    """Registrazione, login, logout: le tre porte, e la guardia sul resto."""
+
+    def test_signup_creates_the_user_and_logs_them_in(self):
+        response = self.client.post(
+            reverse("training:signup"),
+            {"username": "lorenzo", "password1": PASSWORD, "password2": PASSWORD},
+        )
+
+        self.assertRedirects(response, reverse("training:profile"))
+        utente = User.objects.get(username="lorenzo")
+        # Chi si registra entra subito: la pagina di destinazione è già sua.
+        self.assertEqual(int(self.client.session["_auth_user_id"]), utente.pk)
+        # E nasce senza peso corporeo: è il profilo a chiederlo, non la
+        # registrazione.
+        self.assertIsNone(utente.body_mass_kg)
+
+    def test_login_and_logout_round_trip(self):
+        User.objects.create_user(username="lorenzo", password=PASSWORD)
+
+        entrata = self.client.post(
+            reverse("login"), {"username": "lorenzo", "password": PASSWORD}
+        )
+        self.assertRedirects(entrata, reverse("training:dashboard"))
+
+        # `LOGOUT_REDIRECT_URL` non è dichiarato: l'uscita *rende* una pagina,
+        # e come tutte le altre estende `base.html`.
+        uscita = self.client.post(reverse("logout"))
+        self.assertEqual(uscita.status_code, 200)
+        self.assertTemplateUsed(uscita, "registration/logged_out.html")
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    def test_logout_refuses_a_get(self):
+        """Da Django 5 uscire è un POST, e l'header lo fa con un form.
+
+        Se qualcuno rimettesse un `<a href>` al posto del form, il menu
+        smetterebbe di funzionare in silenzio: qui il 405 lo dice.
+        """
+        User.objects.create_user(username="lorenzo", password=PASSWORD)
+        self.client.force_login(User.objects.get(username="lorenzo"))
+
+        self.assertEqual(self.client.get(reverse("logout")).status_code, 405)
+
+    def test_private_pages_redirect_anonymous_users_to_the_login(self):
+        """Il pattern da qui in avanti: 302 verso il login, con `next`."""
+        for nome in ("training:dashboard", "training:profile"):
+            with self.subTest(rotta=nome):
+                url = reverse(nome)
+                response = self.client.get(url)
+
+                self.assertEqual(response.status_code, 302)
+                self.assertRedirects(response, f"{reverse('login')}?next={url}")
+
+    def test_login_page_overrides_the_full_blocks_but_extends_base(self):
+        """L'eccezione prevista dalla spec, e il suo limite.
+
+        Le pagine di autenticazione svuotano `header` e `footer` — mostrare
+        una navigazione a chi non è entrato non ha senso — ma restano figlie
+        di `base.html`, che è il requisito della traccia.
+        """
+        response = self.client.get(reverse("login"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, BASE_TEMPLATE)
+        body = response.content.decode()
+        self.assertNotIn(">Classifiche</a>", body)  # header svuotato
+        self.assertIn("progressive.css", body)  # ma il guscio c'è
+
+
+class ProfileTests(TestCase):
+    """`/profilo/`: il peso corporeo si dichiara, e l'assenza si dichiara."""
+
+    def setUp(self):
+        self.user = User.objects.create_user(username="lorenzo", password=PASSWORD)
+        self.client.force_login(self.user)
+
+    def test_body_mass_is_declared_and_read_back(self):
+        response = self.client.post(
+            reverse("training:profile"), {"body_mass_kg": "78.5"}, follow=True
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.body_mass_kg, Decimal("78.50"))
+        self.assertIn("78,5", response.content.decode())
+
+    def test_the_page_declares_what_a_missing_body_mass_costs(self):
+        """ADR-0008: assente è meglio di sbagliato, purché la pagina lo dica."""
+        response = self.client.get(reverse("training:profile"))
+        body = response.content.decode()
+
+        self.assertIn("classifica", body)
+        self.assertIn("percentile", body)
+
+    def test_body_mass_can_be_cleared(self):
+        """Svuotarlo è una risposta valida: riporta l'utente fuori dai ranking."""
+        self.user.body_mass_kg = Decimal("78.50")
+        self.user.save(update_fields=["body_mass_kg"])
+
+        self.client.post(reverse("training:profile"), {"body_mass_kg": ""})
+
+        self.user.refresh_from_db()
+        self.assertIsNone(self.user.body_mass_kg)
+        self.assertFalse(self.user.has_body_mass)
+
+    def test_a_user_never_edits_someone_elses_profile(self):
+        """Non c'è `pk` nell'URL: `get_object` restituisce `request.user`.
+
+        È il motivo per cui questa pagina non ha `UserPassesTestMixin` — non
+        esiste un modo di puntare al profilo di un altro — e il test lo fissa
+        contro un futuro `/profilo/<pk>/`.
+        """
+        altra = User.objects.create_user(username="martina", password=PASSWORD)
+
+        self.client.post(reverse("training:profile"), {"body_mass_kg": "60"})
+
+        altra.refresh_from_db()
+        self.assertIsNone(altra.body_mass_kg)
+        self.user.refresh_from_db()
+        self.assertEqual(self.user.body_mass_kg, Decimal("60.00"))
