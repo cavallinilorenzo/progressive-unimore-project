@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% comment %}
+`/allenamenti/<pk>/` — l'allenamento letto, a blocchi per esercizio.
+
+Il `regroup` è la ragione per cui la view ordina le serie per
+`(esercizio, numero)`: raggruppa una lista già ordinata, e su una lista
+ordinata solo per `set_number` spezzerebbe lo stesso esercizio in più blocchi.
+
+Una serie **saltata** si mostra, non si nasconde: è l'informazione che
+distingue «non l'ho fatta» da «non l'avevo prevista», ed è tutto il senso di
+`is_completed`. Sta in riga, in grigio, con i numeri sostituiti da un trattino.
+{% endcomment %}
+
+{% block title %}{{ allenamento.title }} — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-baseline justify-content-between mb-4">
+  <div>
+    <div class="eyebrow"><a href="{% url 'training:workout-list' %}" style="color:var(--t3)">Storico</a></div>
+    <h1 class="h4 fw-bold mb-0">{{ allenamento.title }}</h1>
+    <div class="mt-1" style="color:var(--t2);font-size:.9rem">
+      {{ allenamento.started_at|date:"l j F Y, H:i" }}
+      {% if allenamento.ended_at %}&middot; finito alle {{ allenamento.ended_at|date:"H:i" }}{% endif %}
+    </div>
+  </div>
+  <div class="d-flex gap-3 align-items-center">
+    <a href="{% url 'training:workout-update' allenamento.pk %}" style="color:var(--t2);font-size:.9rem">Modifica</a>
+    <a href="{% url 'training:workout-delete' allenamento.pk %}" style="color:var(--t2);font-size:.9rem">Elimina</a>
+    <a href="{% url 'training:workoutset-manage' allenamento.pk %}" class="btn btn-volt btn-sm px-3">Gestisci serie</a>
+  </div>
+</div>
+
+{% for messaggio in messages %}
+<div class="card-ink p-3 mb-3">
+  <div class="rail">
+    <div class="eyebrow" style="color:var(--volt)">Fatto</div>
+    <div style="color:var(--t2);font-size:.9rem">{{ messaggio }}</div>
+  </div>
+</div>
+{% endfor %}
+
+{% if allenamento.routine %}
+<div class="card-ink p-3 mb-4">
+  <div class="rail">
+    <div class="eyebrow mb-1">Scheda d'origine</div>
+    <div style="color:var(--t2);font-size:.9rem">
+      Nato da <a href="{% url 'training:routine-detail' allenamento.routine.pk %}" style="color:var(--volt)">{{ allenamento.routine.name }}</a>.
+      Il titolo qui sopra è l'istantanea del nome che la scheda aveva quel
+      giorno: se la rinomini, questo allenamento non cambia.
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if allenamento.notes %}
+<div class="card-ink p-3 mb-4">
+  <div class="eyebrow mb-1">Note</div>
+  <div style="color:var(--t2);font-size:.9rem">{{ allenamento.notes|linebreaksbr }}</div>
+</div>
+{% endif %}
+
+{% if allenamento.serie_in_ordine %}
+{% regroup allenamento.serie_in_ordine by exercise as blocchi %}
+<div class="row g-3">
+  {% for blocco in blocchi %}
+  <div class="col-12 col-lg-6">
+    <div class="card-ink p-3 h-100">
+      <div class="d-flex align-items-baseline justify-content-between mb-2">
+        <a href="{% url 'training:exercise-detail' blocco.grouper.slug %}"
+           class="h6 fw-bold mb-0 text-decoration-none" style="color:var(--t1)">
+          {{ blocco.grouper.name }}
+        </a>
+        <span class="eyebrow" style="color:var(--t3)">{{ blocco.grouper.equipment }}</span>
+      </div>
+
+      <table class="table table-dark table-borderless table-sm mb-0 align-middle" style="background:transparent">
+        <tbody>
+          {% for serie in blocco.list %}
+          <tr>
+            <td style="width:3rem;color:var(--t3)">{{ serie.set_number }}</td>
+            <td {% if not serie.is_completed %}style="color:var(--t3)"{% endif %}>
+              {% if serie.is_completed %}
+              <span style="color:var(--volt)">{{ serie.weight|default:"0" }} kg</span>
+              &times; {{ serie.reps }}
+              {% else %}
+              — saltata
+              {% endif %}
+            </td>
+            <td class="text-end eyebrow" style="color:var(--t3)">
+              {% if serie.set_type != "working" %}{{ serie.get_set_type_display }}{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card-ink p-4 text-center">
+  <div class="eyebrow mb-2">Nessuna serie</div>
+  <p style="color:var(--t2);max-width:32rem;margin:0 auto">
+    Un allenamento senza serie non dice ancora niente: sono i carichi e le
+    ripetizioni a farne un dato. Se questo allenamento nasce da una scheda le
+    righe sono già pronte, altrimenti si aggiungono qui.
+  </p>
+  <a href="{% url 'training:workoutset-manage' allenamento.pk %}" class="btn btn-volt px-4 mt-3">Aggiungi le serie</a>
+</div>
+{% endif %}
+
+{% endblock %}

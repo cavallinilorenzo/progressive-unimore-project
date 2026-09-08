@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+{% comment %}
+`/allenamenti/<pk>/serie/` — il registro delle serie, e il formset più denso
+del progetto.
+
+EREDITA LE DUE SCELTE DI `routine_exercises.html`, e per le stesse ragioni:
+una card per riga invece di una riga di tabella, perché sei campi in una
+`<table>` a larghezza fissa comprimono i `<select>` da cento opzioni; e nessun
+bottone «aggiungi riga», perché clonare una riga al volo e riscrivere
+`TOTAL_FORMS` è JavaScript applicativo, che il progetto non ha.
+
+DOVE INVECE DIVERGE. Qui le righe sono dieci o quindici, non tre, e #69 aveva
+già misurato che «salva e torna» ci passa peggio. La risposta non è alzare
+`extra` fino a coprire una sessione intera — venti righe vuote sono un modulo,
+non un registro — ma «Avvia allenamento da scheda», che le righe le porta già
+scritte. Questa pagina è quindi soprattutto una pagina di CORREZIONE: i numeri
+ci sono, si aggiustano quelli che non tornano, si toglie la spunta a ciò che è
+stato saltato. Le cinque righe vuote in coda servono all'esercizio aggiunto
+fuori programma.
+
+«Eseguita» è la casella che dà senso a tutto il resto: toglierla trasforma la
+riga in una serie saltata, e allora le ripetizioni non si pretendono più. È il
+vincolo `workout_set_completed_has_reps`, e il form lo dice in italiano prima
+che lo dica SQLite.
+{% endcomment %}
+
+{% block title %}Serie di «{{ allenamento.title }}» — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-baseline justify-content-between mb-4">
+  <div>
+    <div class="eyebrow">
+      <a href="{% url 'training:workout-detail' allenamento.pk %}" style="color:var(--t3)">{{ allenamento.title }}</a>
+    </div>
+    <h1 class="h4 fw-bold mb-0">Serie dell'allenamento</h1>
+  </div>
+  <a href="{% url 'training:workout-detail' allenamento.pk %}" style="color:var(--t2);font-size:.9rem">Torna all'allenamento</a>
+</div>
+
+{% for messaggio in messages %}
+<div class="card-ink p-3 mb-3">
+  <div class="rail">
+    <div class="eyebrow" style="color:var(--volt)">Fatto</div>
+    <div style="color:var(--t2);font-size:.9rem">{{ messaggio }}</div>
+  </div>
+</div>
+{% endfor %}
+
+<form method="post" novalidate>
+  {% csrf_token %}
+  {{ formset.management_form }}
+
+  {% if formset.non_form_errors %}
+  <div class="card-ink p-3 mb-3">
+    <div class="rail" style="border-color:var(--red)">
+      <div class="eyebrow mb-1" style="color:var(--red)">Il formset non è valido</div>
+      {% for errore in formset.non_form_errors %}
+      <div style="color:var(--t2);font-size:.9rem">{{ errore }}</div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  {% for form in formset %}
+  <div class="card-ink p-3 mb-3">
+    {% comment %}
+    `form.id` è il campo nascosto su cui il formset distingue una riga
+    esistente da una nuova: senza, il salvataggio duplica invece di aggiornare.
+    Va reso sempre, anche nelle righe vuote.
+    {% endcomment %}
+    {% for nascosto in form.hidden_fields %}{{ nascosto }}{% endfor %}
+
+    <div class="d-flex justify-content-between align-items-baseline mb-2">
+      <div class="eyebrow">
+        {% if form.instance.pk %}Serie {{ forloop.counter }}{% else %}Nuova serie{% endif %}
+      </div>
+      {% if form.instance.pk %}
+      <div class="form-check mb-0">
+        {{ form.DELETE }}
+        <label for="{{ form.DELETE.id_for_label }}" class="form-check-label eyebrow" style="color:var(--red)">
+          Togli
+        </label>
+      </div>
+      {% endif %}
+    </div>
+
+    {% if form.non_field_errors %}
+    {% for errore in form.non_field_errors %}
+    <div class="mb-2" style="color:var(--red);font-size:.82rem">{{ errore }}</div>
+    {% endfor %}
+    {% endif %}
+
+    <div class="row g-2 align-items-end">
+      <div class="col-12 col-lg-4">
+        <label for="{{ form.exercise.id_for_label }}" class="eyebrow d-block mb-1">Esercizio</label>
+        {{ form.exercise }}
+      </div>
+      <div class="col-4 col-lg-1">
+        <label for="{{ form.set_number.id_for_label }}" class="eyebrow d-block mb-1">N&deg;</label>
+        {{ form.set_number }}
+      </div>
+      <div class="col-4 col-lg-2">
+        <label for="{{ form.weight.id_for_label }}" class="eyebrow d-block mb-1">Carico kg</label>
+        {{ form.weight }}
+      </div>
+      <div class="col-4 col-lg-1">
+        <label for="{{ form.reps.id_for_label }}" class="eyebrow d-block mb-1">Rip.</label>
+        {{ form.reps }}
+      </div>
+      <div class="col-8 col-lg-2">
+        <label for="{{ form.set_type.id_for_label }}" class="eyebrow d-block mb-1">Tipo</label>
+        {{ form.set_type }}
+      </div>
+      <div class="col-4 col-lg-1">
+        <div class="form-check mb-2">
+          {{ form.is_completed }}
+          <label for="{{ form.is_completed.id_for_label }}" class="form-check-label eyebrow">Eseguita</label>
+        </div>
+      </div>
+    </div>
+
+    {% for campo in form.visible_fields %}
+    {% for errore in campo.errors %}
+    <div class="mt-1" style="color:var(--red);font-size:.82rem">{{ campo.label }}: {{ errore }}</div>
+    {% endfor %}
+    {% endfor %}
+  </div>
+  {% endfor %}
+
+  <div class="card-ink p-3 mb-3">
+    <div class="rail">
+      <div class="eyebrow mb-1">Come si compila</div>
+      <div style="color:var(--t2);font-size:.88rem">
+        Il <strong>carico</strong> è sempre quello totale, bilanciere compreso:
+        è il numero che si legge sulla barra, non il carico aggiunto. Lo zero è
+        legittimo ed è la risposta giusta a corpo libero.
+        Una serie <strong>saltata</strong> si registra togliendo la spunta a
+        «Eseguita», e allora ripetizioni e carico possono restare vuoti: è la
+        differenza fra «non l'ho fatta» e «non l'avevo prevista», e le analisi
+        contano solo le eseguite. Le righe vuote in coda si ignorano; per
+        aggiungerne altre, salva e torna qui.
+      </div>
+    </div>
+  </div>
+
+  <div class="d-flex gap-3 align-items-center">
+    <button type="submit" class="btn btn-volt px-4 py-2">Salva le serie</button>
+    <a href="{% url 'training:workout-detail' allenamento.pk %}" style="color:var(--t2);font-size:.9rem">Annulla</a>
+  </div>
+</form>
+
+{% endblock %}

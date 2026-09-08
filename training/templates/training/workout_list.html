@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+{% comment %}
+`/allenamenti/` — lo storico.
+
+La riga dice tre cose e sono quelle che si vogliono sapere senza aprire: la
+data, quanti esercizi e quante serie *eseguite*. Il conto delle serie esclude
+le saltate di proposito — una sessione di dodici serie di cui tre saltate ne
+ha fatte nove, e nove è il numero che descrive l'allenamento.
+
+I due conteggi arrivano come annotazioni dalla view: qui `sets.count` in ciclo
+sarebbe una query per riga su una lista che cresce senza limite.
+{% endcomment %}
+
+{% block title %}Storico — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-baseline justify-content-between mb-4">
+  <div>
+    <div class="eyebrow">Il mio storico</div>
+    <h1 class="h4 fw-bold mb-0">Allenamenti</h1>
+  </div>
+  <a href="{% url 'training:workout-create' %}" class="btn btn-volt px-3">Nuovo allenamento</a>
+</div>
+
+{% for messaggio in messages %}
+<div class="card-ink p-3 mb-3">
+  <div class="rail">
+    <div class="eyebrow" style="color:var(--volt)">Fatto</div>
+    <div style="color:var(--t2);font-size:.9rem">{{ messaggio }}</div>
+  </div>
+</div>
+{% endfor %}
+
+{% if allenamenti %}
+<div class="card-ink p-0">
+  <table class="table table-dark table-borderless mb-0 align-middle" style="background:transparent">
+    <thead>
+      <tr class="eyebrow" style="color:var(--t3)">
+        <th class="ps-3">Data</th>
+        <th>Allenamento</th>
+        <th>Esercizi</th>
+        <th>Serie</th>
+        <th class="pe-3"></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for allenamento in allenamenti %}
+      <tr>
+        <td class="ps-3" style="color:var(--t2)">{{ allenamento.started_at|date:"j M Y" }}</td>
+        <td>
+          <a href="{% url 'training:workout-detail' allenamento.pk %}"
+             class="fw-bold text-decoration-none" style="color:var(--t1)">
+            {{ allenamento.title }}
+          </a>
+          {% comment %}
+          La scheda d'origine si mostra solo se esiste ancora: `routine` è
+          `SET_NULL`, e il titolo resta comunque quello del giorno in cui
+          l'allenamento è stato svolto. È ADR-0002 visibile in pagina.
+          {% endcomment %}
+          {% if allenamento.routine %}
+          <span class="eyebrow ms-2" style="color:var(--t3)">da scheda</span>
+          {% endif %}
+        </td>
+        <td style="color:var(--t2)">{{ allenamento.n_esercizi }}</td>
+        <td style="color:var(--volt)">{{ allenamento.n_serie }}</td>
+        <td class="pe-3 text-end">
+          <a href="{% url 'training:workoutset-manage' allenamento.pk %}" style="color:var(--t2);font-size:.85rem">Serie</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="card-ink p-4 text-center">
+  <div class="eyebrow mb-2">Nessun allenamento</div>
+  <p style="color:var(--t2);max-width:34rem;margin:0 auto">
+    Lo storico è il dato su cui si regge tutto il resto: progressione, record,
+    percentili e consiglio di carico nascono dalle serie registrate qui. Il
+    modo più rapido di riempirlo è partire da una scheda, che porta le serie
+    già scritte.
+  </p>
+  <div class="d-flex gap-3 justify-content-center mt-3">
+    <a href="{% url 'training:routine-list' %}" class="btn btn-volt px-4">Parti da una scheda</a>
+    <a href="{% url 'training:workout-create' %}" class="btn btn-outline-light px-4">Registrane uno a mano</a>
+  </div>
+</div>
+{% endif %}
+
+{% endblock %}
