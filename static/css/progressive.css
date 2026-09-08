@@ -1,0 +1,97 @@
+/* Progressive — l'identità «Pulse», ereditata da Overload.
+ *
+ * Portata dal prototipo `prototypes/t19-pagine/templates/prototype/base_a.html`
+ * (variante A, «Scoreboard»): i token e le utility sono gli stessi, spostati da
+ * un `<style>` inline a un file statico perché `base.html` resti leggibile.
+ *
+ * Le regole di `docs/spec/02-pagine-e-template.md`: canvas near-black `ink`
+ * #0A0B0D, `volt` #C9FF3D come *unico* colore acceso, tipografia compressa e
+ * maiuscola per le etichette, il chip delta come elemento firma. Sopra
+ * Bootstrap 5.3.0 da CDN: qui ci sono solo i token e tre utility, non un tema.
+ */
+
+:root {
+  --ink: #0A0B0D; --surface: #15171B; --surface-2: #1F222A;
+  --volt: #C9FF3D; --on-volt: #0A0B0D; --gold: #FFC53D; --red: #FF4D4D;
+  --t1: #F4F6F2; --t2: #9DA3AC; --t3: #697079;
+}
+
+body {
+  background: var(--ink);
+  color: var(--t1);
+  font-family: -apple-system, "SF Pro Text", system-ui, sans-serif;
+}
+
+/* --- le tre utility firma ------------------------------------------------ */
+
+/* L'etichetta sopra un numero: piccola, maiuscola, spaziata. */
+.eyebrow {
+  font-size: .7rem; font-weight: 600; text-transform: uppercase;
+  letter-spacing: .1em; color: var(--t2);
+}
+
+/* La cifra hero: è la gerarchia della dashboard, il resto della pagina spiega. */
+.hero-num {
+  font-size: 3.25rem; font-weight: 800; line-height: 1;
+  font-variant-numeric: tabular-nums; letter-spacing: -.02em;
+}
+
+/* Il chip di variazione, `▲ +2.5`. */
+.delta {
+  display: inline-flex; align-items: center; gap: .25rem;
+  font-weight: 700; font-variant-numeric: tabular-nums;
+  padding: .1rem .5rem; border-radius: 6px; font-size: .85rem;
+}
+.delta-up { background: rgba(201, 255, 61, .14); color: var(--volt); }
+.delta-down { background: rgba(255, 77, 77, .14); color: var(--red); }
+
+/* --- superfici ----------------------------------------------------------- */
+
+.card-ink {
+  background: var(--surface); border: 1px solid var(--surface-2);
+  border-radius: 14px;
+}
+
+/* Il rail volt: il coach avvisa da qui, non occupa un pannello. */
+.rail { border-left: 2px solid var(--volt); padding-left: .75rem; }
+
+/* La barra di riempimento delle distribuzioni (gruppi muscolari, percentili). */
+.barra { height: 8px; border-radius: 4px; background: var(--surface-2); overflow: hidden; }
+.barra > i { display: block; height: 100%; background: var(--volt); }
+
+/* --- navigazione --------------------------------------------------------- */
+
+.nav-top {
+  background: rgba(10, 11, 13, .92);
+  border-bottom: 1px solid var(--surface-2);
+  backdrop-filter: blur(12px);
+}
+.nav-top a {
+  color: var(--t2); text-decoration: none; font-weight: 600;
+  font-size: .82rem; text-transform: uppercase; letter-spacing: .06em;
+}
+.nav-top a:hover { color: var(--t1); }
+.nav-top a.attivo { color: var(--t1); box-shadow: inset 0 -2px 0 var(--volt); }
+
+.wordmark {
+  font-weight: 800; letter-spacing: -.03em; font-size: 1.15rem;
+  text-transform: uppercase; color: var(--t1);
+}
+
+/* --- azione -------------------------------------------------------------- */
+
+.btn-volt {
+  background: var(--volt); color: var(--on-volt); font-weight: 700;
+  border: 0; text-transform: uppercase; letter-spacing: .04em;
+  font-size: .8rem; box-shadow: 0 0 24px rgba(201, 255, 61, .28);
+}
+.btn-volt:hover { background: #d6ff63; color: var(--on-volt); }
+
+footer { color: var(--t3); font-size: .8rem; border-top: 1px solid var(--surface-2); }
+
+/* --- pagine d'errore ----------------------------------------------------- */
+
+.codice-errore {
+  font-size: 6rem; font-weight: 800; line-height: 1;
+  letter-spacing: -.04em; color: var(--volt);
+}

@@ -8,14 +8,20 @@ constraint e le unicità decise in `01-modelli.md`, che sono invisibili finché
 qualcuno non li rimuove da `Meta` senza accorgersene.
 """
 
+import re
 from datetime import timedelta
 from decimal import Decimal
 from io import StringIO
+from pathlib import Path
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.management import call_command
 from django.db import IntegrityError, transaction
-from django.test import TestCase
+from django.template import TemplateDoesNotExist
+from django.template.loader import get_template
+from django.test import TestCase, override_settings
+from django.urls import reverse
 from django.utils import timezone
 
 from training.models import (
@@ -233,3 +239,129 @@ class CustomUserTests(TestCase):
 
         user.body_mass_kg = Decimal("78.50")
         self.assertTrue(user.has_body_mass)
+
+
+# --- Il guscio: `base.html` e la sua guardia -------------------------------
+#
+# `07-test.md` §1 lo chiama «l'unico requisito della traccia che si può violare
+# senza accorgersene»: basta aggiungere un template di fretta, e la traccia
+# impone che *tutte* le pagine estendano `base.html`. Il test nasce col guscio
+# invece che al passo 13 (mappa #53, regola 3), perché arrivando alla fine
+# avrebbe lasciato passare nove ticket senza guardia.
+
+TEMPLATE_ROOTS = (
+    Path(settings.BASE_DIR) / "templates",
+    Path(settings.BASE_DIR) / "training" / "templates",
+)
+
+BASE_TEMPLATE = "base.html"
+
+EXTENDS_RE = re.compile(r"{%\s*extends\s+[\"']([^\"']+)[\"']\s*%}")
+
+
+def iter_page_templates():
+    """Ogni `.html` che sia una *pagina*, nelle due cartelle di template.
+
+    I frammenti — prefisso `_`, per esempio `_corpo.svg` o un `_riga.html` —
+    sono esclusi: sono inclusi da una pagina, non resi da soli. Escluso anche
+    `base.html`, che è la radice della catena e non estende nessuno.
+
+    `prototypes/` resta fuori dal giro perché non è una cartella di template
+    del progetto: i suoi file estendono `prototype/base_a.html`, che è la loro
+    radice e non la nostra.
+    """
+    for root in TEMPLATE_ROOTS:
+        for path in sorted(root.rglob("*.html")):
+            if path.name.startswith("_") or path.name == BASE_TEMPLATE:
+                continue
+            yield path
+
+
+class TemplateInheritanceTests(TestCase):
+    """Nessun template orfano: ogni pagina risale a `base.html`."""
+
+    def test_every_page_template_extends_base(self):
+        templates = list(iter_page_templates())
+        self.assertGreater(
+            len(templates), 0, "Nessun template trovato: le radici sono sbagliate."
+        )
+
+        for path in templates:
+            # `subTest` è il motivo per cui il messaggio dice *quale* file:
+            # il test fallisce sul singolo template, non sul totale.
+            with self.subTest(template=str(path.relative_to(settings.BASE_DIR))):
+                chain = self.resolve_chain(path)
+                self.assertEqual(
+                    chain[-1],
+                    BASE_TEMPLATE,
+                    f"{path.relative_to(settings.BASE_DIR)} non risale a "
+                    f"{BASE_TEMPLATE}: catena {' -> '.join(chain)}",
+                )
+
+    def resolve_chain(self, path):
+        """I nomi che `path` estende, in ordine, fino a `base.html` o al guasto.
+
+        L'ereditarietà vale «direttamente o per catena»: `dashboard.html` può
+        estendere un guscio intermedio, purché quello finisca su `base.html`.
+        L'ultimo elemento della lista è la diagnosi — `base.html` se la catena
+        è sana, altrimenti il punto in cui si è rotta.
+        """
+        chain = []
+        current = path
+
+        for _ in range(10):  # un tetto: una catena più lunga è un ciclo
+            match = EXTENDS_RE.search(current.read_text(encoding="utf-8"))
+            if match is None:
+                chain.append(f"<nessun extends in {current.name}>")
+                return chain
+
+            parent = match.group(1)
+            chain.append(parent)
+            if parent == BASE_TEMPLATE:
+                return chain
+
+            try:
+                current = Path(get_template(parent).origin.name)
+            except TemplateDoesNotExist:
+                chain.append(f"<{parent} non esiste>")
+                return chain
+
+        chain.append("<catena troppo lunga: ciclo di extends>")
+        return chain
+
+
+class ShellTests(TestCase):
+    """Il guscio rende, e le pagine d'errore lo rendono anche loro."""
+
+    def test_dashboard_renders_the_shell(self):
+        response = self.client.get(reverse("training:dashboard"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTemplateUsed(response, "training/dashboard.html")
+        self.assertTemplateUsed(response, BASE_TEMPLATE)
+
+    def test_header_carries_the_five_sections(self):
+        """Cinque voci, e nessuna sesta: la regola di navigazione di #19."""
+        response = self.client.get(reverse("training:dashboard"))
+        body = response.content.decode()
+
+        for voce in ("Dashboard", "Schede", "Storico", "Esercizi", "Classifiche"):
+            self.assertIn(f">{voce}</a>", body)
+
+    @override_settings(DEBUG=False, ALLOWED_HOSTS=["testserver"])
+    def test_not_found_page_extends_the_shell(self):
+        response = self.client.get("/questa-rotta-non-esiste/")
+
+        self.assertEqual(response.status_code, 404)
+        self.assertIn("Progressive", response.content.decode())
+
+    def test_server_error_page_renders_without_request(self):
+        """Django rende la 500 senza request né context processor.
+
+        È la condizione in cui il guscio è più fragile — `request` e `user` non
+        ci sono — e l'unico modo di scoprirlo è renderla come fa Django.
+        """
+        html = get_template("500.html").render()
+
+        self.assertIn("500", html)
+        self.assertIn("Progressive", html)
