@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% comment %}
+`/schede/pubbliche/` — la community.
+
+Ogni card dice le due cose che si vogliono sapere prima di aprire: **di chi è**
+la scheda e **come l'hanno votata**. La media compare col numero di voti
+accanto, perché «4,8» su un voto solo e «4,8» su trenta non sono lo stesso
+numero — ed è esattamente la ragione per cui la classifica sociale (#76)
+ordinerà per media bayesiana e non per questa.
+{% endcomment %}
+
+{% block title %}Schede della community — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-baseline justify-content-between mb-4">
+  <div>
+    <div class="eyebrow"><a href="{% url 'training:routine-list' %}" style="color:var(--t3)">Schede</a></div>
+    <h1 class="h4 fw-bold mb-0">Schede della community</h1>
+  </div>
+  <a href="{% url 'training:routine-list' %}" style="color:var(--t2);font-size:.9rem">Le mie schede</a>
+</div>
+
+{% if routines %}
+<div class="row g-3">
+  {% for routine in routines %}
+  <div class="col-12 col-lg-6">
+    <div class="card-ink p-3 h-100">
+      <div class="d-flex align-items-baseline justify-content-between">
+        <a href="{% url 'training:routine-public-detail' routine.pk %}"
+           class="h6 fw-bold mb-0 text-decoration-none" style="color:var(--t1)">
+          {{ routine.name }}
+        </a>
+        {% if routine.voti %}
+        <span class="delta delta-up">{{ routine.media|floatformat:1 }}/5</span>
+        {% else %}
+        <span class="eyebrow" style="color:var(--t3)">Nessun voto</span>
+        {% endif %}
+      </div>
+
+      <div class="mt-2" style="color:var(--t2);font-size:.88rem">
+        di <span class="fw-bold">{{ routine.user.get_username }}</span>
+        &middot; {{ routine.voti }} vot{{ routine.voti|pluralize:"o,i" }}
+        {% if routine.user.is_synthetic %}<span class="eyebrow" style="color:var(--t3)"> &middot; utente generato</span>{% endif %}
+      </div>
+
+      {% if routine.notes %}
+      <div class="mt-2" style="color:var(--t3);font-size:.82rem">{{ routine.notes|truncatewords:18 }}</div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+{% comment %}
+Il vuoto si dichiara e spiega da dove nasce: la community è fatta di schede che
+qualcuno ha marcato `is_public`, e finché nessuno lo fa la pagina è vuota per
+costruzione, non per guasto.
+{% endcomment %}
+<div class="card-ink p-4 text-center">
+  <div class="eyebrow mb-2">Nessuna scheda pubblica</div>
+  <p style="color:var(--t2);max-width:34rem;margin:0 auto">
+    Una scheda entra qui solo se il suo autore la rende pubblica. Puoi essere
+    il primo: apri una delle tue e spunta «pubblica».
+  </p>
+  <a href="{% url 'training:routine-list' %}" class="btn btn-volt px-4 mt-3">Le mie schede</a>
+</div>
+{% endif %}
+
+{% endblock %}

@@ -16,7 +16,15 @@ due cose che si vogliono sapere senza aprire: quante voci ha la scheda, e se
     <div class="eyebrow">Le mie schede</div>
     <h1 class="h4 fw-bold mb-0">Schede</h1>
   </div>
-  <a href="{% url 'training:routine-create' %}" class="btn btn-volt px-3">Nuova scheda</a>
+  <div class="d-flex align-items-center gap-3">
+    {% comment %}
+    Il varco verso la community: sta qui e non nell'header, perché le schede
+    degli altri sono schede — la regola di navigazione vuole che ogni pagina si
+    raggiunga da dentro la sezione a cui appartiene per dominio.
+    {% endcomment %}
+    <a href="{% url 'training:routine-public-list' %}" style="color:var(--t2);font-size:.9rem">Schede della community</a>
+    <a href="{% url 'training:routine-create' %}" class="btn btn-volt px-3">Nuova scheda</a>
+  </div>
 </div>
 
 {% for messaggio in messages %}
