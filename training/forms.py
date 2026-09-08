@@ -22,6 +22,22 @@ from training.models import (
     WorkoutSet,
 )
 
+#: L'opzione vuota della `<select>` degli esercizi. Quella di Django è testo
+#: inglese non tradotto: è l'unica stringa dell'interfaccia che il progetto non
+#: scriverebbe. Sta qui e non nei due form perché è la stessa frase, e due
+#: copie della stessa frase divergono al primo ripensamento.
+ESERCIZIO_VUOTO = "— scegli un esercizio —"
+
+
+def queryset_catalogo():
+    """Gli esercizi come li vuole una `<select>`: col nome già leggibile.
+
+    `Exercise.__str__` nomina l'attrezzo, quindi senza `select_related` ogni
+    opzione dell'elenco costerebbe una query in più solo per comporre la
+    propria etichetta.
+    """
+    return Exercise.objects.select_related("equipment", "primary_muscle")
+
 
 class SignUpForm(UserCreationForm):
     """La registrazione: username e password, niente di più.
@@ -123,14 +139,13 @@ class RoutineExerciseForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Cento esercizi in un `<select>`, e le righe del formset sono dieci:
-        # senza `select_related` ogni riga ripaga il catalogo per intero.
-        self.fields["exercise"].queryset = Exercise.objects.select_related(
-            "equipment", "primary_muscle"
-        )
-        # L'opzione vuota di Django è testo inglese non tradotto in italiano:
-        # è l'unica stringa dell'interfaccia che il progetto non scriverebbe.
-        self.fields["exercise"].empty_label = "— scegli un esercizio —"
+        # Il `queryset` è ciò su cui il campo **valida**, e resta sul form: è
+        # la sua verità. L'elenco che si vede lo mette il formset una volta per
+        # pagina (`BaseCatalogoInlineFormSet.scelte_esercizio`); questo
+        # `empty_label` serve al caso in cui il form venga reso da solo, fuori
+        # dal formset, dove nessuno sovrascrive `choices`.
+        self.fields["exercise"].queryset = queryset_catalogo()
+        self.fields["exercise"].empty_label = ESERCIZIO_VUOTO
 
     def clean(self):
         """Il range di ripetizioni deve essere un range.
@@ -154,7 +169,66 @@ class RoutineExerciseForm(forms.ModelForm):
         return cleaned
 
 
-class BaseRoutineExerciseFormSet(forms.BaseInlineFormSet):
+class BaseCatalogoInlineFormSet(forms.BaseInlineFormSet):
+    """Ciò che i due formset con un esercizio dentro hanno in comune.
+
+    Le schede (#69) e le serie (#70) sono formset diversi su modelli diversi,
+    ma pongono la stessa domanda a ogni riga — «quale esercizio?» — e da lì in
+    poi hanno gli stessi tre problemi. Tenerli qui è una scelta anche per
+    l'orale: **è un pattern, non due**, e si spiega una volta sola.
+    """
+
+    def add_fields(self, form, index):
+        """`DELETE` e `exercise`: i due campi che il form da solo non sistema.
+
+        `DELETE` non è un campo del modello — lo aggiunge il formset, *dopo*
+        che il `Meta.widgets` del form è stato applicato — quindi la classe
+        Bootstrap va messa qui, o la casella «Togli» resta nuda.
+
+        `choices` invece è la correzione delle query: vedi `scelte_esercizio`.
+        """
+        super().add_fields(form, index)
+        if "DELETE" in form.fields:
+            form.fields["DELETE"].widget.attrs["class"] = "form-check-input"
+        # Il catalogo si legge **una volta per pagina**, non una per riga.
+        form.fields["exercise"].choices = self.scelte_esercizio
+
+    @cached_property
+    def scelte_esercizio(self):
+        """Le cento opzioni del `<select>`, condivise da tutte le righe.
+
+        `ModelChoiceField` costruisce le sue opzioni con un iteratore che
+        interroga il database **ogni volta che il campo viene reso**. Su un
+        form solo non si nota; in un formset le righe sono dieci o venti, e
+        sul catalogo vero la pagina delle serie faceva 27 query e quella degli
+        esercizi di una scheda ne faceva 21 su dodici righe — quasi tutte la
+        stessa. Valorizzare `choices` con una lista già pronta sostituisce
+        l'iteratore e le riduce a una.
+
+        La validazione non passa da qui e non cambia: `to_python` di
+        `ModelChoiceField` risolve il valore sul `queryset`, che resta quello
+        del form. Questa è la sola forma dell'elenco, non la sua verità.
+        """
+        return [("", ESERCIZIO_VUOTO)] + [
+            (esercizio.pk, str(esercizio)) for esercizio in queryset_catalogo()
+        ]
+
+    def validate_unique(self):
+        """Spenta di proposito, e sostituita dal `clean` di ogni sottoclasse.
+
+        `BaseModelFormSet.validate_unique` **vede** il duplicato — entrambi i
+        modelli hanno il loro `UniqueConstraint` — ma lo annuncia coi nomi dei
+        campi («Si prega di correggere i dati duplicati di exercise») invece
+        che con la regola di dominio, e per farlo **rimuove il campo da
+        `cleaned_data`**, così che nessun controllo successivo possa più
+        leggerlo. Lasciarla accesa significherebbe due messaggi per lo stesso
+        errore, uno dei quali incomprensibile. La copertura non cambia: il
+        `clean` di ogni sottoclasse guarda la stessa chiave su tutte le righe,
+        e un formset inline le contiene tutte per costruzione.
+        """
+
+
+class BaseRoutineExerciseFormSet(BaseCatalogoInlineFormSet):
     """Il vincolo `routine_exercise_unique`, detto prima che lo dica SQLite.
 
     `UniqueConstraint(routine, exercise)` sta nel modello ed è la garanzia
@@ -163,28 +237,6 @@ class BaseRoutineExerciseFormSet(forms.BaseInlineFormSet):
     form non può vederla. Senza questo `clean`, due righe uguali arriverebbero
     al database come `IntegrityError`: un 500 al posto di un errore di form.
     """
-
-    def add_fields(self, form, index):
-        """`DELETE` non è un campo del modello: lo aggiunge il formset, dopo
-        che il `Meta.widgets` del form è già stato applicato. La classe
-        Bootstrap va quindi messa qui, o la casella «Togli» resta nuda."""
-        super().add_fields(form, index)
-        if "DELETE" in form.fields:
-            form.fields["DELETE"].widget.attrs["class"] = "form-check-input"
-
-    def validate_unique(self):
-        """Spenta di proposito, e sostituita da `clean` qui sotto.
-
-        `BaseModelFormSet.validate_unique` **vede** il duplicato — l'unico
-        `UniqueConstraint` del modello è `(routine, exercise)` — ma dice «Si
-        prega di correggere i dati duplicati di exercise», che non è la regola
-        di dominio, e per farlo **rimuove il campo da `cleaned_data`**, così
-        che nessun controllo successivo possa più leggerlo. Lasciarla accesa
-        significherebbe due messaggi per lo stesso errore, uno dei quali
-        incomprensibile. La copertura non cambia: il `clean` qui sotto guarda
-        la stessa coppia su tutte le righe, e il formset inline le contiene
-        tutte per costruzione.
-        """
 
     def clean(self):
         super().clean()
@@ -344,12 +396,9 @@ class WorkoutSetForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        # Stessa ragione del formset delle schede: cento esercizi per riga, e
-        # qui le righe sono dieci, non tre.
-        self.fields["exercise"].queryset = Exercise.objects.select_related(
-            "equipment", "primary_muscle"
-        )
-        self.fields["exercise"].empty_label = "— scegli un esercizio —"
+        # Stessa forma del form delle schede, e per la stessa ragione.
+        self.fields["exercise"].queryset = queryset_catalogo()
+        self.fields["exercise"].empty_label = ESERCIZIO_VUOTO
 
     def clean(self):
         """`workout_set_completed_has_reps`, tradotto in italiano di dominio.
@@ -414,50 +463,19 @@ class WorkoutSetForm(forms.ModelForm):
         return super().has_changed()
 
 
-class BaseWorkoutSetFormSet(forms.BaseInlineFormSet):
+class BaseWorkoutSetFormSet(BaseCatalogoInlineFormSet):
     """Il vincolo `workout_set_unique`, cioè `(workout, exercise, set_number)`.
 
     Vale la stessa meccanica del formset delle schede: la terna arriva spezzata
     — `workout` è l'istanza del formset, non un campo — quindi il singolo form
-    non può vederla, e `validate_unique` di Django la vede ma la annuncia coi
-    nomi dei campi invece che con la regola, svuotando `cleaned_data` per
-    farlo. È spenta qui e sostituita dal `clean` sotto.
+    non può vederla. `validate_unique` è spenta nella base comune e sostituita
+    dal `clean` qui sotto.
 
     La regola in italiano: **due serie dello stesso esercizio non possono
     portare lo stesso numero**. Tre serie di panca sono 1, 2, 3; due serie
     numerate entrambe 2 non sono un duplicato di dati, sono un conteggio
     sbagliato.
     """
-
-    def add_fields(self, form, index):
-        super().add_fields(form, index)
-        if "DELETE" in form.fields:
-            form.fields["DELETE"].widget.attrs["class"] = "form-check-input"
-        # Il catalogo si legge **una volta per pagina**, non una per riga.
-        form.fields["exercise"].choices = self.scelte_esercizio
-
-    @cached_property
-    def scelte_esercizio(self):
-        """Le cento opzioni del `<select>`, condivise da tutte le righe.
-
-        `ModelChoiceField` costruisce le sue opzioni con un iteratore che
-        interroga il database **ogni volta che il campo viene reso**. Su un
-        form solo non si nota; qui le righe sono venti, e la pagina delle serie
-        misurata sul catalogo vero faceva 27 query, quasi tutte la stessa.
-        Valorizzare `choices` con una lista già pronta sostituisce
-        l'iteratore e le riduce a una.
-
-        La validazione non passa da qui e non cambia: `to_python` di
-        `ModelChoiceField` risolve il valore sul `queryset`, che resta quello
-        del form. Questa è la sola forma dell'elenco, non la sua verità.
-        """
-        esercizi = Exercise.objects.select_related("equipment", "primary_muscle")
-        return [("", "— scegli un esercizio —")] + [
-            (esercizio.pk, str(esercizio)) for esercizio in esercizi
-        ]
-
-    def validate_unique(self):
-        """Spenta di proposito: vedi `BaseRoutineExerciseFormSet.validate_unique`."""
 
     def clean(self):
         super().clean()

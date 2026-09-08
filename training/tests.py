@@ -792,6 +792,55 @@ class RoutineCrudTests(TestCase):
         self.assertEqual(self.routine.exercises.count(), 0)
         self.assertContains(response, "sotto il minimo")
 
+    def test_the_exercises_page_does_not_requery_the_catalogue_per_row(self):
+        """Il costo della pagina non cresce con le righe.
+
+        Stessa guardia di `test_the_sets_page_does_not_requery_the_catalogue_per_row`,
+        e non è un doppione: sono due formset distinti, e la correzione di #70
+        aveva toccato solo quello delle serie. Misurata sul catalogo vero — i
+        100 esercizi di `load_catalog` — questa pagina faceva **11 query con
+        due righe e 21 con dodici**, cioè una per riga e sempre la stessa; ora
+        ne fa sette in entrambi i casi.
+
+        Il numero però non è ciò che si protegge, o la guardia cadrebbe al primo
+        `select_related` innocuo aggiunto altrove nella view. Ciò che si
+        protegge è l'**invariante**: due righe o dodici, le query sono le
+        stesse. È la forma che regge anche quando il resto della pagina cambia.
+
+        Le dodici righe hanno bisogno di dodici esercizi distinti, perché
+        `routine_exercise_unique` vieta di elencarne uno due volte nella stessa
+        scheda — al contrario delle serie di #70, che ripetono lo stesso
+        esercizio cambiando `set_number`.
+        """
+        catalogo = Exercise.objects.bulk_create([
+            Exercise(
+                name=f"Esercizio {numero}",
+                slug=f"esercizio-{numero}",
+                primary_muscle=self.panca.primary_muscle,
+                equipment=self.equipment,
+            )
+            for numero in range(12)
+        ])
+        url = reverse("training:routine-exercises", args=[self.routine.pk])
+
+        def rendi_con(n_righe):
+            self.routine.exercises.all().delete()
+            RoutineExercise.objects.bulk_create([
+                RoutineExercise(
+                    routine=self.routine,
+                    exercise=esercizio,
+                    position=indice + 1,
+                    target_sets=3,
+                    target_reps=8,
+                )
+                for indice, esercizio in enumerate(catalogo[:n_righe])
+            ])
+            with CaptureQueriesContext(connection) as contesto:
+                self.assertEqual(self.client.get(url).status_code, 200)
+            return len(contesto.captured_queries)
+
+        self.assertEqual(rendi_con(2), rendi_con(12))
+
     def test_the_header_link_to_the_routines_is_a_real_route(self):
         """#67 aveva lasciato `href="/schede/"` letterale: ora è il tag `url`."""
         response = self.client.get(reverse("training:dashboard"))
