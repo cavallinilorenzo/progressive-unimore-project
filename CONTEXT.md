@@ -56,7 +56,13 @@ La tassonomia è tenuta **identica a `reporting.muscle_taxonomy` di Overload** �
 
 ### Equipment — «Attrezzo»
 
-Bilanciere, manubri, macchina, cavi, corpo libero. Serve a filtrare e raggruppare il catalogo, e porta due proprietà che appartengono **all'attrezzo e non al singolo esercizio**: il peso a vuoto (`default_bar_weight_kg`) e l'**incremento di carico** (`load_increment_kg`), il passo minimo con cui su quell'attrezzo il carico può realmente salire.
+Bilanciere, manubri, macchina, cavi, elastico, corpo libero. Serve a filtrare e raggruppare il catalogo, e porta due proprietà che appartengono **all'attrezzo e non al singolo esercizio**: il peso a vuoto (`default_bar_weight_kg`) e l'**incremento di carico** (`load_increment_kg`), il passo minimo con cui su quell'attrezzo il carico può realmente salire.
+
+### Attrezzo a incremento zero — «Attrezzo a incremento zero»
+
+Un attrezzo il cui incremento di carico è **zero**: su di lui il carico non ha un passo con cui salire, e il coach consiglia ripetizioni, mai carico.
+
+Sono **due**, non uno: il **corpo libero** e l'**elastico**. Il termine non è «corpo libero» proprio per questo, e la differenza fra i due non è cosmetica: sul corpo libero il carico si muove comunque — la zavorra si registra come carico della serie, e il *carico effettivo* somma il peso corporeo — mentre sull'elastico non si muove affatto. Chiamare la regola «corpo libero» significherebbe lasciare l'elastico senza nessuna regola, e il coach direbbe «una ripetizione in più» per sempre senza che niente lo segnali.
 
 ### Utente sintetico — «Utente dimostrativo»
 
@@ -89,7 +95,11 @@ Dove i consigli si mostrano è parte della loro definizione: **uno solo**, quell
 
 La regola con cui il coach suggerisce il carico della prossima sessione, e l'unica: prima salgono le **ripetizioni**, poi il **carico**. Finché le ripetizioni non hanno raggiunto l'estremo alto del target di scheda su **tutte** le serie di lavoro, il consiglio è stesso carico e una ripetizione in più; quando lo raggiungono, il carico sale di un **incremento dell'attrezzo** (`Equipment.load_increment_kg`) e le ripetizioni ripartono dal minimo del range.
 
-L'incremento è **fisso per attrezzo**, mai una percentuale del massimale: la percentuale produce carichi che non esistono come dischi (83,7 kg) e andrebbe comunque arrotondata. Sul **corpo libero** l'incremento è zero e il coach consiglia ripetizioni, non carico.
+L'incremento è **fisso per attrezzo**, mai una percentuale del massimale: la percentuale produce carichi che non esistono come dischi (83,7 kg) e andrebbe comunque arrotondata. Su un *attrezzo a incremento zero* il carico non sale mai, e il consiglio resta sulle ripetizioni.
+
+Il carico proposto è **quello che l'utente riscrive nel form**: il carico della serie, bilanciere compreso, e non il *carico effettivo*. Non si arrotonda, perché è un carico davvero sollevato più un incremento dell'attrezzo, e sta quindi già sulla griglia dei dischi.
+
+Il caso limite dell'**aderenza al piano**: se *tutte* le serie di lavoro dell'ultima sessione sono rimaste incomplete, il coach non fa salire niente e propone di riprovare lo stesso carico.
 
 Il target viene dalla scheda dell'**ultimo allenamento** che ha registrato quell'esercizio — l'allenamento è un log immutabile e conserva la scheda da cui è nato, quindi con lo stesso esercizio in più schede non serve nessuna regola di precedenza. Per un allenamento **libero**, senza scheda e quindi senza target, il carico sale quando lo stesso carico è stato ripetuto due volte con ripetizioni uguali o crescenti.
 

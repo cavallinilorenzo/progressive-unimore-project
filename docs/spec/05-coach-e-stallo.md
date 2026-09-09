@@ -34,7 +34,9 @@ Lo squilibrio usa una soglia di **assenza**, non di proporzione: *«non hai alle
 - **Dashboard: uno solo**, quello a priorità più alta, in un riquadro
 - **Dettaglio esercizio:** solo il consiglio di carico e, se rilevato, lo stallo
 - **Non esiste una pagina che li elenca tutti** — un coach che dice cinque cose non dice niente
-- **E quando nessuna regola scatta, il riquadro non c'è.** Deciso in [#112](https://github.com/cavallinilorenzo/progetto-django-uni/issues/112), provvisoriamente, finché i quattro tipi non ci sono tutti: un riquadro che dicesse «nessun consiglio» suonerebbe come «va tutto bene» mentre metà delle regole non esiste ancora, cioè una diagnosi rassicurante emessa da un coach che non ha guardato. Col consiglio di **carico** — priorità 4, e scatta per chiunque abbia registrato una serie — il silenzio si restringe quasi al solo **utente appena registrato**, che è il vuoto vero e sulla dashboard parla già da #101.
+- **E quando nessuna regola scatta, il riquadro non c'è.** Deciso in [#112](https://github.com/cavallinilorenzo/progetto-django-uni/issues/112) in via provvisoria: un riquadro che dicesse «nessun consiglio» suonerebbe come «va tutto bene» mentre metà delle regole non esiste ancora, cioè una diagnosi rassicurante emessa da un coach che non ha guardato.
+
+  **Diventa definitivo in [#113](https://github.com/cavallinilorenzo/progetto-django-uni/issues/113), per misura.** Col consiglio di carico — che scatta per chiunque abbia registrato una serie di lavoro — sui 100 utenti del database **nessuno** resta senza consiglio: 40 sentono il carico, 32 lo squilibrio, 28 la costanza. Il silenzio è ormai solo l'**utente appena registrato**, che è il vuoto vero e sulla dashboard parla già da #101: non c'è più un caso da arredare.
 
 Nessun onboarding, nessuna pagina dedicata: il coach affina `02-pagine-e-template.md` senza spostarlo.
 
@@ -45,11 +47,19 @@ Prima salgono le **ripetizioni**, poi il **carico**.
 1. Finché le ripetizioni non hanno raggiunto `target_reps_max` su **tutte** le serie di lavoro → *stesso carico, una ripetizione in più*
 2. Quando lo raggiungono → *il carico sale di un `Equipment.load_increment_kg`*, e le ripetizioni ripartono da `target_reps`
 
-**L'incremento è fisso per attrezzo, mai una percentuale del massimale.** La percentuale produce carichi che non esistono come dischi (83,7 kg) e andrebbe comunque arrotondata. Sul **corpo libero** l'incremento è zero e il coach consiglia ripetizioni, non carico.
+**L'incremento è fisso per attrezzo, mai una percentuale del massimale.** La percentuale produce carichi che non esistono come dischi (83,7 kg) e andrebbe comunque arrotondata.
+
+> **Corretto in [#113](https://github.com/cavallinilorenzo/progetto-django-uni/issues/113).** Questa spec diceva «sul **corpo libero** l'incremento è zero». La regola non è «corpo libero», è **«attrezzo a incremento zero»**, e nel catalogo (`data/catalog/equipment.csv`) sono **due**: `bodyweight` **e `band`**. La differenza non è cosmetica — sul corpo libero il carico si muove comunque, perché la zavorra si scrive in `weight` e `EFFECTIVE_LOAD` somma il peso corporeo (ADR-0006); sull'**elastico** no, e col termine sbagliato l'elastico non sarebbe coperto da nessuna regola: il coach direbbe «una ripetizione in più» per sempre, per sempre corretto e per sempre inutile, senza che niente lo segnali. È la stessa famiglia di guasto muto di `corpo_libero` scritto al posto di `bodyweight` (#16). Su un attrezzo a incremento zero il consiglio **dichiara il limite**: che il passo successivo — una variante più difficile, o della zavorra — è una scelta che il coach non misura.
+
+**Il carico proposto è quello che l'utente riscrive nel form** — `WorkoutSet.weight`, bilanciere compreso — e **non** passa da `EFFECTIVE_LOAD`: il carico effettivo è la definizione giusta per il volume e il massimale, dove la domanda è *quanto hai spostato*; qui la domanda è *cosa scrivo la prossima volta*. Per la stessa ragione **non si arrotonda**: è un carico davvero sollevato più un incremento dell'attrezzo, quindi sta già sulla griglia dei dischi. L'arrotondamento serve al **deload**, che parte da un massimo calcolato (#113).
 
 Il target viene dalla scheda dell'**ultimo allenamento** che ha registrato quell'esercizio — l'allenamento è un log immutabile e conserva la scheda da cui è nato, quindi con lo stesso esercizio in più schede **non serve nessuna regola di precedenza**.
 
-Per un allenamento **libero**, senza scheda e quindi senza target: il carico sale quando lo stesso carico è stato ripetuto due volte con ripetizioni uguali o crescenti.
+Per un allenamento **libero**, senza scheda e quindi senza target: il carico sale quando lo stesso carico è stato ripetuto due volte con ripetizioni uguali o crescenti. Il confronto è fra **due sessioni consecutive** — due righe lette in Python, nessuna finestra: `Lag` risponderebbe alla domanda dell'*andamento*, che è quella di A3 (#98), non questa.
+
+> **Misurato in #113: 0 allenamenti su 11.855 hanno una scheda collegata.** Il generatore sintetico crea schede e allenamenti senza legarli, e l'import da Overload non ha una scheda da portarsi dietro. Il ramo «target dalla scheda» esiste ed è testato, ma è **invisibile alla demo**: la pagina che si guarda all'orale gira tutta sul ramo dell'allenamento libero, e il consiglio lo dichiara nel proprio limite invece di far finta di aver letto un target che non c'era.
+>
+> **La sessione è letta dalla sua serie di punta**, cioè dal massimo carico fra le serie di lavoro completate, e le ripetizioni che contano sono quelle eseguite a quel carico. Con carichi diversi nella stessa sessione — una discesa, un back-off — «tutte le serie hanno raggiunto il target» sarebbe falso per sempre. Sulle 82.180 coppie (allenamento, esercizio) del database le serie completate stanno tutte a un carico solo: è una guardia per i log veri, non un comportamento osservabile oggi.
 
 **Caso limite (aderenza al piano):** se *tutte* le serie di lavoro di un esercizio sono rimaste incomplete, il coach **non fa salire niente** e dice di riprovare lo stesso carico.
 

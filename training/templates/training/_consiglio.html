@@ -1,0 +1,46 @@
+{% comment %}
+Il riquadro del coach — **un** consiglio, e le due pagine che lo mostrano lo
+disegnano uguale.
+
+Nasce come partial in #113, quando il consiglio di carico ha portato il coach
+sulla seconda delle sue due superfici (dashboard e dettaglio esercizio,
+ADR-0007). Due copie dello stesso riquadro sarebbero divergite al primo
+ripensamento sul colore, e la seconda copia avrebbe smesso di mostrare il
+`limite` senza che un test se ne accorgesse: il limite compare solo quando la
+regola sa di non sapere, cioè proprio nei casi che si guardano meno.
+
+I quattro pezzi hanno quattro mestieri diversi e non si accorpano:
+- **l'azione** è la frase grossa, l'unica che si legge di sicuro;
+- **la misura** è il numero che l'ha prodotta, e sta lì perché un consiglio
+  senza il suo numero non si distingue da uno inventato;
+- **il limite** compare solo quando la regola sa di non sapere qualcosa — sullo
+  squilibrio è il muscolo secondario (ADR-0001), sul carico è la scheda che
+  l'allenamento non aveva, o l'attrezzo che non ha un incremento;
+- **l'esercizio**, quando c'è, è un link: il carico e lo stallo parlano di una
+  coppia (utente, esercizio), e in dashboard il consiglio nomina un esercizio
+  che sta un click più in là. Sul dettaglio è già la pagina che si sta
+  guardando, e il link non si disegna.
+
+Il colore è il volt del brand sull'occhiello e non un riquadro pieno: acceso
+quanto basta per essere il primo posto in cui cade l'occhio, senza diventare un
+avviso d'errore.
+{% endcomment %}
+<div class="card-ink p-3 p-lg-4 mb-4" style="border-color:var(--volt)">
+  <div class="rail">
+    <div class="eyebrow mb-2" style="color:var(--volt)">Il coach dice</div>
+    <div class="fw-bold mb-2" style="font-size:1.05rem">{{ consiglio.titolo }}</div>
+    <div style="color:var(--t2)">{{ consiglio.azione }}</div>
+    <div class="mt-2" style="color:var(--t3);font-size:.82rem">{{ consiglio.misura }}</div>
+    {% if consiglio.limite %}
+    <div class="mt-2" style="color:var(--t3);font-size:.78rem;font-style:italic">{{ consiglio.limite }}</div>
+    {% endif %}
+    {% if consiglio.esercizio and not nascondi_link_esercizio %}
+    <div class="mt-3">
+      <a href="{% url 'training:exercise-detail' consiglio.esercizio.slug %}"
+         class="eyebrow" style="color:var(--volt)">
+        Apri {{ consiglio.esercizio.name }} &rsaquo;
+      </a>
+    </div>
+    {% endif %}
+  </div>
+</div>

@@ -38,6 +38,7 @@ from django.utils import timezone
 
 from training import rankings, views
 from training.analytics import coach as analytics_coach
+from training.analytics.coach import carico as coach_carico
 from training.analytics import costanza as analytics_costanza
 from training.analytics import muscles as analytics_muscles
 from training.analytics import progressione as analytics_progressione
@@ -6337,6 +6338,15 @@ class DashboardHeatmapTests(TestCase):
         Protegge l'**invarianza**, non il numero: una heatmap che facesse una
         query per muscolo renderebbe benissimo su tre allenamenti e morirebbe
         sui 443 dell'utente della demo.
+
+        Da #113 il confronto è `<=` e non `==`, e la ragione non è un
+        allentamento: il coach si ferma al **primo** consiglio che scatta, e
+        una sola delle sue regole — il carico — apre query proprie. Più storia
+        significa che una regola più prioritaria prende la parola prima, quindi
+        la pagina può costare *meno*. Ciò che non deve succedere è che costi di
+        più, che è esattamente ciò che #86 chiede. Il costo del ramo del carico
+        è fissato al chiodo da `CoachAdviceTests`, dove la regola che parla si
+        può scegliere.
         """
 
         def rendi():
@@ -6354,7 +6364,7 @@ class DashboardHeatmapTests(TestCase):
             for esercizio in (self.panca, self.stacco, self.alzate):
                 self.serie(lunedi, esercizio, quante=5)
 
-        self.assertEqual(prima, rendi())
+        self.assertLessEqual(rendi(), prima)
 
 
 class CoachAdviceTests(TestCase):
@@ -6439,6 +6449,18 @@ class CoachAdviceTests(TestCase):
     def consiglio(self, user=None, oggi=None):
         return analytics_coach.consiglio_per_dashboard(user or self.user, oggi=oggi)
 
+    def tipo(self, user=None, oggi=None):
+        """Il tipo del consiglio, o `None` se il coach tace.
+
+        Da #113 il coach **quasi non tace più**: chi ha registrato una serie di
+        lavoro ha sempre almeno il consiglio di carico. I test che in #112
+        chiedevano «e qui non deve scattare niente» chiedono ora la cosa più
+        precisa, cioè *chi* parla: `assertIsNone` proverebbe la stessa cosa
+        solo finché il carico non esiste, e infatti ha smesso di provarla.
+        """
+        consiglio = self.consiglio(user=user, oggi=oggi)
+        return consiglio.tipo if consiglio is not None else None
+
     # --- il ponte fra le due finestre della costanza -----------------------
 
     def test_the_constancy_advice_reads_a_rolling_fortnight_and_not_the_monday_grid(
@@ -6478,7 +6500,9 @@ class CoachAdviceTests(TestCase):
             sum(riga["allenamenti"] for riga in griglia["settimane"][-2:]), 1
         )
         self.assertEqual(conteggi["totali"], 5)
-        self.assertIsNone(self.consiglio(oggi=oggi))
+        # Il consiglio di costanza **non** scatta: a parlare è il carico, che
+        # da #113 raccoglie tutti quelli che le prime regole lasciano passare.
+        self.assertEqual(self.tipo(oggi=oggi), "carico")
 
     def test_the_fortnight_counts_today_in(self):
         """14 giorni che finiscono stasera cominciano 13 giorni fa, non 14.
@@ -6527,7 +6551,7 @@ class CoachAdviceTests(TestCase):
 
         self.assertEqual(conteggi["totali"], 3)
         self.assertEqual(conteggi["recenti"], 0)
-        self.assertIsNone(self.consiglio(oggi=oggi))
+        self.assertEqual(self.tipo(oggi=oggi), "carico")
 
     # --- il consiglio di squilibrio ---------------------------------------
 
@@ -6554,13 +6578,14 @@ class CoachAdviceTests(TestCase):
         self.assertGreaterEqual(
             conteggi["recenti"], analytics_costanza.ALLENAMENTI_DELLA_SOGLIA
         )
-        self.assertIsNone(self.consiglio())
+        self.assertEqual(self.tipo(), "carico")
 
         # E all'ottavo scatta, sugli stessi identici dati: la soglia è l'unica
-        # cosa che è cambiata fra le due metà di questo test.
+        # cosa che è cambiata fra le due metà di questo test — e lo squilibrio
+        # ha la priorità sul carico, quindi gli passa davanti.
         self.allenamento(self.settimane[2] + timedelta(days=1), gruppo="chest")
 
-        self.assertEqual(self.consiglio().tipo, "squilibrio")
+        self.assertEqual(self.tipo(), "squilibrio")
 
     def test_the_imbalance_names_the_group_and_declares_what_it_cannot_see(self):
         """Il limite del muscolo secondario **si dichiara sempre**.
@@ -6658,25 +6683,90 @@ class CoachAdviceTests(TestCase):
         self.assertEqual(consiglio.tipo, "costanza")
 
     def test_the_coach_asks_the_heatmap_only_once(self):
-        """Passata la heatmap dall'esterno, il coach costa **una query**: i tre
-        conteggi in un `aggregate()` solo.
+        """Passata la heatmap dall'esterno, la selezione costa **una query**: i
+        tre conteggi in un `aggregate()` solo.
 
         Tre `.count()` separati sarebbero tre scansioni della stessa tabella in
         cima alla pagina più visitata del progetto, per un risultato identico —
         e questo test è ciò che impedisce di dividerli «per leggibilità».
+
+        La fixture fa scattare lo **squilibrio**, che è la regola più profonda
+        senza query proprie: così l'unica query contata è quella dei conteggi.
+        Il costo del carico, che le query ce le ha, lo fissa il test qui sotto.
         """
-        self.allenamento(self.settimane[-1])
+        for indice in range(10):
+            gruppo = ["chest", "back", "shoulders", "legs", "core"][indice % 5]
+            self.allenamento(
+                self.settimane[1] + timedelta(days=indice % 5), gruppo=gruppo
+            )
         heatmap = analytics_muscles.serie_per_muscolo(self.user, self.settimane)
 
         with self.assertNumQueries(1):
+            consiglio = analytics_coach.consiglio_per_dashboard(
+                self.user, heatmap=heatmap
+            )
+
+        self.assertEqual(consiglio.tipo, "squilibrio")
+
+    def test_the_load_rule_costs_three_queries_and_not_one_per_session(self):
+        """Il carico è **l'unica regola con query proprie**, e sono tre:
+        l'esercizio più recente, gli ultimi due allenamenti che lo contengono,
+        e le loro serie. Quattro in tutto con l'aggregato dei conteggi, che la
+        selezione fa comunque — la dashboard passa da 13 query a 16 quando è il
+        carico a parlare, e resta a 13 quando parla una regola più prioritaria.
+
+        Il numero conta meno dell'**invarianza**: le tre query non crescono con
+        lo storico, che è la guardia di #86 sulla pagina che il prof apre per
+        prima. Una regola che leggesse una sessione per query renderebbe
+        benissimo su tre allenamenti e morirebbe sui 443 dell'utente della demo.
+        """
+        # Due allenamenti negli ultimi 14 giorni: quanti bastano perché la
+        # costanza resti zitta anche quando lo storico, sotto, si allunga —
+        # senza, la seconda metà del test misurerebbe un'altra regola.
+        self.allenamento(self.settimane[-1], quante=3)
+        self.allenamento(self.settimane[-1] + timedelta(days=1), quante=3)
+        heatmap = analytics_muscles.serie_per_muscolo(self.user, self.settimane)
+
+        with self.assertNumQueries(4):
+            consiglio = analytics_coach.consiglio_per_dashboard(
+                self.user, heatmap=heatmap
+            )
+        self.assertEqual(consiglio.tipo, "carico")
+
+        # Trenta sessioni in più, tutte fuori dalle due finestre: cambia solo
+        # la quantità di storia, e il conto delle query non deve accorgersene.
+        for indietro in range(1, 31):
+            self.allenamento(
+                self.settimane[0] - timedelta(weeks=indietro), quante=4
+            )
+
+        with self.assertNumQueries(4):
             analytics_coach.consiglio_per_dashboard(self.user, heatmap=heatmap)
 
     def test_the_advice_for_the_exercise_page_is_a_list_and_not_the_dashboard_one(self):
         """L'altra metà della superficie pubblica di ADR-0007, vuota in #112 e
-        deliberatamente presente: lo stallo e il carico si innestano qui senza
-        aprire un terzo punto d'ingresso."""
+        riempita da #113 con **un** consiglio, il carico.
+
+        Resta una lista: lo stallo si aggiungerà qui, e una firma che oggi
+        restituisse un oggetto solo andrebbe cambiata in un ticket che ha già
+        il suo lavoro da fare. E resta vuota su un esercizio mai registrato,
+        che è il modo in cui la pagina di un esercizio aperto per curiosità dal
+        catalogo non inventa un carico di partenza.
+        """
         self.assertEqual(
             analytics_coach.consigli_per_esercizio(self.user, self.esercizi["chest"]),
+            [],
+        )
+
+        self.allenamento(self.settimane[-1], gruppo="chest")
+        consigli = analytics_coach.consigli_per_esercizio(
+            self.user, self.esercizi["chest"]
+        )
+
+        self.assertEqual([c.tipo for c in consigli], ["carico"])
+        # E su un altro esercizio, che quell'utente non ha mai toccato, tace.
+        self.assertEqual(
+            analytics_coach.consigli_per_esercizio(self.user, self.esercizi["legs"]),
             [],
         )
 
@@ -6716,33 +6806,43 @@ class CoachAdviceTests(TestCase):
             response.context["consiglio"], analytics_coach.Consiglio
         )
 
-    def test_the_box_disappears_when_no_rule_fires(self):
-        """La risposta **provvisoria** di #112 al riquadro muto, e il ticket del
-        carico può stringerla.
+    def test_the_silence_has_shrunk_to_the_brand_new_user(self):
+        """La domanda che #112 lasciava aperta, chiusa da una misura.
 
-        Un riquadro che dicesse «nessun consiglio» suonerebbe come «va tutto
-        bene» mentre due dei quattro tipi non esistono ancora: una diagnosi
-        rassicurante emessa da un coach che non ha guardato. Meglio il silenzio,
-        finché il carico — priorità 4, e scatta per chiunque abbia registrato
-        una serie — non lo restringe quasi al solo utente nuovo.
+        Questa è **la stessa fixture** che in #112 lasciava il riquadro muto —
+        quattro allenamenti recenti, nessuna soglia superata — e da #113 il
+        coach parla: il carico scatta per chiunque abbia registrato una serie
+        di lavoro. Il silenzio non è più «capita spesso», è l'utente che non ha
+        ancora registrato niente.
+
+        Misurato sul database della demo il 2026-09-09, sui 100 utenti:
+        **nessuno** resta senza consiglio — 40 sentono il carico, 32 lo
+        squilibrio, 28 la costanza. La risposta provvisoria di #112 al riquadro
+        muto («non si disegna») diventa definitiva senza bisogno di un ticket,
+        perché il caso che avrebbe dovuto arredare non esiste più se non per
+        l'iscritto di cinque minuti fa.
         """
         for giorno in range(4):
             self.allenamento(self.settimane[-1] + timedelta(days=giorno))
 
         response = self.client.get(reverse("training:dashboard"))
 
-        self.assertIsNone(response.context["consiglio"])
-        self.assertNotContains(response, "Il coach dice")
+        self.assertEqual(response.context["consiglio"].tipo, "carico")
+        self.assertContains(response, "Il coach dice", count=1)
 
     def test_a_brand_new_user_is_told_nothing_by_the_coach(self):
         """Il **vuoto vero**, che #112 doveva scoprire se esistesse: esiste, ed
         è l'utente appena registrato.
 
-        Nessuna delle due regole ha una soglia che lui superi — 4 allenamenti
-        per la costanza, 8 nella finestra per lo squilibrio — quindi il coach
-        tace, e a parlare resta il vuoto che la dashboard dichiarava già da
-        #101. Sui 100 utenti del database della demo il caso non compare
-        nemmeno una volta: nessuno di loro ha zero allenamenti.
+        Nessuna delle tre regole ha una soglia che lui superi — 4 allenamenti
+        per la costanza, 8 nella finestra per lo squilibrio, e per il carico
+        una serie di lavoro qualunque, che è la soglia più bassa che esista —
+        quindi il coach tace, e a parlare resta il vuoto che la dashboard
+        dichiarava già da #101. Sui 100 utenti del database della demo il caso
+        non compare nemmeno una volta: nessuno di loro ha zero allenamenti.
+
+        Da #113 questo è l'**unico** silenzio rimasto, ed è la ragione per cui
+        la risposta di #112 — il riquadro non si disegna — può restare.
         """
         self.client.login(username="nuovo", password=PASSWORD)
 
@@ -6751,6 +6851,573 @@ class CoachAdviceTests(TestCase):
         self.assertIsNone(response.context["consiglio"])
         self.assertNotContains(response, "Il coach dice")
         self.assertContains(response, "La mappa muscolare è ancora vuota")
+
+
+class DoubleProgressionTests(TestCase):
+    """La doppia progressione (#113) — i quattro casi dell'unica regola di carico.
+
+    Un test che verificasse «esce un consiglio» è il test che non serve. Un
+    consiglio *plausibile ma falso* rende una pagina perfetta e supera qualunque
+    controllo a occhio: qui si inchiodano le **frasi** e i **numeri**, e due dei
+    test sotto ricostruiscono lo storico vero dell'utente della demo, serie per
+    serie, con la risposta calcolata a mano prima di guardare il codice.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user(
+            username="atleta", password=PASSWORD, body_mass_kg=Decimal("80")
+        )
+        gruppo = MuscleGroup.objects.create(
+            code="chest", label_it="Petto", sort_order=1
+        )
+        muscolo = Muscle.objects.create(
+            code="chestMain", group=gruppo, label_it="Petto", sort_order=1
+        )
+        cls.bilanciere = Equipment.objects.create(
+            code="barbell",
+            label_it="Bilanciere",
+            default_bar_weight_kg=Decimal("20"),
+            load_increment_kg=Decimal("2.5"),
+            sort_order=1,
+        )
+        # I **due** attrezzi a incremento zero del catalogo, ed è il punto:
+        # `data/catalog/equipment.csv` ne ha due, non uno.
+        cls.elastico = Equipment.objects.create(
+            code="band",
+            label_it="Elastico",
+            load_increment_kg=Decimal("0"),
+            sort_order=2,
+        )
+        cls.corpo_libero = Equipment.objects.create(
+            code=CORPO_LIBERO,
+            label_it="Corpo libero",
+            load_increment_kg=Decimal("0"),
+            sort_order=3,
+        )
+        cls.panca = Exercise.objects.create(
+            name="Panca piana con bilanciere",
+            slug="panca-piana",
+            primary_muscle=muscolo,
+            equipment=cls.bilanciere,
+        )
+        cls.croci = Exercise.objects.create(
+            name="Croci con elastico",
+            slug="croci-elastico",
+            primary_muscle=muscolo,
+            equipment=cls.elastico,
+        )
+        cls.piegamenti = Exercise.objects.create(
+            name="Piegamenti",
+            slug="piegamenti",
+            primary_muscle=muscolo,
+            equipment=cls.corpo_libero,
+        )
+
+    def setUp(self):
+        self.client.login(username="atleta", password=PASSWORD)
+
+    # --- la fixture --------------------------------------------------------
+
+    def sessione(self, giorni_fa, esercizio=None, serie=(), routine=None):
+        """Una sessione: `serie` è una lista di `(reps, carico, eseguita)`.
+
+        Il carico si scrive come lo scriverebbe l'utente nel form — bilanciere
+        compreso — perché è la stessa unità in cui il consiglio risponde.
+        """
+        istante = timezone.now() - timedelta(days=giorni_fa)
+        allenamento = Workout.objects.create(
+            user=self.user, routine=routine, title="Sessione", started_at=istante
+        )
+        for numero, (reps, carico, eseguita) in enumerate(serie, start=1):
+            WorkoutSet.objects.create(
+                workout=allenamento,
+                exercise=esercizio or self.panca,
+                set_number=numero,
+                reps=reps,
+                weight=Decimal(carico),
+                set_type=WorkoutSet.SetType.WORKING,
+                is_completed=eseguita,
+            )
+        return allenamento
+
+    def scheda(self, esercizio=None, reps=8, reps_max=12):
+        """Una scheda con il range di ripetizioni che la progressione insegue."""
+        routine = Routine.objects.create(user=self.user, name="Scheda")
+        RoutineExercise.objects.create(
+            routine=routine,
+            exercise=esercizio or self.panca,
+            position=1,
+            target_sets=3,
+            target_reps=reps,
+            target_reps_max=reps_max,
+        )
+        return routine
+
+    def consiglio(self, esercizio=None):
+        return coach_carico.consiglio_di_carico(self.user, esercizio or self.panca)
+
+    # --- caso 1: il target viene dalla scheda ------------------------------
+
+    def test_with_a_routine_the_reps_climb_to_the_top_of_the_range_first(self):
+        """Primo caso: finché una sola serie di lavoro è sotto `target_reps_max`,
+        il carico non si muove.
+
+        «Su **tutte** le serie» non è un dettaglio: prendere la serie migliore
+        farebbe salire il carico a chi ha fatto un set buono e poi è crollato,
+        che è il modo più comune di rompersi seguendo un consiglio giusto.
+        """
+        scheda = self.scheda()
+        self.sessione(
+            3, serie=[(12, "60", True), (12, "60", True), (11, "60", True)],
+            routine=scheda,
+        )
+
+        consiglio = self.consiglio()
+
+        self.assertEqual(consiglio.tipo, "carico")
+        self.assertEqual(consiglio.titolo, "Stesso carico, una ripetizione in più")
+        self.assertIn("Ripeti 60 kg", consiglio.azione)
+        self.assertIn("punta a 12 ripetizioni", consiglio.azione)
+        self.assertIn("60 kg × 12/12/11 ripetizioni, target 12", consiglio.misura)
+        # Con la scheda non c'è niente da dichiarare: il target è scritto.
+        self.assertEqual(consiglio.limite, "")
+
+    def test_with_a_routine_the_load_climbs_when_every_set_tops_the_range(self):
+        """Secondo caso: raggiunto il tetto su tutte, sale il carico di **un**
+        incremento dell'attrezzo e le ripetizioni ripartono dal minimo.
+
+        L'incremento è fisso per attrezzo e mai una percentuale del massimale:
+        una percentuale produce carichi che non esistono come dischi.
+        """
+        scheda = self.scheda()
+        self.sessione(
+            3, serie=[(12, "60", True), (12, "60", True), (12, "60", True)],
+            routine=scheda,
+        )
+
+        consiglio = self.consiglio()
+
+        self.assertEqual(consiglio.titolo, "Sali di carico")
+        self.assertIn("Passa a 62,5 kg", consiglio.azione)
+        self.assertIn("(60 + 2,5, l'incremento di Bilanciere)", consiglio.azione)
+        self.assertIn("riparti da 8 ripetizioni", consiglio.azione)
+
+    def test_the_target_comes_from_the_routine_of_that_workout(self):
+        """Il target è quello della scheda **di quell'allenamento**, letta nel
+        suo valore corrente: l'allenamento è un log immutabile e conserva la
+        scheda da cui è nato (ADR-0002), quindi con lo stesso esercizio in due
+        schede non serve nessuna regola di precedenza.
+
+        Qui la seconda scheda esiste, contiene lo stesso esercizio con un
+        target diverso, e **non deve entrare**: l'ultimo allenamento non è nato
+        da lei.
+        """
+        scheda = self.scheda(reps=8, reps_max=12)
+        altra = self.scheda(reps=3, reps_max=5)
+        altra.name = "Forza"
+        altra.save()
+        self.sessione(
+            3, serie=[(6, "60", True), (6, "60", True)], routine=scheda
+        )
+
+        consiglio = self.consiglio()
+
+        # Col target 5 dell'altra scheda il carico salirebbe (6 ≥ 5); col 12
+        # della scheda giusta no. È il numero su cui le due si distinguono.
+        self.assertEqual(consiglio.titolo, "Stesso carico, una ripetizione in più")
+        self.assertIn("target 12", consiglio.misura)
+
+    # --- caso 2: l'allenamento libero --------------------------------------
+
+    def test_without_a_routine_the_load_climbs_on_a_repeated_load(self):
+        """Terzo caso, ed è quello che gira sui dati veri: senza scheda non c'è
+        un target, e il traguardo diventa la sessione precedente — stesso
+        carico, ripetizioni non calate.
+
+        Il confronto è fra **due sessioni consecutive**, non su tutta la
+        storia: due righe lette in Python, e nessuna finestra. `Lag`
+        risponderebbe a un'altra domanda — l'andamento — che è quella di A3.
+        """
+        self.sessione(10, serie=[(8, "60", True), (8, "60", True)])
+        self.sessione(3, serie=[(8, "60", True), (9, "60", True)])
+
+        consiglio = self.consiglio()
+
+        self.assertEqual(consiglio.titolo, "Sali di carico")
+        self.assertIn("Passa a 62,5 kg", consiglio.azione)
+        self.assertIn("60 kg due volte di fila", consiglio.misura)
+        self.assertIn("8/8 ripetizioni", consiglio.misura)
+        # E dichiara di star lavorando senza target, che è il suo limite.
+        self.assertIn("non era su scheda", consiglio.limite)
+
+    def test_without_a_routine_a_weaker_set_stops_the_load(self):
+        """La serie più debole comanda anche qui: 8/9 dopo 8/8 fa salire il
+        carico, 7/12 dopo 8/8 no — pur avendo un totale di ripetizioni più
+        alto. È la stessa scelta del primo caso, con un traguardo diverso."""
+        self.sessione(10, serie=[(8, "60", True), (8, "60", True)])
+        self.sessione(3, serie=[(7, "60", True), (12, "60", True)])
+
+        consiglio = self.consiglio()
+
+        self.assertEqual(consiglio.titolo, "Stesso carico, una ripetizione in più")
+        self.assertIn("punta a 12 ripetizioni", consiglio.azione)
+
+    def test_without_a_routine_a_different_load_is_not_a_repetition(self):
+        """Due sessioni a carichi diversi non sono «lo stesso carico ripetuto»,
+        e la misura lo dice con **il numero giusto**.
+
+        La frase «primo passaggio a questo carico» sarebbe falsa: la regola
+        guarda due sessioni, non tutta la storia, e quel carico può essere
+        stato usato dieci volte più indietro. Un consiglio giusto con sotto un
+        numero sbagliato è esattamente il guasto contro cui esiste `misura`.
+        """
+        self.sessione(10, serie=[(8, "65", True)])
+        self.sessione(3, serie=[(8, "60", True), (8, "60", True)])
+
+        consiglio = self.consiglio()
+
+        self.assertEqual(consiglio.titolo, "Stesso carico, una ripetizione in più")
+        self.assertIn("la sessione prima era 65 kg", consiglio.misura)
+        self.assertNotIn("primo passaggio", consiglio.misura)
+
+    def test_the_very_first_session_says_so(self):
+        """Una sola sessione registrata: non c'è niente da confrontare, e il
+        coach lo dichiara invece di far finta di aver confrontato."""
+        self.sessione(3, serie=[(8, "60", True)])
+
+        consiglio = self.consiglio()
+
+        self.assertIn("prima sessione registrata", consiglio.misura)
+        self.assertEqual(consiglio.titolo, "Stesso carico, una ripetizione in più")
+
+    # --- caso 3: l'attrezzo a incremento zero ------------------------------
+
+    def test_a_zero_increment_tool_never_gets_a_load_advice(self):
+        """Quarto caso, e **non è «corpo libero»**: è «attrezzo a incremento
+        zero», e nel catalogo sono due — `bodyweight` **e `band`**.
+
+        La differenza non è cosmetica. Sul corpo libero il carico si muove
+        comunque: la zavorra si scrive in `weight` e il carico effettivo somma
+        il peso corporeo (ADR-0006). Sull'elastico no, e senza una riga che lo
+        dichiari il coach direbbe «una ripetizione in più» per sempre — per
+        sempre corretto e per sempre inutile, senza che niente lo segnali. È la
+        stessa famiglia di guasto muto di `corpo_libero` scritto al posto di
+        `bodyweight` (#16).
+        """
+        for esercizio, etichetta in [
+            (self.croci, "Elastico"),
+            (self.piegamenti, "Corpo libero"),
+        ]:
+            with self.subTest(attrezzo=etichetta):
+                self.sessione(10, esercizio=esercizio, serie=[(12, "0", True)])
+                self.sessione(3, esercizio=esercizio, serie=[(15, "0", True)])
+
+                consiglio = self.consiglio(esercizio)
+
+                # Le ripetizioni sono cresciute a parità di carico: su un
+                # bilanciere qui salirebbe il carico. Qui no, mai.
+                self.assertEqual(consiglio.titolo, "Aggiungi una ripetizione")
+                self.assertNotIn("Passa a", consiglio.azione)
+                self.assertIn(
+                    f"Su {etichetta} l'incremento di carico è zero",
+                    consiglio.limite,
+                )
+
+    def test_a_bodyweight_load_of_zero_is_not_an_empty_field(self):
+        """Zero è un carico legittimo (#13) e non un buco: scriverlo «0 kg»
+        sarebbe l'unico posto della pagina in cui un dato vero sembra
+        mancante."""
+        self.sessione(3, esercizio=self.piegamenti, serie=[(20, "0", True)])
+
+        consiglio = self.consiglio(self.piegamenti)
+
+        self.assertIn("Continua a corpo libero", consiglio.azione)
+        self.assertNotIn("0 kg", consiglio.azione)
+
+        # E anche **dentro la misura**, dove lo zero compare come carico della
+        # sessione precedente: è il caso vero delle trazioni dell'utente della
+        # demo, che alterna zavorra e corpo libero.
+        self.sessione(1, esercizio=self.piegamenti, serie=[(8, "7.5", True)])
+
+        consiglio = self.consiglio(self.piegamenti)
+
+        self.assertIn("la sessione prima era a corpo libero", consiglio.misura)
+        self.assertNotIn("era 0 kg", consiglio.misura)
+
+    # --- caso 4: l'aderenza al piano ---------------------------------------
+
+    def test_when_no_working_set_was_completed_nothing_climbs(self):
+        """Ultimo caso: se **tutte** le serie di lavoro sono rimaste
+        incomplete, il coach non fa salire niente e dice di riprovare lo stesso
+        carico.
+
+        È l'unico punto del progetto in cui l'aderenza al piano è un dato e non
+        uno scarto: #13 ha misurato il 19% di serie non completate, e il filtro
+        universale le toglie da ogni analisi. Qui sono la risposta.
+        """
+        self.sessione(10, serie=[(8, "60", True), (8, "60", True)])
+        self.sessione(3, serie=[(5, "70", False), (4, "70", False)])
+
+        consiglio = self.consiglio()
+
+        self.assertEqual(consiglio.titolo, "Riprova lo stesso carico")
+        self.assertIn("Ripeti 70 kg", consiglio.azione)
+        self.assertEqual(
+            consiglio.misura.split(",")[0], "0 serie di lavoro completate su 2"
+        )
+
+    def test_a_partially_completed_session_is_judged_on_what_was_completed(self):
+        """Una serie saltata su tre non è il quarto caso: è una sessione
+        andata a metà, e le ripetizioni che contano sono quelle davvero fatte.
+
+        Il filtro universale di #13 le esclude dal conto — contarle
+        significherebbe contare allenamento che non è avvenuto — e la serie
+        saltata resta comunque nella `misura` come denominatore mancante.
+        """
+        scheda = self.scheda()
+        self.sessione(
+            3,
+            serie=[(12, "60", True), (12, "60", False), (12, "60", True)],
+            routine=scheda,
+        )
+
+        consiglio = self.consiglio()
+
+        # Le due completate sono a 12, che è il target: il carico sale.
+        self.assertEqual(consiglio.titolo, "Sali di carico")
+        self.assertIn("60 kg × 12/12 ripetizioni", consiglio.misura)
+
+    # --- la serie di punta -------------------------------------------------
+
+    def test_the_session_is_read_from_its_top_set(self):
+        """Con carichi diversi nella stessa sessione — una discesa, un back-off
+        — la sessione è riassunta dalla sua **serie di punta**.
+
+        Senza, «tutte le serie hanno raggiunto il target» sarebbe falso per
+        sempre e il coach direbbe «una ripetizione in più» a vita. Misurato il
+        2026-09-09 sul database: le 82.180 coppie (allenamento, esercizio)
+        stanno tutte a un carico solo, quindi questa riga oggi non cambia un
+        solo consiglio — è una guardia per i log veri importati da Overload,
+        non un comportamento.
+        """
+        scheda = self.scheda()
+        self.sessione(
+            3,
+            serie=[(12, "60", True), (12, "60", True), (15, "40", True)],
+            routine=scheda,
+        )
+
+        consiglio = self.consiglio()
+
+        self.assertEqual(consiglio.titolo, "Sali di carico")
+        self.assertIn("Passa a 62,5 kg", consiglio.azione)
+        self.assertIn("60 kg × 12/12 ripetizioni", consiglio.misura)
+
+    def test_an_exercise_never_recorded_gets_no_advice_at_all(self):
+        """`None`, e non un carico di partenza inventato: è l'unico modo in cui
+        questo consiglio può essere *falso* invece che prudente."""
+        self.assertIsNone(self.consiglio())
+        self.assertEqual(
+            analytics_coach.consigli_per_esercizio(self.user, self.panca), []
+        )
+
+    # --- quale esercizio parla in dashboard --------------------------------
+
+    def test_the_dashboard_speaks_about_the_most_recently_trained_exercise(self):
+        """Deciso chartando #113: il **più recentemente allenato**, con
+        l'ordine di registrazione dentro l'allenamento a sciogliere il pari.
+
+        Ha una query dietro e una definizione sola. «L'esercizio principale» ne
+        avrebbe tre — più serie, più volume, più recente — di cui nessuna
+        misurata: sceglierne una sarebbe inventare una gerarchia.
+        """
+        self.sessione(10, esercizio=self.panca, serie=[(8, "60", True)])
+        # Un allenamento solo con due esercizi: dentro, l'ordine di
+        # registrazione è l'unica traccia di quale sia venuto per ultimo —
+        # `set_number` riparte da 1 per ognuno.
+        recente = self.sessione(2, esercizio=self.panca, serie=[(8, "60", True)])
+        WorkoutSet.objects.create(
+            workout=recente,
+            exercise=self.croci,
+            set_number=1,
+            reps=15,
+            weight=Decimal("0"),
+            set_type=WorkoutSet.SetType.WORKING,
+            is_completed=True,
+        )
+
+        self.assertEqual(coach_carico.esercizio_piu_recente(self.user), self.croci)
+
+    def test_the_most_recent_exercise_can_be_one_where_nothing_was_completed(self):
+        """La sessione in cui non è stato completato niente è quella a cui il
+        quarto caso risponde: filtrarla via con `working()` zittirebbe il
+        consiglio proprio quando ha più da dire."""
+        self.sessione(2, esercizio=self.panca, serie=[(5, "70", False)])
+
+        self.assertEqual(coach_carico.esercizio_piu_recente(self.user), self.panca)
+        self.assertEqual(self.consiglio().titolo, "Riprova lo stesso carico")
+
+    # --- i due controlli a mano sui dati veri (regola 2 della mappa #111) ---
+
+    def test_the_advice_matches_the_hand_computed_one_for_the_demo_user(self):
+        """**Il requisito che vale solo per questa mappa**: il consiglio
+        verificato a mano contro le serie vere.
+
+        Guardare la pagina qui non prova niente. Un'analisi sbagliata dà un
+        numero che si controlla a mente; un consiglio plausibile ma falso rende
+        una pagina perfetta. Quindi: storico vero, risposta calcolata a mano,
+        numeri inchiodati.
+
+        Lo storico è quello di **`cavallinilorenzo` (pk 64)** su **Good morning
+        con bilanciere**, che il 2026-09-09 era il suo esercizio allenato per
+        ultimo — cioè quello che porterebbe il consiglio in dashboard:
+
+        - 06/09/2026, 55 kg: 12 *non completata*, 10, 11, 12
+        - 01/09/2026, 57,5 kg: 8 *non completata*, 6, 8 *non completata*
+
+        A mano: le serie completate dell'ultima sessione sono 10/11/12 a 55 kg;
+        la sessione prima stava a **57,5 kg**, quindi lo stesso carico non è stato
+        ripetuto due volte di fila e il carico **non sale**. Il traguardo senza
+        scheda è la serie migliore già fatta a quel carico, **12**.
+        """
+        self.sessione(
+            8,
+            serie=[
+                (8, "57.5", False),
+                (6, "57.5", True),
+                (8, "57.5", False),
+            ],
+        )
+        self.sessione(
+            3,
+            serie=[
+                (12, "55", False),
+                (10, "55", True),
+                (11, "55", True),
+                (12, "55", True),
+            ],
+        )
+
+        consiglio = self.consiglio()
+
+        self.assertEqual(consiglio.titolo, "Stesso carico, una ripetizione in più")
+        self.assertIn(
+            "Ripeti 55 kg su Panca piana con bilanciere e punta a 12 "
+            "ripetizioni su tutte le serie di lavoro",
+            consiglio.azione,
+        )
+        self.assertIn("55 kg × 10/11/12 ripetizioni", consiglio.misura)
+        self.assertIn("la sessione prima era 57,5 kg", consiglio.misura)
+
+    def test_the_climbing_advice_matches_the_hand_computed_one_too(self):
+        """Il secondo controllo a mano, sul ramo che **cambia un numero**.
+
+        Stesso utente, **Panca piana con bilanciere**, le sue ultime due
+        sessioni al 2026-09-09:
+
+        - 05/09/2026, 117,5 kg: 6, 6, 6, 6
+        - 31/08/2026, 117,5 kg: 5, 3, 5
+
+        A mano: stesso carico due volte di fila; la serie più debole passa da
+        **3** a **6**, quindi non è calata e il carico sale di un incremento di
+        bilanciere — **117,5 + 2,5 = 120**. È il numero che l'utente riscriverà
+        nel form, bilanciere compreso, e non passa da `EFFECTIVE_LOAD`.
+        """
+        self.sessione(
+            9, serie=[(5, "117.5", True), (3, "117.5", True), (5, "117.5", True)]
+        )
+        self.sessione(
+            4,
+            serie=[
+                (6, "117.5", True),
+                (6, "117.5", True),
+                (6, "117.5", True),
+                (6, "117.5", True),
+            ],
+        )
+
+        consiglio = self.consiglio()
+
+        self.assertEqual(consiglio.titolo, "Sali di carico")
+        self.assertIn("Passa a 120 kg", consiglio.azione)
+        self.assertIn("(117,5 + 2,5, l'incremento di Bilanciere)", consiglio.azione)
+        self.assertIn("117,5 kg due volte di fila", consiglio.misura)
+        self.assertIn("5/3/5 ripetizioni", consiglio.misura)
+        self.assertIn("6/6/6/6", consiglio.misura)
+
+    # --- le due pagine -----------------------------------------------------
+
+    def test_the_exercise_page_shows_the_advice_above_the_analyses(self):
+        """La seconda e ultima superficie su cui il coach parla (ADR-0007).
+
+        Sta sopra le analisi perché risponde a un'altra domanda: le tre analisi
+        dicono «sto migliorando», il consiglio dice «cosa faccio la prossima
+        volta», che è il motivo per cui si apre la pagina di un esercizio prima
+        di allenarlo.
+        """
+        self.sessione(10, serie=[(8, "60", True), (8, "60", True)])
+        self.sessione(3, serie=[(9, "60", True), (9, "60", True)])
+
+        response = self.client.get(
+            reverse("training:exercise-detail", args=[self.panca.slug])
+        )
+        pagina = response.content.decode()
+
+        self.assertEqual([c.tipo for c in response.context["consigli"]], ["carico"])
+        self.assertContains(response, "Il coach dice", count=1)
+        self.assertIn("Passa a 62,5 kg", pagina)
+        self.assertLess(pagina.index("Il coach dice"), pagina.index("Il tuo record"))
+        # Qui l'esercizio **è** la pagina: il link a sé stessa non si disegna.
+        self.assertNotIn("Apri Panca piana con bilanciere", pagina)
+
+    def test_the_exercise_page_stays_quiet_on_an_exercise_never_trained(self):
+        """Un esercizio aperto dal catalogo per curiosità non riceve un carico
+        di partenza inventato, e il riquadro non c'è — come sulla dashboard."""
+        response = self.client.get(
+            reverse("training:exercise-detail", args=[self.panca.slug])
+        )
+
+        self.assertEqual(response.context["consigli"], [])
+        self.assertNotContains(response, "Il coach dice")
+
+    def test_the_dashboard_links_the_exercise_the_advice_talks_about(self):
+        """In dashboard il consiglio di carico nomina un esercizio che sta un
+        click più in là: senza il link direbbe «sali a 62,5 kg» e lascerebbe
+        all'utente il compito di ricordarsi di cosa."""
+        self.sessione(10, serie=[(8, "60", True), (8, "60", True)])
+        self.sessione(3, serie=[(9, "60", True), (9, "60", True)])
+
+        response = self.client.get(reverse("training:dashboard"))
+
+        self.assertEqual(response.context["consiglio"].tipo, "carico")
+        self.assertContains(response, "Apri Panca piana con bilanciere")
+        self.assertContains(
+            response,
+            reverse("training:exercise-detail", args=[self.panca.slug]),
+        )
+
+    def test_the_page_cost_does_not_grow_with_the_history(self):
+        """La guardia di #86 sul dettaglio esercizio, che #102 aveva misurato
+        in banda verde: le due query del carico leggono **l'ultima sessione**,
+        non la storia, e il conto non deve accorgersi di quanta ce n'è."""
+
+        def rendi():
+            with CaptureQueriesContext(connection) as contesto:
+                response = self.client.get(
+                    reverse("training:exercise-detail", args=[self.panca.slug])
+                )
+                self.assertEqual(response.status_code, 200)
+            return len(contesto.captured_queries)
+
+        for indietro in range(1, 4):
+            self.sessione(indietro * 7, serie=[(8, "60", True)])
+        prima = rendi()
+
+        for indietro in range(4, 40):
+            self.sessione(indietro * 7, serie=[(8, "60", True), (8, "60", True)])
+
+        self.assertEqual(prima, rendi())
 
 
 class ProvenanceTests(TestCase):
