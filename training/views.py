@@ -88,8 +88,17 @@ class DashboardView(LoginRequiredMixin, TemplateView):
     la progressione nel tempo** — e quella resta di là.
 
     Delle tecniche del ponte (`docs/spec/00-indice.md`) ne usa una sola,
-    `F()`, e per la ragione già scritta lì: il volume è `ripetizioni × carico`
-    su 296.724 righe, e farlo in Python vorrebbe dire scaricarle tutte.
+    `F()`, e per la ragione già scritta lì: il volume è `ripetizioni × carico
+    effettivo` su 296.724 righe, e farlo in Python vorrebbe dire scaricarle
+    tutte.
+
+    Con #97 le due definizioni condivise che questa pagina usa — il filtro
+    universale e il volume — smettono di essere riscritte qui e arrivano dal
+    custom QuerySet. Non è ordine: la copia scritta a mano calcolava il volume
+    **senza carico effettivo**, quindi su corpo libero valeva zero, e nessun
+    test lo segnalava perché nessuno confrontava questa pagina con le analisi
+    (#75). Il riquadro del volume, dopo, mostra un numero più alto: è la
+    schiena che era sparita.
 
     Il `LoginRequiredMixin` entra con #68: la dashboard è una pagina personale,
     senza un utente non ha niente da dire.
@@ -106,20 +115,27 @@ class DashboardView(LoginRequiredMixin, TemplateView):
         da_mese = adesso - timedelta(days=GIORNI_MESE)
         da_costanza = adesso - timedelta(days=GIORNI_COSTANZA)
 
-        # Solo le serie **di lavoro e completate** contano: il riscaldamento non
-        # è volume allenante, e una serie programmata ma non spuntata non è
-        # successa. È la stessa definizione che useranno le analisi di fase 2, ed
-        # è la ragione per cui vive qui in un posto solo.
-        serie = WorkoutSet.objects.filter(
-            workout__user=self.request.user,
-            set_type=WorkoutSet.SetType.WORKING,
-            is_completed=True,
-        )
+        # Il **filtro universale** arriva dal custom QuerySet, non riscritto qui:
+        # solo le serie di lavoro e completate contano, il riscaldamento non è
+        # volume allenante e una serie programmata ma non spuntata non è
+        # successa. Fino a #97 questa riga era una seconda copia della stessa
+        # regola, ed è così che il volume aveva finito per divergere.
+        serie = WorkoutSet.objects.working().filter(workout__user=self.request.user)
         allenamenti = Workout.objects.filter(user=self.request.user)
 
-        context["volume_recente"] = serie.filter(
-            workout__started_at__gte=da_recenti
-        ).aggregate(v=Sum(F("reps") * F("weight")))["v"]
+        # `with_volume()` e non `Sum(F("reps") * F("weight"))`: la seconda forma
+        # è ciò che questa view faceva fino a #97, e su corpo libero dava
+        # **zero** — le trazioni e i piegamenti non entravano nel riquadro che
+        # apre la prima pagina. Il volume ha un nome solo (ADR-0006), e la
+        # dashboard e le analisi di fase 2 lo leggono dallo stesso posto.
+        #
+        # La view chiama il **metodo** e non importa l'espressione: le query
+        # stanno nel QuerySet, qui sta la domanda.
+        context["volume_recente"] = (
+            serie.filter(workout__started_at__gte=da_recenti)
+            .with_volume()
+            .aggregate(v=Sum("volume"))["v"]
+        )
 
         context["allenamenti_mese"] = allenamenti.filter(
             started_at__gte=da_mese

@@ -41,6 +41,12 @@ c'è forza relativa, quindi niente percentile e nessuna riga in classifica. È
 un'assenza da dichiarare, non da lasciar scoprire davanti a una classifica in
 cui non ci si trova.
 
+Da #97 costa una terza cosa, ed è sopra questa riga: il carico effettivo di una
+trazione è `peso aggiunto + peso corporeo` (ADR-0006), quindi senza il peso
+corporeo quelle serie non hanno un carico e restano **fuori dal volume**. È il
+riquadro immediatamente sotto questo avviso, e vale la pena dirlo lì invece di
+lasciar credere che il numero sia completo.
+
 Il tag `comment` e non la forma breve col cancelletto: quella è una comodità
 di *una riga sola*, e su più righe il lexer non la riconosce — il testo
 finisce nell'HTML della pagina. Rilevato in #69.
@@ -49,7 +55,8 @@ finisce nell'HTML della pagina. Rilevato in #69.
   <div class="rail">
     <div class="eyebrow mb-1" style="color:var(--gold)">Manca il peso corporeo</div>
     <div style="color:var(--t2);font-size:.9rem">
-      Senza di esso resti fuori dalle classifiche e non ricevi un percentile.
+      Senza di esso resti fuori dalle classifiche, non ricevi un percentile e le
+      serie a corpo libero non entrano nel volume qui sotto.
       <a href="{% url 'training:profile' %}" style="color:var(--volt)">Dichiaralo dal profilo</a>.
     </div>
   </div>
@@ -64,8 +71,8 @@ finisce nell'HTML della pagina. Rilevato in #69.
       {% comment %}
       `floatformat:"0g"` e non il numero grezzo: il volume è il prodotto di due
       colonne e arriva coi decimali del carico, che a schermo sono rumore. Il
-      suffisso `g` raggruppa le migliaia secondo la locale — `28.540` e non
-      `28540`, che a colpo d'occhio si legge come un numero di quattro cifre.
+      suffisso `g` raggruppa le migliaia secondo la locale — `34.396` e non
+      `34396`, che a colpo d'occhio si legge come un numero di quattro cifre.
       {% endcomment %}
       <div class="hero-num">{{ volume_recente|default_if_none:0|floatformat:"0g" }}<span style="font-size:.5em;color:var(--t2)"> kg</span></div>
       <div class="mt-2" style="color:var(--t3);font-size:.82rem">ultimi {{ giorni_recenti }} giorni</div>
