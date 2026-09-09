@@ -70,7 +70,7 @@ La concentrazione sugli esercizi core non è un dettaglio: spargere 100 utenti s
 
 Il prototipo è `scripts/prototype_seed_synthetic.py` — **854 righe di codice usa-e-getta**, stdlib pura, scritto quando il progetto Django non esisteva ancora. **Non è** il management command: la fase 1 l'ha portato dentro `training/management/commands/seed_synthetic.py` ([#75](https://github.com/cavallinilorenzo/progetto-django-uni/issues/75)), producendo la stessa popolazione riga per riga, e il prototipo resta come sorgente del ragionamento. Dettaglio in `docs/generatore-sintetico.md`.
 
-Rieseguire il comando su un database già popolato **non** è idempotente come `load_catalog` — sono utenti, non righe di anagrafica: si rifiuta, e `--reset` è il modo dichiarato di rigenerare. Gli utenti sintetici condividono la password `progressive`, perché su `demo064` si entra per mostrare la pagina dello stallo.
+Rieseguire il comando su un database già popolato **non** è idempotente come `load_catalog` — sono utenti, non righe di anagrafica: si rifiuta, e `--reset` è il modo dichiarato di rigenerare. Gli utenti sintetici condividono la password `progressive`, perché su `cavallinilorenzo` si entra per mostrare la pagina dello stallo.
 
 ### Gli utenti sintetici si dichiarano
 
@@ -78,7 +78,7 @@ Rieseguire il comando su un database già popolato **non** è idempotente come `
 
 ### L'utente della demo
 
-**`demo064` — Martina Longo**, scelto in anticipo come voleva #17: **24 mesi** di storico e **1904 finestre etichettabili**. I due anni sono dichiarati in `DEMO_MONTHS` invece che sorteggiati — prima ne aveva 17,2, e li aveva per caso. È su questo account che si dimostra la pagina dello stallo, perché quello di Lorenzo è troppo corto.
+**`cavallinilorenzo` — Lorenzo Cavallini**, scelto in anticipo come voleva #17: **24 mesi** di storico e **1904 finestre etichettabili**. I due anni sono dichiarati in `DEMO_MONTHS` invece che sorteggiati — prima ne aveva 17,2, e li aveva per caso. È su questo account che si dimostra la pagina dello stallo, perché quello di Lorenzo è troppo corto.
 
 ## Ordine di caricamento
 

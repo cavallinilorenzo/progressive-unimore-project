@@ -68,7 +68,7 @@ serve. Lo storico va da **0,5 a 24,0 mesi**, mediana 10,2:
 - **l'utente della demo a 24 mesi tondi**, unico storico dichiarato invece che
   sorteggiato: due anni coprono i 12 mesi delle analisi di volume *più* un anno di
   confronto dietro, così `TruncMonth` ha due cicli da mettere a fianco invece di uno
-  troncato. Prima ne aveva 17,2, ma per caso — `demo064` non è fra i sei veterani;
+  troncato. Prima ne aveva 17,2, ma per caso — la posizione 64 non è fra i sei veterani;
 - la maggior parte fra 4 e 12 mesi;
 - **quattro utenti sotto i 21 giorni**, apposta, perché la pagina dello stallo possa
   mostrare dal vivo lo stato «dati insufficienti — 4 allenamenti su 6» che #17 vuole
@@ -218,6 +218,6 @@ scritto.
 #17 vuole che la pagina dello stallo si dimostri su un utente sintetico «scelto e nominato
 in anticipo». Lo sceglie il rapporto, non la fretta del giorno dell'orale:
 
-**`demo064` — Martina Longo**, archetipo intermedio in plateau, **24 mesi** di storico,
+**`cavallinilorenzo` — Lorenzo Cavallini**, archetipo intermedio in plateau, **24 mesi** di storico,
 **1904 finestre etichettabili**. I due anni sono dichiarati in `DEMO_MONTHS`, non
 sorteggiati: prima ne aveva 17,2 e 1199 finestre, e li aveva per caso.

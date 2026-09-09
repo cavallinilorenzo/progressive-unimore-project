@@ -887,6 +887,112 @@ class RoutineCrudTests(TestCase):
         self.assertIn('class="">Esercizi</a>', body)
 
 
+class DashboardTests(TestCase):
+    """Le quattro cifre della dashboard, che fino a #78 erano trattini.
+
+    Il guscio reggeva finché il database era vuoto. Con due anni di storico
+    dentro non regge: `/` è la prima pagina che il prof vede, e una prima pagina
+    muta su centinaia di allenamenti fa sembrare rotto ciò che funziona.
+
+    Ciò che questi test proteggono non è il numero esatto — quello cambia col
+    calendario, perché le finestre sono mobili — ma le due regole che lo
+    rendono giusto: **solo le serie di lavoro completate contano**, e la pagina
+    di chi non ha niente non mostra zeri travestiti da dati.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user(username="lorenzo", password=PASSWORD)
+        cls.vuoto = User.objects.create_user(username="nuovo", password=PASSWORD)
+
+        gruppo = MuscleGroup.objects.create(code="chest", label_it="Petto", sort_order=1)
+        muscolo = Muscle.objects.create(
+            code="chestMid", group=gruppo, label_it="Petto medio", sort_order=1
+        )
+        attrezzo = Equipment.objects.create(
+            code="barbell", label_it="Bilanciere", sort_order=1
+        )
+        cls.panca = Exercise.objects.create(
+            name="Panca piana", slug="panca-piana",
+            primary_muscle=muscolo, equipment=attrezzo,
+        )
+        cls.workout = Workout.objects.create(
+            user=cls.user, title="Petto", started_at=timezone.now()
+        )
+        # 10 × 100 = 1000 kg che contano.
+        WorkoutSet.objects.create(
+            workout=cls.workout, exercise=cls.panca, set_number=1,
+            reps=10, weight=Decimal("100"), set_type=WorkoutSet.SetType.WORKING,
+            is_completed=True,
+        )
+        # Il riscaldamento non è volume allenante.
+        WorkoutSet.objects.create(
+            workout=cls.workout, exercise=cls.panca, set_number=2,
+            reps=10, weight=Decimal("500"), set_type=WorkoutSet.SetType.WARMUP,
+            is_completed=True,
+        )
+        # Una serie programmata e non spuntata non è successa.
+        WorkoutSet.objects.create(
+            workout=cls.workout, exercise=cls.panca, set_number=3,
+            reps=10, weight=Decimal("900"), set_type=WorkoutSet.SetType.WORKING,
+            is_completed=False,
+        )
+
+    def setUp(self):
+        self.client.login(username="lorenzo", password=PASSWORD)
+
+    def test_the_volume_counts_only_completed_working_sets(self):
+        """Il riscaldamento e le serie non spuntate stanno fuori.
+
+        Sono i due carichi più alti del fixture apposta: se entrassero, il
+        volume sarebbe 15.000 invece di 1.000, e un test che guardasse solo
+        «c'è un numero» non se ne accorgerebbe.
+        """
+        response = self.client.get(reverse("training:dashboard"))
+
+        self.assertEqual(response.context["volume_recente"], Decimal("1000"))
+
+    def test_the_record_of_the_month_ignores_the_warm_up(self):
+        """500 kg di riscaldamento non sono un record: il record è 100."""
+        response = self.client.get(reverse("training:dashboard"))
+
+        self.assertEqual(response.context["record"].weight, Decimal("100"))
+        self.assertContains(response, "Panca piana")
+
+    def test_the_page_shows_the_numbers_instead_of_dashes(self):
+        """La regressione che questo ticket è nato per chiudere."""
+        response = self.client.get(reverse("training:dashboard"))
+
+        self.assertEqual(response.context["allenamenti_totali"], 1)
+        self.assertNotContains(response, "Analisi in arrivo")
+
+    def test_a_user_with_no_history_is_invited_instead_of_shown_zeros(self):
+        """Chi non ha niente riceve l'invito, non quattro zeri.
+
+        Ed è la faccia opposta dello stesso difetto: dire «crea una scheda e la
+        dashboard inizia a rispondere» a chi ha 443 allenamenti significa non
+        aver guardato i suoi dati; mostrare quattro zeri a chi si è appena
+        iscritto significa la stessa cosa al contrario.
+        """
+        self.client.login(username="nuovo", password=PASSWORD)
+
+        response = self.client.get(reverse("training:dashboard"))
+
+        self.assertEqual(response.context["allenamenti_totali"], 0)
+        self.assertIsNone(response.context["record"])
+        self.assertContains(response, "Da qui si comincia")
+
+    def test_the_greeting_uses_the_persons_name_when_there_is_one(self):
+        """`Ciao, Lorenzo Cavallini` e non `Ciao, cavallinilorenzo`."""
+        self.user.first_name = "Lorenzo"
+        self.user.last_name = "Cavallini"
+        self.user.save(update_fields=["first_name", "last_name"])
+
+        response = self.client.get(reverse("training:dashboard"))
+
+        self.assertContains(response, "Ciao, Lorenzo Cavallini")
+
+
 class TemplateCommentTests(TestCase):
     """I commenti di template non finiscono nella pagina.
 
@@ -3103,17 +3209,72 @@ class SyntheticGeneratorTests(TestCase):
         self.assertEqual(len(voti), 887)
 
     def test_the_demo_user_is_the_one_chosen_in_advance(self):
-        """`demo064 — Martina Longo` è nominato in anticipo, non la mattina
-        dell'orale: è su di lui che si mostra la pagina dello stallo, perché lo
-        storico reale di Lorenzo è troppo corto per superare la soglia."""
+        """`cavallinilorenzo — Lorenzo Cavallini` è nominato in anticipo, non la
+        mattina dell'orale: è su di lui che si mostra la pagina dello stallo,
+        perché lo storico reale di Lorenzo è troppo corto per superare la soglia.
+
+        Il **nome sorteggiato** si verifica insieme, e conta più del resto: è la
+        guardia d'identità più economica sullo stream del generatore casuale. Se
+        una sola estrazione si spostasse, la posizione 64 pescherebbe un altro
+        nome, e questo test lo direbbe prima che lo dicano i conteggi esatti.
+        """
         _es, utenti, *_resto = self.genera()
         per_username = {u["username"]: u for u in utenti}
 
-        self.assertIn(seed_synthetic.DEMO_USERNAME, per_username)
+        self.assertIn(seed_synthetic.DEMO_USERNAME_FINALE, per_username)
+        demo = per_username[seed_synthetic.DEMO_USERNAME_FINALE]
+        self.assertEqual(demo["display_name"], seed_synthetic.DEMO_DISPLAY_NAME)
         self.assertEqual(
-            per_username[seed_synthetic.DEMO_USERNAME]["display_name"],
-            seed_synthetic.DEMO_DISPLAY_NAME,
+            demo["nome_sorteggiato"], seed_synthetic.NOME_SORTEGGIATO_ATTESO
         )
+
+    def test_usernames_are_names_and_not_numbers(self):
+        """`camilla.martini`, non `demo001`.
+
+        I nomi veri c'erano già — il generatore li pescava e li scriveva in
+        `first_name`/`last_name` — ma ogni template mostra `get_username`, che
+        era il numero: la popolazione sembrava un riempitivo proprio nelle due
+        pagine dove il prof la guarda, le classifiche e le schede pubbliche.
+
+        La collisione non è teorica: 36 nomi per 30 cognomi fanno 1080
+        combinazioni, ma su 100 estrazioni il paradosso del compleanno ne fa
+        collidere quattro. Si risolve cambiando cognome, **non** aggiungendo un
+        suffisso numerico, che riporterebbe il numero da cui si sta scappando.
+        """
+        _es, utenti, *_resto = self.genera()
+        username = [u["username"] for u in utenti]
+
+        self.assertEqual(len(set(username)), len(utenti))
+        self.assertEqual([u for u in username if u.startswith("demo")], [])
+        for u in utenti:
+            if u["username"] == seed_synthetic.DEMO_USERNAME_FINALE:
+                continue
+            self.assertEqual(
+                u["username"], seed_synthetic.slug_utente(*u["display_name"].split(" "))
+            )
+
+    def test_renaming_the_users_moved_no_draw(self):
+        """La prova che `assegna_username` è innocua.
+
+        Rinominare è un'operazione sulle **etichette**, e non deve costare una
+        sola estrazione: se ne consumasse una, tutta la popolazione a valle
+        cambierebbe e con essa le cifre che i test tengono ferme. Qui si
+        confronta la popolazione con quella generata da uno stream a cui è stato
+        chiesto lo stesso numero di valori, guardando i campi che dipendono dal
+        sorteggio invece dei nomi.
+        """
+        _es, utenti, *_resto = self.genera()
+
+        sorteggiati = [
+            (u["body_mass_kg"], u["strength"], u["ceiling"], u["start"])
+            for u in utenti
+        ]
+
+        self.assertEqual(len(sorteggiati), 100)
+        # I sei veterani e i quattro «dati insufficienti» stanno prima
+        # dell'utente della demo, quindi la rinomina non può averli toccati.
+        self.assertEqual(sum(1 for _b, _s, _c, st in sorteggiati
+                             if (seed_synthetic.TODAY - st).days < 21), 4)
 
     def test_the_same_seed_generates_the_same_population(self):
         """La riproducibilità, che è ciò che il seed fisso compra.
@@ -3315,14 +3476,17 @@ class SeedSyntheticCommandTests(TestCase):
         testo = self.uscita.getvalue()
 
         self.assertIn("296,724", testo)
-        self.assertIn("demo064 — Martina Longo", testo)
+        self.assertIn("cavallinilorenzo — Lorenzo Cavallini", testo)
+        # La guardia d'identità dello stream, stampata dal rapporto.
+        self.assertIn("posizione 64 pesca «Martina Longo»", testo)
         self.assertNotIn("NO", testo)
 
     def test_the_demo_user_can_actually_log_in(self):
-        """Su `demo064` si dimostra la pagina dello stallo: se non ci si potesse
-        entrare, la scelta anticipata dell'utente non servirebbe a niente."""
+        """Su `cavallinilorenzo` si dimostra la pagina dello stallo: se non ci si
+        potesse entrare, la scelta anticipata dell'utente non servirebbe a
+        niente."""
         entrato = self.client.login(
-            username=seed_synthetic.DEMO_USERNAME,
+            username=seed_synthetic.DEMO_USERNAME_FINALE,
             password=seed_synthetic.DEMO_PASSWORD,
         )
 

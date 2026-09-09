@@ -139,4 +139,4 @@ E il coach **non tace**: quando non può valutare lo stallo dà il consiglio non
 
 ### Vincolo per la demo
 
-Lo storico reale di Lorenzo (26 giorni, nessun esercizio oltre 8 sessioni) **è troppo corto** per superare la soglia. La pagina dello stallo si dimostra su un **utente sintetico**, già scelto e nominato: **`demo064` — Martina Longo**, **24 mesi** di storico e **1904 finestre etichettabili**.
+Lo storico reale di Lorenzo (26 giorni, nessun esercizio oltre 8 sessioni) **è troppo corto** per superare la soglia. La pagina dello stallo si dimostra su un **utente sintetico**, già scelto e nominato: **`cavallinilorenzo` — Lorenzo Cavallini**, **24 mesi** di storico e **1904 finestre etichettabili**. È l'account di Lorenzo con dati generati: la contraddizione è dichiarata, non nascosta, e `is_synthetic` resta vero anche su di lui.
