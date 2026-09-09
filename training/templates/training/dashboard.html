@@ -1,14 +1,19 @@
 {% extends "base.html" %}
 {% comment %}
-La dashboard in fase 1 è un GUSCIO, ed è una scelta della mappa #53 (regola 5).
-La spec elenca 13 passi e nessuno è «dashboard», perché le sei analisi che la
-riempiono sono fase 2 — ma `/` è una delle cinque voci dell'header, quindi la
-pagina entra ora, vuota e onesta, e si riempie dopo.
-
 Il markup è quello della variante A del prototipo #19 (`dashboard_a.html`):
 la gerarchia è il numero, la riga di cifre hero apre la pagina e il resto la
-spiega. Qui le cifre non ci sono ancora, e i riquadri lo dicono invece di
-mostrare uno zero che sembrerebbe un dato.
+spiega.
+
+Fino a #78 le cifre erano trattini e i riquadri dicevano «analisi in arrivo»:
+era una scelta della mappa #53, e reggeva finché il database era vuoto. Con due
+anni di storico dentro non regge — `/` è la prima pagina che il prof vede, e
+una prima pagina muta su 443 allenamenti fa sembrare rotto ciò che funziona.
+Ora le quattro cifre vengono da quattro aggregati sopra le righe dell'utente:
+nessun confronto con gli altri, che resta fase 2.
+
+Le finestre sono **mobili** (7 e 30 giorni) e non «questa settimana»: i dati
+sintetici finiscono a una data fissa, quindi un ancoraggio al calendario
+tornerebbe a zero al primo lunedì buono, cioè forse la mattina dell'orale.
 {% endcomment %}
 
 {% block title %}Dashboard — Progressive{% endblock %}
@@ -17,9 +22,13 @@ mostrare uno zero che sembrerebbe un dato.
 
 <div class="d-flex align-items-baseline justify-content-between mb-4">
   <div>
-    <div class="eyebrow">Settimana corrente</div>
+    {% comment %}
+    Non «settimana corrente»: le finestre qui sotto sono mobili, e un occhiello
+    che promette il calendario mentirebbe sui numeri.
+    {% endcomment %}
+    <div class="eyebrow">Colpo d'occhio</div>
     <h1 class="h4 fw-bold mb-0">
-      {% if user.is_authenticated %}Ciao, {{ user.get_username }}{% else %}Progressive{% endif %}
+      {% if user.is_authenticated %}Ciao, {{ user.get_full_name|default:user.get_username }}{% else %}Progressive{% endif %}
     </h1>
   </div>
   <div class="eyebrow">{{ oggi|date:"j F Y" }}</div>
@@ -47,37 +56,68 @@ finisce nell'HTML della pagina. Rilevato in #69.
 </div>
 {% endif %}
 
-{# La riga di cifre hero: i quattro riquadri della variante A, ancora spenti. #}
+{# La riga di cifre hero: le quattro della variante A, ora accese. #}
 <div class="row g-3 mb-4">
   <div class="col-6 col-lg-3">
     <div class="card-ink p-3 h-100">
-      <div class="eyebrow mb-2">Volume settimanale</div>
-      <div class="hero-num" style="color:var(--t3)">&mdash;</div>
-      <div class="mt-2" style="color:var(--t3);font-size:.82rem">Analisi in arrivo</div>
+      <div class="eyebrow mb-2">Volume</div>
+      {% comment %}
+      `floatformat:"0g"` e non il numero grezzo: il volume è il prodotto di due
+      colonne e arriva coi decimali del carico, che a schermo sono rumore. Il
+      suffisso `g` raggruppa le migliaia secondo la locale — `28.540` e non
+      `28540`, che a colpo d'occhio si legge come un numero di quattro cifre.
+      {% endcomment %}
+      <div class="hero-num">{{ volume_recente|default_if_none:0|floatformat:"0g" }}<span style="font-size:.5em;color:var(--t2)"> kg</span></div>
+      <div class="mt-2" style="color:var(--t3);font-size:.82rem">ultimi {{ giorni_recenti }} giorni</div>
     </div>
   </div>
   <div class="col-6 col-lg-3">
     <div class="card-ink p-3 h-100">
       <div class="eyebrow mb-2">Allenamenti</div>
-      <div class="hero-num" style="color:var(--t3)">&mdash;</div>
-      <div class="mt-2" style="color:var(--t3);font-size:.82rem">Analisi in arrivo</div>
+      <div class="hero-num">{{ allenamenti_mese }}</div>
+      <div class="mt-2" style="color:var(--t3);font-size:.82rem">ultimi {{ giorni_mese }} giorni &middot; {{ allenamenti_totali }} in tutto</div>
     </div>
   </div>
   <div class="col-6 col-lg-3">
     <div class="card-ink p-3 h-100">
       <div class="eyebrow mb-2">Costanza</div>
-      <div class="hero-num" style="color:var(--t3)">&mdash;</div>
-      <div class="mt-2" style="color:var(--t3);font-size:.82rem">Analisi in arrivo</div>
+      <div class="hero-num">{{ costanza }}<span style="font-size:.5em;color:var(--t2)"> /sett</span></div>
+      <div class="mt-2" style="color:var(--t3);font-size:.82rem">media su 4 settimane</div>
     </div>
   </div>
   <div class="col-6 col-lg-3">
     <div class="card-ink p-3 h-100">
       <div class="eyebrow mb-2">Record del mese</div>
+      {% if record %}
+      <div class="hero-num">{{ record.weight|floatformat:"-1" }}<span style="font-size:.5em;color:var(--t2)"> kg</span></div>
+      <div class="mt-2 text-truncate" style="color:var(--t3);font-size:.82rem">{{ record.exercise.name }}</div>
+      {% else %}
+      {# Un trattino qui è un dato: «non hai sollevato niente», non «non lo so». #}
       <div class="hero-num" style="color:var(--t3)">&mdash;</div>
-      <div class="mt-2" style="color:var(--t3);font-size:.82rem">Analisi in arrivo</div>
+      <div class="mt-2" style="color:var(--t3);font-size:.82rem">nessuna serie negli ultimi {{ giorni_mese }} giorni</div>
+      {% endif %}
     </div>
   </div>
 </div>
+
+{% if ultimi_allenamenti %}
+<div class="card-ink p-3 mb-4">
+  <div class="eyebrow mb-3">Ultimi allenamenti</div>
+  <div class="list-group list-group-flush">
+    {% for a in ultimi_allenamenti %}
+    <a href="{% url 'training:workout-detail' a.pk %}"
+       class="list-group-item list-group-item-action bg-transparent px-0 d-flex justify-content-between align-items-baseline"
+       style="border-color:var(--line)">
+      <span>
+        <span class="fw-bold">{{ a.title|default:"Allenamento" }}</span>
+        {% if a.routine %}<span style="color:var(--t3);font-size:.82rem"> &middot; {{ a.routine.name }}</span>{% endif %}
+      </span>
+      <span style="color:var(--t3);font-size:.82rem">{{ a.n_serie }} serie &middot; {{ a.started_at|date:"j M Y" }}</span>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
 
 {# Il coach come avviso sul rail volt, non come pannello: avvisa, non è il prodotto. #}
 <div class="card-ink p-3 mb-4">
@@ -91,6 +131,12 @@ finisce nell'HTML della pagina. Rilevato in #69.
   </div>
 </div>
 
+{% if not allenamenti_totali %}
+{% comment %}
+L'invito compare **solo a chi è davvero all'inizio**. Dirgli «crea una scheda e
+la dashboard inizia a rispondere» a uno che ha 443 allenamenti alle spalle
+significa non aver guardato i suoi dati, ed è il difetto che si nota per primo.
+{% endcomment %}
 <div class="card-ink p-4 text-center">
   <div class="eyebrow mb-2">Da qui si comincia</div>
   <p style="color:var(--t2);max-width:38rem;margin:0 auto">
@@ -99,5 +145,6 @@ finisce nell'HTML della pagina. Rilevato in #69.
     a rispondere.
   </p>
 </div>
+{% endif %}
 
 {% endblock %}

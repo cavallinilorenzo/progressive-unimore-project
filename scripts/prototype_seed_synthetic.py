@@ -45,6 +45,13 @@ TODAY = date(2026, 9, 7)
 DEMO_USERNAME = "demo064"
 DEMO_MONTHS = 24.0
 
+# Come si chiama l'utente della demo all'arrivo, e la funzione che trasforma
+# `demo001` in `camilla.martini`. Copie di quelle del comando, e per la stessa
+# ragione di `DEMO_MONTHS`: le due popolazioni devono restare confrontabili riga
+# per riga. La rinomina **non consuma estrazioni**, quindi non muove nulla.
+DEMO_USERNAME_FINALE = "cavallinilorenzo"
+DEMO_DISPLAY_NAME = "Lorenzo Cavallini"
+
 BASE_DIR = Path(__file__).resolve().parent.parent
 CATALOG_DIR = BASE_DIR / "data" / "catalog"
 OUT_DIR = BASE_DIR / "data" / "synthetic"
@@ -277,7 +284,38 @@ def make_users(rng):
                 is_synthetic=True,
             )
         )
+    assegna_username(users)
     return users
+
+
+def assegna_username(users):
+    """`demo001` diventa `camilla.martini`. Nessuna estrazione consumata.
+
+    Gemella di quella in `training/management/commands/seed_synthetic.py`: la
+    deduplica scorre `COGNOMI` in ordine invece di ripescare, quindi la
+    popolazione resta identica al bit e cambiano solo le etichette.
+    """
+    presi = set()
+    for u in users:
+        if u["username"] == DEMO_USERNAME:
+            u["nome_sorteggiato"] = u["display_name"]
+            u["username"] = DEMO_USERNAME_FINALE
+            u["display_name"] = DEMO_DISPLAY_NAME
+            presi.add(DEMO_USERNAME_FINALE)
+            continue
+        nome, cognome = u["display_name"].split(" ")
+        if slug_utente(nome, cognome) in presi:
+            cognome = next(
+                (c for c in COGNOMI if slug_utente(nome, c) not in presi), cognome
+            )
+            u["display_name"] = f"{nome} {cognome}"
+        u["username"] = slug_utente(nome, cognome)
+        presi.add(u["username"])
+
+
+def slug_utente(nome, cognome):
+    """`Camilla`, `Martini` → `camilla.martini`."""
+    return f"{nome}.{cognome}".lower()
 
 
 def pick_exercises(user, exercises, rng):

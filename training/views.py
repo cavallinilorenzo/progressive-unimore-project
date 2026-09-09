@@ -11,6 +11,7 @@ le view già pronte di `django.contrib.auth`, incluse in `config/urls.py` sotto
 `LoginView` sarebbe lavoro in più con meno garanzie.
 """
 
+from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -22,7 +23,7 @@ from django.contrib.messages.views import SuccessMessageMixin
 from django.core.exceptions import PermissionDenied
 from django.core.files.storage import FileSystemStorage
 from django.db import transaction
-from django.db.models import Avg, Count, Prefetch, Q
+from django.db.models import Avg, Count, F, Prefetch, Q, Sum
 from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse, reverse_lazy
@@ -59,18 +60,39 @@ from training.models import (
 )
 
 
+#: Le finestre della dashboard, in giorni. Sono **mobili** e non «settimana
+#: corrente» / «mese corrente», e la ragione è concreta: la popolazione
+#: sintetica finisce a una data fissa (`seed_synthetic.TODAY`), quindi al primo
+#: lunedì successivo una dashboard ancorata al calendario tornerebbe a zero e la
+#: pagina sembrerebbe rotta il giorno dell'orale. Una finestra mobile guarda
+#: sempre indietro dello stesso tratto, e su dati fermi continua a rispondere.
+GIORNI_RECENTI = 7
+GIORNI_MESE = 30
+GIORNI_COSTANZA = 28
+
+
 class DashboardView(LoginRequiredMixin, TemplateView):
-    """`/` — il guscio della dashboard.
+    """`/` — le quattro cifre che aprono la pagina, e gli ultimi allenamenti.
 
-    In fase 1 la pagina non calcola niente: le sei analisi che la riempiono
-    sono fase 2 (`docs/spec/04-analisi.md`). Esiste ora perché `/` è una delle
-    cinque voci dell'header, e una voce che porta a un 404 non è un guscio.
+    Fino a #78 questa pagina era un **guscio**: quattro riquadri con un trattino
+    e «analisi in arrivo», perché le sei analisi che la riempiono sono fase 2
+    (`docs/spec/04-analisi.md`). Reggeva finché il database era vuoto. Con due
+    anni di storico dentro non regge più: `/` è la **prima pagina che il prof
+    vede**, e una prima pagina che non dice niente su 443 allenamenti fa
+    sembrare rotto ciò che invece funziona.
 
-    Il `LoginRequiredMixin` entra qui, con questo ticket: #67 l'aveva lasciato
-    fuori di proposito, perché finché `/accounts/login/` non esisteva la
-    redirect avrebbe reso il progetto non avviabile da un clone pulito. Ora
-    quella rotta c'è, e la dashboard è una pagina personale: senza un utente
-    non ha niente da dire.
+    Quindi qui si calcola, ma si calcola **poco e per intero**: quattro
+    aggregati sopra le righe che l'utente ha già registrato, niente percentili,
+    niente confronto con gli altri, nessuna finestra scorrevole. La linea di
+    fase 2 non è «la dashboard mostra numeri», è **il confronto fra persone e
+    la progressione nel tempo** — e quella resta di là.
+
+    Delle tecniche del ponte (`docs/spec/00-indice.md`) ne usa una sola,
+    `F()`, e per la ragione già scritta lì: il volume è `ripetizioni × carico`
+    su 296.724 righe, e farlo in Python vorrebbe dire scaricarle tutte.
+
+    Il `LoginRequiredMixin` entra con #68: la dashboard è una pagina personale,
+    senza un utente non ha niente da dire.
     """
 
     template_name = "training/dashboard.html"
@@ -78,6 +100,56 @@ class DashboardView(LoginRequiredMixin, TemplateView):
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         context["oggi"] = timezone.localdate()
+
+        adesso = timezone.now()
+        da_recenti = adesso - timedelta(days=GIORNI_RECENTI)
+        da_mese = adesso - timedelta(days=GIORNI_MESE)
+        da_costanza = adesso - timedelta(days=GIORNI_COSTANZA)
+
+        # Solo le serie **di lavoro e completate** contano: il riscaldamento non
+        # è volume allenante, e una serie programmata ma non spuntata non è
+        # successa. È la stessa definizione che useranno le analisi di fase 2, ed
+        # è la ragione per cui vive qui in un posto solo.
+        serie = WorkoutSet.objects.filter(
+            workout__user=self.request.user,
+            set_type=WorkoutSet.SetType.WORKING,
+            is_completed=True,
+        )
+        allenamenti = Workout.objects.filter(user=self.request.user)
+
+        context["volume_recente"] = serie.filter(
+            workout__started_at__gte=da_recenti
+        ).aggregate(v=Sum(F("reps") * F("weight")))["v"]
+
+        context["allenamenti_mese"] = allenamenti.filter(
+            started_at__gte=da_mese
+        ).count()
+        context["allenamenti_totali"] = allenamenti.count()
+
+        # La costanza è una media, non un conteggio: «quante volte a settimana»
+        # è la domanda che un utente si fa davvero, e quattro settimane sono la
+        # finestra più corta in cui la risposta non è dominata da una settimana
+        # storta.
+        sedute = allenamenti.filter(started_at__gte=da_costanza).count()
+        context["costanza"] = round(sedute / (GIORNI_COSTANZA / 7), 1)
+
+        # Il record è il carico più alto del mese, non il massimale stimato:
+        # Epley è roba del motore analitico, e qui basta un `Max` su una colonna.
+        record = (
+            serie.filter(workout__started_at__gte=da_mese)
+            .order_by("-weight")
+            .select_related("exercise")
+            .first()
+        )
+        context["record"] = record
+
+        context["ultimi_allenamenti"] = (
+            allenamenti.order_by("-started_at")
+            .select_related("routine")
+            .annotate(n_serie=Count("sets"))[:5]
+        )
+        context["giorni_recenti"] = GIORNI_RECENTI
+        context["giorni_mese"] = GIORNI_MESE
         return context
 
 

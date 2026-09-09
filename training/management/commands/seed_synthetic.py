@@ -93,8 +93,26 @@ DEMO_PASSWORD = "progressive"
 # L'utente su cui si dimostra la pagina dello stallo, scelto in anticipo dal
 # rapporto del prototipo (1904 finestre etichettabili) e non la mattina
 # dell'orale.
+#: L'indice con cui l'utente della demo nasce dentro `make_users`, prima che
+#: `assegna_username` sostituisca i numeri coi nomi. Resta `demo064` perché è
+#: **la posizione nella sequenza** del generatore casuale, non un nome: cambiarlo
+#: sposterebbe l'utente e con lui il suo storico.
 DEMO_USERNAME = "demo064"
-DEMO_DISPLAY_NAME = "Martina Longo"
+
+#: Come si chiama all'arrivo. È l'account di Lorenzo, e i dati che ci stanno
+#: dentro sono generati: la contraddizione è **voluta e dichiarata**, non
+#: nascosta. `is_synthetic` resta vero anche su di lui, quindi dove il suo nome
+#: compare in pubblico l'interfaccia scrive «utente dimostrativo» (ADR-0009) —
+#: che all'orale è esattamente la frase da dire, invece di una da evitare.
+DEMO_USERNAME_FINALE = "cavallinilorenzo"
+DEMO_DISPLAY_NAME = "Lorenzo Cavallini"
+
+#: Il nome che la posizione 64 **pesca** prima di essere ribattezzata. Non è
+#: decorazione: è la guardia d'identità più economica che esista sullo stream del
+#: generatore casuale — se una sola estrazione si spostasse, qui comparirebbe un
+#: altro nome. Prima che l'utente della demo prendesse il nome di Lorenzo, questo
+#: era il suo, e il rapporto lo verifica ancora.
+NOME_SORTEGGIATO_ATTESO = "Martina Longo"
 
 # Lo storico dell'utente della demo è l'unico **dichiarato** invece che
 # sorteggiato, ed è due anni tondi. Prima era 17,2 mesi, ma per caso: `demo064`
@@ -347,7 +365,64 @@ def make_users(rng):
                 quit_after=rng.uniform(0.35, 0.8) if archetype == "abbandono" else None,
             )
         )
+    assegna_username(users)
     return users
+
+
+def assegna_username(users):
+    """Trasforma `demo001` nel nome della persona: `camilla.martini`.
+
+    Un `demo064` in cima alla dashboard e nelle classifiche fa sembrare la
+    popolazione un riempitivo, e i nomi veri **c'erano già** — il generatore
+    pescava `display_name` e lo scriveva in `first_name`/`last_name`, ma ogni
+    template mostra `get_username`, che era il numero. Qui si allinea l'uno
+    all'altro.
+
+    **Non consuma nessuna estrazione**, ed è la proprietà che rende questa
+    funzione innocua: la deduplica scorre `COGNOMI` in ordine invece di
+    ripescare, quindi la popolazione — allenamenti, serie, schede, voti — resta
+    identica al bit. Cambiano solo le etichette, e nessuna delle cifre che i
+    test tengono ferme.
+
+    La collisione va gestita e non è un caso di scuola: 36 nomi per 30 cognomi
+    fanno 1080 combinazioni, ma su 100 estrazioni il paradosso del compleanno ne
+    fa collidere **quattro**. Non si risolve con un suffisso numerico, che
+    riporterebbe il numero da cui si sta scappando: si cambia cognome.
+    """
+    presi = set()
+    for u in users:
+        if u["username"] == DEMO_USERNAME:
+            # Il nome **sorteggiato** si conserva prima di sovrascriverlo, e non
+            # per nostalgia: era la guardia d'identità più economica dell'intero
+            # stream — se una sola estrazione si spostasse, l'utente 64 pescherebbe
+            # un altro nome. Sovrascriverlo e basta avrebbe buttato via il
+            # controllo insieme al nome. Il rapporto lo verifica ancora.
+            u["nome_sorteggiato"] = u["display_name"]
+            u["username"] = DEMO_USERNAME_FINALE
+            u["display_name"] = DEMO_DISPLAY_NAME
+            presi.add(DEMO_USERNAME_FINALE)
+            continue
+        nome, cognome = u["display_name"].split(" ")
+        if slug_utente(nome, cognome) in presi:
+            # Il primo cognome libero in ordine di elenco: deterministico, quindi
+            # due esecuzioni danno gli stessi nomi senza che il seed c'entri.
+            cognome = next(
+                (c for c in COGNOMI if slug_utente(nome, c) not in presi), cognome
+            )
+            u["display_name"] = f"{nome} {cognome}"
+        u["username"] = slug_utente(nome, cognome)
+        presi.add(u["username"])
+
+
+def slug_utente(nome, cognome):
+    """`Camilla`, `Martini` → `camilla.martini`.
+
+    Il punto separa perché è ciò che fa un'azienda vera, e rende il nome
+    leggibile a colpo d'occhio in una classifica. Gli accenti non si tolgono
+    perché in `NOMI` e `COGNOMI` non ce ne sono: se un giorno ce ne fossero,
+    questo è il posto dove normalizzarli.
+    """
+    return f"{nome}.{cognome}".lower()
 
 
 def pick_exercises(user, exercises, rng):
@@ -966,11 +1041,20 @@ class Command(BaseCommand):
         # Che sia ancora lui è anche il controllo d'identità più economico che
         # esista sull'intero stream del generatore: se una sola estrazione si
         # spostasse, `demo064` avrebbe un altro nome.
-        demo = next((u for u in users if u["username"] == DEMO_USERNAME), None)
-        name = demo["display_name"] if demo else "—"
+        demo = next(
+            (u for u in users if u["username"] == DEMO_USERNAME_FINALE), None
+        )
+        sorteggiato = demo["nome_sorteggiato"] if demo else "—"
         write(
-            f"  utente della demo                 {DEMO_USERNAME} — {name}   "
-            f"{self._ok(name == DEMO_DISPLAY_NAME)}"
+            f"  utente della demo                 {DEMO_USERNAME_FINALE} "
+            f"— {DEMO_DISPLAY_NAME}   {self._ok(demo is not None)}"
+        )
+        # La guardia vera è questa riga, non quella sopra: il nome che l'utente 64
+        # ha **pescato** prima di essere ribattezzato. Resta `Martina Longo`
+        # finché lo stream è quello di sempre.
+        write(
+            f"  identità dello stream             posizione 64 pesca "
+            f"«{sorteggiato}»   {self._ok(sorteggiato == NOME_SORTEGGIATO_ATTESO)}"
         )
 
         write("")
