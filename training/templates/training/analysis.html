@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% comment %}
+`/analisi/` — A1 e A2, e i primi due grafici del progetto.
+
+La pagina dichiara **la finestra** prima di disegnare, per la stessa ragione
+per cui la classifica di forza dichiara le proprie condizioni d'ammissione: un
+grafico che non dice su quale periodo guarda si legge come un grafico di
+sempre, e la settimana in cui non ci si è allenati sembra un guasto.
+
+Due figure e non una pagina di figure: sono la **stessa somma** vista da due
+versi — nel tempo e per gruppo muscolare — sulla stessa finestra, e chi legge
+la seconda sta spiegando la prima.
+{% endcomment %}
+
+{% block title %}Analisi — Progressive{% endblock %}
+
+{% block content %}
+
+<div class="d-flex align-items-baseline justify-content-between mb-4">
+  <div>
+    <div class="eyebrow">Analisi</div>
+    <h1 class="h4 fw-bold mb-0">Volume e distribuzione</h1>
+  </div>
+  <div class="eyebrow">ultime {{ settimane }} settimane &middot; dal {{ da|date:"j F Y" }}</div>
+</div>
+
+{% if not user.has_body_mass %}
+{% comment %}
+La stessa dichiarazione della dashboard, e non è una ripetizione: qui il volume
+è il soggetto della pagina, non un riquadro fra quattro. Senza peso corporeo il
+carico effettivo di una trazione è nullo (ADR-0006), quindi quelle serie non
+entrano in **nessuna** delle due figure — e il grafico della schiena risulta
+basso per una ragione che non c'entra con l'allenamento. Incompleto, non zero:
+dirlo è l'unico modo perché non si legga come un dato.
+{% endcomment %}
+<div class="card-ink p-3 mb-4">
+  <div class="rail">
+    <div class="eyebrow mb-1" style="color:var(--gold)">Il volume qui sotto è incompleto</div>
+    <div style="color:var(--t2);font-size:.9rem">
+      Senza un peso corporeo dichiarato le serie a corpo libero non hanno un
+      carico, quindi restano fuori da entrambi i grafici.
+      <a href="{% url 'training:profile' %}" style="color:var(--volt)">Dichiaralo dal profilo</a>.
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if ha_dati_in_finestra %}
+
+<div class="card-ink p-3 mb-4">
+  <div class="d-flex align-items-baseline justify-content-between mb-3">
+    <div class="eyebrow">Volume nel tempo</div>
+    <div class="eyebrow" style="color:var(--t2)">{{ volume_totale|floatformat:"0g" }} kg in {{ settimane }} settimane</div>
+  </div>
+  {% include "training/_grafico.html" with dati=grafico_settimane id="dati-volume-settimane" altezza=300 %}
+  <div class="mt-3 eyebrow" style="color:var(--t3);line-height:1.7">
+    Una settimana senza allenamenti vale <span style="color:var(--t2)">zero</span>,
+    non sparisce: il database restituisce solo i periodi in cui esiste una
+    serie, e unire quei punti disegnerebbe due settimane adiacenti che in
+    realtà distano un mese. L'ultimo punto è la settimana in corso, quindi
+    ancora parziale.
+  </div>
+</div>
+
+<div class="card-ink p-3 mb-4">
+  <div class="eyebrow mb-3">Distribuzione sui sei gruppi</div>
+  {% include "training/_grafico.html" with dati=grafico_gruppi id="dati-volume-gruppi" altezza=280 %}
+
+  {% comment %}
+  La tabella sotto il grafico non è ridondanza: il grafico si guarda, la
+  tabella si legge — e soprattutto la tabella è ciò che rende ogni gruppo un
+  varco verso il catalogo filtrato. Una figura da cui non si può andare da
+  nessuna parte è un vicolo cieco messo in menu.
+  {% endcomment %}
+  <div class="list-group list-group-flush mt-3">
+    {% for riga in per_gruppo %}
+    <a href="{% url 'training:exercise-list' %}?gruppo={{ riga.codice }}"
+       class="list-group-item list-group-item-action bg-transparent px-0 d-flex justify-content-between align-items-baseline"
+       style="border-color:var(--line)">
+      <span class="fw-bold">{{ riga.gruppo }}</span>
+      <span style="color:{% if riga.volume %}var(--t2){% else %}var(--t3){% endif %};font-size:.85rem">
+        {% if riga.volume %}{{ riga.volume|floatformat:"0g" }} kg{% else %}mai allenato in questa finestra{% endif %}
+      </span>
+    </a>
+    {% endfor %}
+  </div>
+
+  <div class="mt-3 eyebrow" style="color:var(--t3);line-height:1.7">
+    Tutti e sei i gruppi compaiono, anche a zero: i gruppi sono un insieme
+    chiuso, e uno che non si vede non si distingue da uno che la pagina si è
+    dimenticata. Ogni esercizio conta sul suo <span style="color:var(--t2)">muscolo
+    primario</span> soltanto — i secondari sono fuori dal modello, perché
+    attribuire loro una quota di volume richiederebbe un coefficiente inventato.
+  </div>
+</div>
+
+<div class="eyebrow" style="color:var(--t3);line-height:1.7">
+  Il <span style="color:var(--t2)">volume</span> è carico effettivo &times;
+  ripetizioni, sommato sulle sole serie di lavoro eseguite: riscaldamenti,
+  avvicinamenti e serie saltate non entrano. Il carico effettivo include il
+  <span style="color:var(--t2)">peso corporeo</span> quando l'attrezzo è il
+  corpo libero, o ogni trazione peserebbe zero.
+  <a href="{% url 'training:dashboard' %}" style="color:var(--volt)">La dashboard</a>
+  mostra le stesse definizioni sulle ultime settimane;
+  <a href="{% url 'training:workout-list' %}" style="color:var(--volt)">lo storico</a>
+  è dove i numeri di qui sono nati.
+</div>
+
+{% else %}
+{% comment %}
+Due vuoti diversi, e la differenza è tutto il valore di questo ramo. Dire «crea
+una scheda e comincia» a chi ha 443 allenamenti fuori finestra significa non
+aver guardato i suoi dati; dire «torna ad allenarti» a chi si è appena
+registrato significa parlare di un passato che non c'è. È la stessa regola del
+percentile sotto soglia: non si mostra il vuoto, si dice il motivo.
+{% endcomment %}
+<div class="card-ink p-4 text-center">
+  {% if ha_dati_in_assoluto %}
+  <div class="eyebrow mb-2">Niente in queste {{ settimane }} settimane</div>
+  <p style="color:var(--t2);max-width:38rem;margin:0 auto">
+    Lo storico c'è, ma nessuna serie di lavoro cade nella finestra che questa
+    pagina guarda — dal {{ da|date:"j F Y" }} a oggi. I grafici resterebbero due
+    linee piatte, che è meno di quanto lo storico sa già dire.
+  </p>
+  <a href="{% url 'training:workout-list' %}" class="btn btn-volt px-4 mt-3">Vai allo storico</a>
+  {% else %}
+  <div class="eyebrow mb-2">Non c'è ancora niente da analizzare</div>
+  <p style="color:var(--t2);max-width:38rem;margin:0 auto">
+    Il volume si calcola sulle serie di lavoro eseguite: finché non ne hai
+    registrata nessuna, questi grafici non avrebbero un numero da disegnare.
+    Registra un allenamento e la pagina inizia a rispondere.
+  </p>
+  <a href="{% url 'training:workout-create' %}" class="btn btn-volt px-4 mt-3">Inizia un allenamento</a>
+  {% endif %}
+</div>
+{% endif %}
+
+{% endblock %}
+
+{% block scripts %}
+{% comment %}
+Chart.js entra **qui** e non in `base.html`: i grafici sono tre su una ventina
+di pagine, e caricare la libreria nel guscio la farebbe scaricare anche a chi
+apre il form di una scheda. Il blocco `scripts` resta il punto in cui va, ed è
+la convenzione che le altre due pagine con un grafico riuseranno.
+
+Solo quando c'è qualcosa da disegnare: senza canvas nella pagina, la libreria
+sarebbe scaricata per non fare niente.
+{% endcomment %}
+{% if ha_dati_in_finestra %}{% include "training/_grafici_js.html" %}{% endif %}
+{% endblock %}

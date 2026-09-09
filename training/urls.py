@@ -23,6 +23,14 @@ urlpatterns = [
     path("", views.DashboardView.as_view(), name="dashboard"),
     path("registrazione/", views.SignUpView.as_view(), name="signup"),
     path("profilo/", views.ProfileUpdateView.as_view(), name="profile"),
+    # Analisi — la **sesta** voce dell'header, e l'unica aggiunta alla sitemap
+    # di `02-pagine-e-template.md` dopo #19. La pagina era nominata in
+    # `04-analisi.md` («Analisi muscolare») e senza URL: o le si dava un
+    # indirizzo, o A1 e A2 finivano in dashboard a sovraccaricare la prima
+    # pagina. Una rotta sola e nessuna sotto: le altre analisi hanno già la
+    # loro sezione — la progressione sta dentro l'esercizio, che *è* la sua
+    # storia, e la heatmap vive solo in dashboard.
+    path("analisi/", views.AnalysisView.as_view(), name="analysis"),
     # Schede — il primo dei due CRUD completi che pagano il requisito della
     # traccia. `nuova/` precede `<pk>/` di proposito: l'ordine di `urlpatterns`
     # è quello di risoluzione, e un `<int:pk>` non catturerebbe «nuova», ma la

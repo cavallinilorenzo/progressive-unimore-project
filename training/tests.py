@@ -8,6 +8,7 @@ constraint e le unicità decise in `01-modelli.md`, che sono invisibili finché
 qualcuno non li rimuove da `Meta` senza accorgersene.
 """
 
+import json
 import random
 import re
 import shutil
@@ -36,6 +37,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from training import rankings, views
+from training.analytics import volume as analytics_volume
 from training.exporter import (
     INTESTAZIONE_SERIE,
     INTESTAZIONE_SESSIONI,
@@ -1241,6 +1243,412 @@ class DashboardTests(TestCase):
         response = self.client.get(reverse("training:dashboard"))
 
         self.assertContains(response, "Ciao, Lorenzo Cavallini")
+
+
+# --- `/analisi/`, A1 e A2, e il primo grafico (#99) -------------------------
+#
+# Tre cose vanno protette qui, e nessuna è «la pagina rende».
+#
+# La prima sono i **buchi**: `TruncWeek` restituisce solo i periodi in cui
+# esiste una serie, e una settimana saltata che non compare fa disegnare due
+# punti adiacenti che distano un mese. Il grafico mentirebbe sulla costanza —
+# cioè proprio sul dato che questa pagina esiste per mostrare — e si
+# disegnerebbe benissimo.
+#
+# La seconda è che il volume di qui sia **lo stesso** della dashboard e delle
+# classifiche. È il test-ponte di #97, esteso alla terza superficie: due
+# definizioni che si sono allontanate passano entrambe i propri test.
+#
+# La terza sono i **dati nel DOM**. Un grafico vuoto è indistinguibile da un
+# grafico non ancora disegnato, e nessun test che guardi solo lo status code
+# se ne accorgerebbe: il guasto si scoprirebbe all'orale. Il payload di
+# `json_script` è HTML reso dal server, quindi è verificabile senza far girare
+# un browser — ed è l'unica parte della catena Chart.js che possiamo provare.
+
+
+class AnalysisPageTests(TestCase):
+    """`/analisi/` — le due analisi, i buchi, e i dati che devono stare in pagina."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user(
+            username="atleta", password=PASSWORD, body_mass_kg=Decimal("80")
+        )
+        cls.nuovo = User.objects.create_user(username="nuovo", password=PASSWORD)
+        cls.dormiente = User.objects.create_user(
+            username="dormiente", password=PASSWORD, body_mass_kg=Decimal("70")
+        )
+
+        # I sei gruppi per intero: A2 li mostra tutti, anche a zero, e con due
+        # soli in tabella la regola non sarebbe provata.
+        cls.gruppi = {
+            codice: MuscleGroup.objects.create(
+                code=codice, label_it=etichetta, sort_order=ordine
+            )
+            for ordine, (codice, etichetta) in enumerate(
+                [
+                    ("chest", "Petto"),
+                    ("back", "Schiena"),
+                    ("shoulders", "Spalle"),
+                    ("arms", "Braccia"),
+                    ("legs", "Gambe"),
+                    ("core", "Core"),
+                ],
+                start=1,
+            )
+        }
+        petto = Muscle.objects.create(
+            code="chestMid", group=cls.gruppi["chest"], label_it="Petto medio",
+            sort_order=1,
+        )
+        dorsali = Muscle.objects.create(
+            code="lats", group=cls.gruppi["back"], label_it="Dorsali", sort_order=1
+        )
+        bilanciere = Equipment.objects.create(
+            code="barbell", label_it="Bilanciere", sort_order=1
+        )
+        corpo_libero = Equipment.objects.create(
+            code=CORPO_LIBERO, label_it="Corpo libero", sort_order=2
+        )
+        cls.panca = Exercise.objects.create(
+            name="Panca piana", slug="panca-piana",
+            primary_muscle=petto, equipment=bilanciere,
+        )
+        cls.trazioni = Exercise.objects.create(
+            name="Trazioni", slug="trazioni",
+            primary_muscle=dorsali, equipment=corpo_libero,
+        )
+
+    def setUp(self):
+        self.client.login(username="atleta", password=PASSWORD)
+        # La finestra si calcola una volta e si riusa: i test scrivono le serie
+        # *dentro* settimane note, e ancorarle a `now()` le farebbe scivolare
+        # fuori dal grafico a seconda del giorno in cui girano.
+        self.settimane = analytics_volume.finestra_settimanale()
+
+    def serie(self, lunedi, exercise=None, reps=10, weight="100", user=None, **kwargs):
+        """Una serie di lavoro nel martedì della settimana che comincia `lunedi`.
+
+        Martedì e non lunedì di proposito: se la troncatura sbagliasse fuso
+        orario, una serie di lunedì a mezzanotte finirebbe nella settimana
+        precedente e il test lo direbbe per caso. Un giorno pieno dentro la
+        settimana rende il test una prova sull'aggregazione, non sui bordi.
+        """
+        istante = timezone.make_aware(
+            timezone.datetime.combine(lunedi + timedelta(days=1), timezone.datetime.min.time())
+        ) + timedelta(hours=18)
+        allenamento = Workout.objects.create(
+            user=user or self.user, title="Sessione", started_at=istante
+        )
+        campi = {
+            "set_type": WorkoutSet.SetType.WORKING,
+            "is_completed": True,
+            **kwargs,
+        }
+        return WorkoutSet.objects.create(
+            workout=allenamento,
+            exercise=exercise or self.panca,
+            set_number=1,
+            reps=reps,
+            weight=Decimal(weight),
+            **campi,
+        )
+
+    # --- A1: i buchi ------------------------------------------------------
+
+    def test_the_window_always_has_twelve_weeks_even_with_a_single_workout(self):
+        """Una serie sola non fa un grafico da un punto.
+
+        È la regola che rende il grafico onesto: la finestra è dichiarata dalla
+        pagina, non dedotta dai dati, quindi undici settimane vuote restano
+        undici settimane vuote.
+        """
+        self.serie(self.settimane[-1])
+
+        righe = analytics_volume.volume_per_settimana(self.user, self.settimane)
+
+        self.assertEqual(len(righe), analytics_volume.SETTIMANE_DI_DEFAULT)
+        self.assertEqual([riga["settimana"] for riga in righe], self.settimane)
+
+    def test_a_skipped_week_is_a_zero_and_not_a_missing_row(self):
+        """Il cuore del ticket.
+
+        Due allenamenti a tre settimane di distanza: senza riempimento le righe
+        sarebbero due e adiacenti, e la linea salirebbe dolcemente sopra un
+        vuoto di ventun giorni. Con il riempimento, in mezzo c'è un avvallamento
+        a zero — che è ciò che è successo davvero.
+        """
+        self.serie(self.settimane[-4], weight="100", reps=10)
+        self.serie(self.settimane[-1], weight="100", reps=10)
+
+        righe = analytics_volume.volume_per_settimana(self.user, self.settimane)
+        volumi = [riga["volume"] for riga in righe]
+
+        self.assertEqual(volumi[-4], 1000.0)
+        self.assertEqual(volumi[-3], 0.0)
+        self.assertEqual(volumi[-2], 0.0)
+        self.assertEqual(volumi[-1], 1000.0)
+
+    def test_several_sets_in_one_week_collapse_into_a_single_row(self):
+        """La trappola del `GROUP BY`, che non segnala niente.
+
+        `WorkoutSet.Meta.ordering` vale `["set_number"]`, e Django trascina
+        l'ordinamento di default nel raggruppamento: senza l'`order_by`
+        esplicito in coda alla query, ogni settimana si spaccherebbe in una
+        riga per numero di serie. Il totale della pagina resterebbe giusto e il
+        grafico avrebbe dodici punti lo stesso — con dentro un terzo del volume.
+        """
+        allenamento = Workout.objects.create(
+            user=self.user,
+            title="Petto",
+            started_at=timezone.make_aware(
+                timezone.datetime.combine(
+                    self.settimane[-1] + timedelta(days=1),
+                    timezone.datetime.min.time(),
+                )
+            )
+            + timedelta(hours=18),
+        )
+        for numero in range(1, 4):
+            WorkoutSet.objects.create(
+                workout=allenamento, exercise=self.panca, set_number=numero,
+                reps=10, weight=Decimal("100"),
+                set_type=WorkoutSet.SetType.WORKING, is_completed=True,
+            )
+
+        righe = analytics_volume.volume_per_settimana(self.user, self.settimane)
+
+        self.assertEqual(righe[-1]["volume"], 3000.0)
+
+    def test_the_window_excludes_what_happened_before_it(self):
+        """Tredici settimane fa è fuori, e non deve rientrare dalla porta di servizio."""
+        self.serie(self.settimane[0] - timedelta(weeks=1))
+
+        righe = analytics_volume.volume_per_settimana(self.user, self.settimane)
+
+        self.assertEqual([riga["volume"] for riga in righe], [0.0] * 12)
+
+    # --- A1: la stessa definizione di volume delle altre superfici --------
+
+    def test_the_analysis_uses_the_effective_load_like_every_other_surface(self):
+        """Il test-ponte di #97, esteso alla terza superficie.
+
+        8 trazioni a peso aggiunto nullo, con 80 kg dichiarati, valgono 640 kg —
+        non zero. Se questa pagina si riscrivesse il volume come
+        `reps × weight`, il numero sarebbe 0 e nessun altro test se ne
+        accorgerebbe: è esattamente il guasto che la dashboard aveva.
+        """
+        self.serie(self.settimane[-1], exercise=self.trazioni, reps=8, weight="0")
+
+        righe = analytics_volume.volume_per_settimana(self.user, self.settimane)
+
+        self.assertEqual(righe[-1]["volume"], 640.0)
+        self.assertEqual(
+            righe[-1]["volume"],
+            WorkoutSet.objects.working()
+            .filter(workout__user=self.user)
+            .aggregate(v=Sum(VOLUME))["v"],
+        )
+
+    def test_warm_ups_and_skipped_sets_stay_out(self):
+        """Il filtro universale vale qui come ovunque, e vale intero."""
+        self.serie(self.settimane[-1], reps=10, weight="100")
+        self.serie(
+            self.settimane[-1], reps=10, weight="500",
+            set_type=WorkoutSet.SetType.WARMUP,
+        )
+        self.serie(self.settimane[-1], reps=10, weight="900", is_completed=False)
+
+        righe = analytics_volume.volume_per_settimana(self.user, self.settimane)
+
+        self.assertEqual(righe[-1]["volume"], 1000.0)
+
+    def test_another_persons_volume_is_not_mine(self):
+        """Una pagina personale che sommasse tutti sarebbe una fuga di dati muta."""
+        self.serie(self.settimane[-1], user=self.dormiente, reps=10, weight="100")
+
+        righe = analytics_volume.volume_per_settimana(self.user, self.settimane)
+
+        self.assertEqual([riga["volume"] for riga in righe], [0.0] * 12)
+
+    # --- A2: i sei gruppi -------------------------------------------------
+
+    def test_all_six_groups_appear_even_the_untrained_ones(self):
+        """Un gruppo mai allenato è un'informazione, non un'assenza.
+
+        I gruppi sono un insieme chiuso: uno che non compare non si distingue
+        da uno che la pagina si è dimenticata di disegnare. È la stessa lezione
+        di ADR-0006 letta al contrario — lì la schiena spariva per un carico
+        effettivo mancante, e nessuno se ne accorgeva.
+        """
+        self.serie(self.settimane[-1], exercise=self.panca, reps=10, weight="100")
+
+        righe = analytics_volume.volume_per_gruppo(self.user, self.settimane)
+
+        self.assertEqual(len(righe), 6)
+        self.assertEqual(righe[0], {"gruppo": "Petto", "codice": "chest", "volume": 1000.0, "ordine": 1})
+        self.assertEqual({riga["volume"] for riga in righe[1:]}, {0.0})
+
+    def test_the_groups_are_ordered_by_volume_and_ties_are_deterministic(self):
+        """Ordine per volume, e a pari merito quello del catalogo.
+
+        Senza il secondo criterio la pagina si riordinerebbe a ogni ricarica —
+        cinque gruppi a zero sono cinque pari merito, non un caso di scuola.
+        """
+        self.serie(self.settimane[-1], exercise=self.panca, reps=10, weight="50")
+        self.serie(self.settimane[-1], exercise=self.trazioni, reps=10, weight="20")
+
+        righe = analytics_volume.volume_per_gruppo(self.user, self.settimane)
+
+        self.assertEqual([riga["gruppo"] for riga in righe[:2]], ["Schiena", "Petto"])
+        self.assertEqual(
+            [riga["gruppo"] for riga in righe[2:]],
+            ["Spalle", "Braccia", "Gambe", "Core"],
+        )
+
+    def test_the_two_analyses_answer_on_the_same_window(self):
+        """A2 spiega A1, quindi deve guardare lo stesso periodo.
+
+        Se le finestre divergessero, la seconda figura racconterebbe una prima
+        che non è quella disegnata sopra — e sarebbero due grafici coerenti
+        ciascuno con sé stesso.
+        """
+        self.serie(self.settimane[0] - timedelta(weeks=1), reps=10, weight="100")
+        self.serie(self.settimane[-1], reps=10, weight="100")
+
+        totale_a1 = sum(
+            riga["volume"]
+            for riga in analytics_volume.volume_per_settimana(self.user, self.settimane)
+        )
+        totale_a2 = sum(
+            riga["volume"]
+            for riga in analytics_volume.volume_per_gruppo(self.user, self.settimane)
+        )
+
+        self.assertEqual(totale_a1, 1000.0)
+        self.assertEqual(totale_a1, totale_a2)
+
+    # --- La pagina --------------------------------------------------------
+
+    def test_the_page_is_private(self):
+        """`LoginRequiredMixin`: `/analisi/` è lo storico di una persona."""
+        self.client.logout()
+
+        response = self.client.get(reverse("training:analysis"))
+
+        self.assertEqual(response.status_code, 302)
+        self.assertIn(reverse("login"), response["Location"])
+
+    def test_the_sixth_nav_item_points_here(self):
+        """La voce esiste, e non è un link orfano: è la regola di navigazione."""
+        response = self.client.get(reverse("training:dashboard"))
+
+        self.assertContains(response, f'href="{reverse("training:analysis")}"')
+
+    def test_the_chart_data_is_really_in_the_document(self):
+        """Il test che il ticket chiedeva per nome.
+
+        Un grafico vuoto e un grafico non ancora disegnato sono la stessa
+        immagine, e uno status code 200 non distingue fra i due. Qui si guarda
+        il payload di `json_script`, che è HTML reso dal server: se i numeri
+        sono lì, ciò che resta fra loro e la figura è solo Chart.js.
+        """
+        self.serie(self.settimane[-1], exercise=self.panca, reps=10, weight="100")
+
+        response = self.client.get(reverse("training:analysis"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, 'id="dati-volume-settimane"')
+        self.assertContains(response, 'id="dati-volume-gruppi"')
+        self.assertContains(response, 'data-grafico="dati-volume-settimane"')
+        self.assertContains(response, 'data-grafico="dati-volume-gruppi"')
+
+        payload = self.payload(response, "dati-volume-settimane")
+        self.assertEqual(payload["tipo"], "line")
+        self.assertEqual(len(payload["valori"]), 12)
+        self.assertEqual(payload["valori"][-1], 1000.0)
+
+        gruppi = self.payload(response, "dati-volume-gruppi")
+        self.assertEqual(gruppi["tipo"], "bar")
+        self.assertEqual(gruppi["etichette"][0], "Petto")
+        self.assertEqual(len(gruppi["etichette"]), 6)
+
+    def payload(self, response, identificatore):
+        """Il dizionario dentro il `json_script` con quell'`id`."""
+        trovato = re.search(
+            rf'<script id="{identificatore}" type="application/json">(.*?)</script>',
+            response.content.decode(),
+            re.S,
+        )
+        self.assertIsNotNone(trovato, f"Nessun json_script con id {identificatore}")
+        return json.loads(trovato.group(1))
+
+    def test_chart_js_is_loaded_only_where_there_is_something_to_draw(self):
+        """La libreria non si scarica per non fare niente.
+
+        È anche la guardia sulla convenzione che #99 lascia in eredità: il CDN
+        sta nel blocco `scripts` della **pagina**, non in `base.html`, o
+        arriverebbe addosso anche a chi apre il form di una scheda.
+        """
+        vuota = self.client.get(reverse("training:analysis"))
+        self.assertNotContains(vuota, "chart.umd.min.js")
+
+        self.serie(self.settimane[-1])
+        piena = self.client.get(reverse("training:analysis"))
+        self.assertContains(piena, "chart.umd.min.js")
+
+        altrove = self.client.get(reverse("training:dashboard"))
+        self.assertNotContains(altrove, "chart.umd.min.js")
+
+    def test_someone_with_no_history_is_invited_to_start(self):
+        """Chi non ha mai registrato niente non vede due linee piatte."""
+        self.client.login(username="nuovo", password=PASSWORD)
+
+        response = self.client.get(reverse("training:analysis"))
+
+        self.assertFalse(response.context["ha_dati_in_assoluto"])
+        self.assertContains(response, "Non c'è ancora niente da analizzare")
+
+    def test_someone_with_history_outside_the_window_is_sent_to_it(self):
+        """Il secondo vuoto, e la ragione per cui sono due.
+
+        Dire «crea una scheda e comincia» a chi ha centinaia di allenamenti
+        alle spalle significa non aver guardato i suoi dati, ed è il difetto
+        che si nota per primo.
+        """
+        self.serie(self.settimane[0] - timedelta(weeks=4), user=self.dormiente)
+        self.client.login(username="dormiente", password=PASSWORD)
+
+        response = self.client.get(reverse("training:analysis"))
+
+        self.assertTrue(response.context["ha_dati_in_assoluto"])
+        self.assertFalse(response.context["ha_dati_in_finestra"])
+        self.assertContains(response, "Niente in queste")
+        self.assertNotContains(response, "Non c'è ancora niente da analizzare")
+
+    def test_the_page_declares_that_a_missing_body_mass_makes_the_volume_partial(self):
+        """Incompleto, non zero — la stessa dichiarazione della dashboard.
+
+        Qui pesa di più che là: il volume è il soggetto della pagina, non un
+        riquadro fra quattro, e una schiena bassa per un peso corporeo mancante
+        si legge come un dato sull'allenamento.
+        """
+        self.serie(self.settimane[-1], user=self.nuovo, exercise=self.panca)
+        self.client.login(username="nuovo", password=PASSWORD)
+
+        response = self.client.get(reverse("training:analysis"))
+
+        self.assertContains(response, "Il volume qui sotto è incompleto")
+
+    def test_every_group_is_a_way_into_the_catalogue(self):
+        """Nessuna analisi è un vicolo cieco: dal gruppo si va agli esercizi."""
+        self.serie(self.settimane[-1], exercise=self.panca)
+
+        response = self.client.get(reverse("training:analysis"))
+
+        self.assertContains(
+            response, f'{reverse("training:exercise-list")}?gruppo=chest'
+        )
 
 
 class TemplateCommentTests(TestCase):
