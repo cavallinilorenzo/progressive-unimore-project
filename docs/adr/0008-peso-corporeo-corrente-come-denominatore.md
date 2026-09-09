@@ -27,4 +27,6 @@ La conseguenza combinata è più larga di quella scritta sopra: sul **corpo libe
 
 Non cambia la decisione, e la ragione è la stessa: lo storico dei pesi resterebbe un settimo modello per un effetto che sui dati sintetici non si manifesta. Ma cambia **cosa si dichiara**. Il limite da portare all'orale non è «il percentile è approssimato», è: *il peso corporeo è l'unico valore del sistema che riscrive il passato, e sul corpo libero lo riscrive due volte.*
 
-Sta accanto agli altri limiti che questo progetto sceglie di dichiarare invece di nascondere — il percentile che tace sotto i 20 utenti, lo stallo che risponde «dati insufficienti», i quattro muscoli sempre spenti nella heatmap.
+Sta accanto agli altri limiti che questo progetto sceglie di dichiarare invece di nascondere — il percentile che tace sotto i 20 utenti, lo stallo che risponde «dati insufficienti», la heatmap che colora solo il muscolo primario e quindi non mostra il lavoro da secondario.
+
+> Nota (#102): la versione originale di questa riga citava «i quattro muscoli sempre spenti nella heatmap». Quel numero veniva dal prototipo #37 e dai suoi dati finti; sul catalogo vero **tutti e 23 i muscoli** hanno un esercizio che li ha come primari (#101). Il limite della figura è un altro, ed è quello scritto sopra.
