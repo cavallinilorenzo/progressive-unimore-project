@@ -35,6 +35,8 @@ from django.views.generic import DetailView, ListView, TemplateView
 from django.views.generic.edit import CreateView, DeleteView, FormView, UpdateView
 
 from training import rankings
+from training.analytics import costanza as analytics_costanza
+from training.analytics import muscles as analytics_muscles
 from training.analytics import volume as analytics_volume
 from training.forms import (
     AbbinamentoFormSet,
@@ -68,13 +70,19 @@ from training.models import (
 #: lunedì successivo una dashboard ancorata al calendario tornerebbe a zero e la
 #: pagina sembrerebbe rotta il giorno dell'orale. Una finestra mobile guarda
 #: sempre indietro dello stesso tratto, e su dati fermi continua a rispondere.
+#:
+#: La costanza non è più qui da #101: è passata a `analytics/costanza.py` (W1) e
+#: con lei la finestra, che è diventata **quattro settimane di calendario**
+#: invece di 28 giorni mobili. Non è un ripensamento sulla regola qui sopra —
+#: la griglia dei lunedì resta ancorata a *oggi*, quindi scorre con i dati — ma
+#: l'allineamento alla griglia su cui `/analisi/` (#99) e la heatmap
+#: raggruppano: «settimana» deve voler dire una cosa sola in tutto il progetto.
 GIORNI_RECENTI = 7
 GIORNI_MESE = 30
-GIORNI_COSTANZA = 28
 
 
 class DashboardView(LoginRequiredMixin, TemplateView):
-    """`/` — le quattro cifre che aprono la pagina, e gli ultimi allenamenti.
+    """`/` — le quattro cifre, la heatmap muscolare, e gli ultimi allenamenti.
 
     Fino a #78 questa pagina era un **guscio**: quattro riquadri con un trattino
     e «analisi in arrivo», perché le sei analisi che la riempiono sono fase 2
@@ -102,6 +110,18 @@ class DashboardView(LoginRequiredMixin, TemplateView):
     (#75). Il riquadro del volume, dopo, mostra un numero più alto: è la
     schiena che era sparita.
 
+    Con #101 la pagina smette di essere quattro cifre. Entra la **heatmap
+    muscolare**, che vive solo qui (`02-pagine-e-template.md`) ed è il richiamo
+    visivo di cui `/analisi/` è la spiegazione, e la costanza diventa **W1**:
+    la stessa media di prima, ma con sotto le quattro settimane una per una,
+    vuote comprese. Due misure di costanza sulla stessa pagina sarebbero la
+    divergenza di #75 un'altra volta, quindi W1 *è* quel riquadro, non un
+    secondo.
+
+    Il conto delle query resta **invariante rispetto allo storico**, che è la
+    guardia lasciata da #86: la heatmap ne aggiunge quattro — l'aggregazione e
+    tre letture di catalogo — e nessuna delle quattro cresce con le righe.
+
     Il `LoginRequiredMixin` entra con #68: la dashboard è una pagina personale,
     senza un utente non ha niente da dire.
     """
@@ -115,7 +135,6 @@ class DashboardView(LoginRequiredMixin, TemplateView):
         adesso = timezone.now()
         da_recenti = adesso - timedelta(days=GIORNI_RECENTI)
         da_mese = adesso - timedelta(days=GIORNI_MESE)
-        da_costanza = adesso - timedelta(days=GIORNI_COSTANZA)
 
         # Il **filtro universale** arriva dal custom QuerySet, non riscritto qui:
         # solo le serie di lavoro e completate contano, il riscaldamento non è
@@ -144,12 +163,12 @@ class DashboardView(LoginRequiredMixin, TemplateView):
         ).count()
         context["allenamenti_totali"] = allenamenti.count()
 
-        # La costanza è una media, non un conteggio: «quante volte a settimana»
-        # è la domanda che un utente si fa davvero, e quattro settimane sono la
-        # finestra più corta in cui la risposta non è dominata da una settimana
-        # storta.
-        sedute = allenamenti.filter(started_at__gte=da_costanza).count()
-        context["costanza"] = round(sedute / (GIORNI_COSTANZA / 7), 1)
+        # W1 — la costanza. La media resta la cifra hero, perché «quante volte
+        # a settimana» è la domanda che un utente si fa davvero, ma sotto ci
+        # sono adesso le quattro settimane una per una, **vuote comprese**: la
+        # media di 2 può essere due settimane da 4 e due da zero, e quelle due
+        # storie meritano consigli opposti.
+        context["costanza"] = analytics_costanza.costanza(self.request.user)
 
         # Il record è il carico più alto del mese, non il massimale stimato:
         # Epley è roba del motore analitico, e qui basta un `Max` su una colonna.
@@ -166,6 +185,29 @@ class DashboardView(LoginRequiredMixin, TemplateView):
             .select_related("routine")
             .annotate(n_serie=Count("sets"))[:5]
         )
+        # La heatmap muscolare, che vive **solo qui** (`02-pagine-e-template.md`).
+        # Misura in **serie** e non in kg, ed è una scelta e non una svista: il
+        # volume non si confronta fra regioni del corpo, perché una serie di
+        # squat pesa dieci volte una di alzate laterali e la mappa direbbe una
+        # cosa sull'anatomia invece che sull'allenamento. Il perché sta per
+        # esteso in `analytics/muscles.py`, la dichiarazione in pagina.
+        heatmap = analytics_muscles.serie_per_muscolo(self.request.user)
+        context["heatmap"] = heatmap
+
+        # **Un corpo tutto spento non si mostra.** Sarebbe indistinguibile da
+        # «non ti alleni», mentre la verità è «non lo so»: la figura è una
+        # scala normalizzata sul massimo, e senza serie nella finestra il
+        # massimo è finto. Al posto suo va detto perché non c'è niente, e i due
+        # vuoti sono diversi — chi non ha mai registrato niente si invita a
+        # cominciare, chi ha 443 allenamenti ma nessuno nelle ultime quattro
+        # settimane si manda allo storico. È la regola già scritta su
+        # `/analisi/` (#99), e vale doppio sulla prima pagina.
+        context["heatmap_ha_dati"] = heatmap["totale"] > 0
+
+        # Il limite noto — i muscoli che nessun esercizio ha come primario —
+        # esce già dalla riga della heatmap, e la pagina lo dichiara: la mappa
+        # direbbe «trascurato» dove la verità è «non misurato» (#37, #40).
+
         context["giorni_recenti"] = GIORNI_RECENTI
         context["giorni_mese"] = GIORNI_MESE
         return context

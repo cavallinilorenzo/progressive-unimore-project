@@ -82,6 +82,8 @@ EPLEY = ExpressionWrapper(
 
 W1 è un **widget**, non una pagina: passa l'asse 1 ma non l'asse 2, quindi non guadagna spazio proprio.
 
+> Costruita in [#101](https://github.com/cavallinilorenzo/progetto-django-uni/issues/101) (`training/analytics/costanza.py`), e **non è un riquadro nuovo**: è quello che #95 aveva già messo in dashboard, con sotto le quattro settimane una per una, **vuote comprese** — una media di 2 può essere due settimane da quattro e due da zero, e le due storie meritano consigli opposti. Due misure di costanza sulla stessa pagina sarebbero la divergenza di #75 un'altra volta, con l'aggravante che sarebbero entrambe giuste e discordi. La finestra passa da 28 giorni mobili a **4 settimane di calendario**, la griglia dei lunedì di A1, e la media si divide per le settimane *trascorse*: l'ultima è in corso, e dividere per quattro tonde farebbe scendere la costanza ogni lunedì mattina da sola.
+
 ### Le query
 
 ```python

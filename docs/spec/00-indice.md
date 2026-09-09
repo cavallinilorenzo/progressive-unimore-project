@@ -130,7 +130,8 @@ Questo progetto sceglie di **dire** i propri limiti invece di nasconderli, ed è
 
 1. **Il percentile tace sotto i 20 utenti** su un esercizio, e dice perché
 2. **Lo stallo dice «dati insufficienti»** come avanzamento, non come errore
-3. **4 muscoli su 23 sono sempre spenti** nella heatmap, perché il catalogo tagga un solo muscolo primario: la mappa dice «trascurato» dove la verità è «non misurato»
+3. **La heatmap vede solo il muscolo primario**, perché il catalogo ne tagga uno solo per esercizio: il lavoro ricevuto da secondario non arriva sulla figura, e uno spento è un muscolo non allenato *direttamente*, non per forza trascurato
+   > Fino a [#101](https://github.com/cavallinilorenzo/progetto-django-uni/issues/101) qui era scritto «4 muscoli su 23 sono sempre spenti». Il numero veniva dal prototipo #37, che girava su dati finti: sul catalogo vero **tutti e 23 hanno almeno un esercizio** che li ha come primari — gli adduttori dell'utente della demo ne contano 8 — e quei quattro erano zeri *di quell'utente*, non del modello. Il limite resta, la sua misura no.
 4. **Il peso corporeo riscrive il passato**, e sul corpo libero lo riscrive due volte ([ADR-0008](../adr/0008-peso-corporeo-corrente-come-denominatore.md))
 5. **`_corpo.svg` non è lavoro nostro**: è copiato dai path anatomici di Overload, e va detto nel repo e all'orale ([#40](https://github.com/cavallinilorenzo/progetto-django-uni/issues/40))
 

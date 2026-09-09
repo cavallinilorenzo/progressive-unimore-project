@@ -120,7 +120,7 @@ def volume_per_settimana(user, settimane=None, oggi=None):
         .order_by("periodo")
     )
 
-    per_lunedi = {_a_data(riga["periodo"]): riga["volume"] or 0.0 for riga in righe}
+    per_lunedi = {data_locale(riga["periodo"]): riga["volume"] or 0.0 for riga in righe}
     return [
         {"settimana": lunedi, "volume": round(per_lunedi.get(lunedi, 0.0), 1)}
         for lunedi in settimane
@@ -173,8 +173,14 @@ def volume_per_gruppo(user, settimane=None, oggi=None):
     return gruppi
 
 
-def _a_data(periodo):
+def data_locale(periodo):
     """Il lunedì di `TruncWeek` come `date` locale.
+
+    Pubblica e non più `_a_data` da #101: la costanza (W1) raggruppa per
+    settimana come A1 e ha bisogno della stessa conversione. Una seconda copia
+    di questa funzione sarebbe una seconda regola di fuso orario, cioè la
+    divergenza di #75 nel punto in cui non si vede — le due misure
+    sbaglierebbero settimana in due modi diversi, e solo d'inverno.
 
     Con `USE_TZ = True` la troncatura restituisce un `datetime` **aware** a
     mezzanotte di Roma: confrontarlo con una `date` senza passare da

@@ -1,0 +1,113 @@
+{% comment %}
+La heatmap muscolare — variante C del prototipo #37, portata in dashboard.
+
+Vive **solo qui** (`docs/spec/02-pagine-e-template.md`): è il richiamo visivo,
+mentre `/analisi/` è dove si va a capire perché. Le due pagine non mostrano la
+stessa grandezza — lì sono kg, qui sono **serie**, e il perché è in
+`training/analytics/muscles.py` e dichiarato in fondo a questo partial.
+
+**Zero JavaScript.** `_corpo.svg` è un partial statico in cui ogni path porta
+già `class="g-<gruppo> m-<muscolo>"`; la view calcola un colore per muscolo e
+il blocco `<style>` sta in `dashboard.html`, nel `extra_head`. Il disegno è
+template, il colore è dato, e la lista sotto si apre con `<details>`.
+{% endcomment %}
+
+<div class="card-ink p-3 mb-4">
+  <div class="d-flex align-items-baseline justify-content-between mb-3">
+    <div class="eyebrow">Cosa hai allenato</div>
+    <div class="eyebrow" style="color:var(--t2)">
+      {{ heatmap.totale }} serie &middot; ultime {{ heatmap.settimane }} settimane, dal {{ heatmap.da|date:"j M" }}
+    </div>
+  </div>
+
+  <div class="row g-3">
+    <div class="col-lg-5">
+      {% include "training/_corpo.svg" %}
+      <div class="mt-3">
+        <div class="legenda mb-1">
+          {% for passo in heatmap.legenda %}<i style="background:{{ passo.colore }}"></i>{% endfor %}
+        </div>
+        <div class="d-flex justify-content-between" style="color:var(--t3);font-size:.78rem">
+          <span>0 serie</span>
+          <span>{{ heatmap.max_muscolo }} serie</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="col-lg-7">
+      {% comment %}
+      I sei gruppi, ognuno coi propri muscoli dentro. Le due scale di colore
+      restano separate — la pastiglia del gruppo sta sulla scala dei gruppi,
+      quelle dei muscoli su quella dei muscoli — perché «quale gruppo peso di
+      più» e «dentro questo gruppo cosa trascuro» sono domande diverse, e una
+      scala sola le renderebbe illeggibili entrambe (#37).
+
+      L'ordine è quello del catalogo e non del volume: accanto c'è una figura
+      anatomica, e una lista che si riordina a ogni ricarica smetterebbe di
+      allinearsi a un corpo che sta fermo.
+      {% endcomment %}
+      {% for g in heatmap.gruppi %}
+      <details class="gruppo">
+        <summary>
+          <span class="pastiglia" style="background:{{ g.colore }}"></span>
+          <span class="nome">{{ g.nome }}</span>
+          {% if g.spenti %}<span class="badge-spenti">{{ g.spenti }} a zero</span>{% endif %}
+          <span class="conteggio">{{ g.serie }} serie &middot; {{ g.pct }}%</span>
+        </summary>
+        <table class="tabellina w-100 mt-1 mb-2">
+          {% for m in g.muscoli %}
+          <tr{% if not m.serie %} class="spento"{% endif %}>
+            <td><span class="pastiglia" style="background:{{ m.colore }}"></span></td>
+            <td class="w-100">
+              {{ m.nome }}{% if not m.misurabile %} <span class="badge-spenti">non misurato</span>{% endif %}
+            </td>
+            <td class="text-end" style="color:var(--t2)">{{ m.serie }}</td>
+          </tr>
+          {% endfor %}
+        </table>
+      </details>
+      {% endfor %}
+
+      <div class="mt-3" style="color:var(--t3);font-size:.78rem;line-height:1.6">
+        {% comment %}
+        Il **limite noto**, dichiarato in pagina e non solo negli ADR: è la
+        condizione perché la figura non menta, e senza questa riga la mappa
+        direbbe «trascurato» dove la verità è «non misurato» (#37, #40).
+
+        Il limite è **strutturale e sempre presente**, quindi la riga non è
+        condizionata: ogni esercizio del catalogo ha *un solo* muscolo
+        primario (#27), e il lavoro che un muscolo riceve da secondario non
+        arriva qui — attribuirgliene una quota richiederebbe un coefficiente
+        inventato, che è esattamente ciò che `01-modelli.md` ha escluso.
+
+        Il prototipo #37 aveva misurato 4 muscoli spenti su 23, ma su numeri
+        finti: sul catalogo vero **tutti e 23 hanno almeno un esercizio**, e la
+        lista qui sotto — calcolata, non scritta a mano — resta vuota. Vive lo
+        stesso, perché è la guardia sul caso opposto: un muscolo caricato senza
+        esercizi resterebbe spento in silenzio, e la pagina lo direbbe.
+        {% endcomment %}
+        <p class="mb-2">
+          Il conteggio è in <span style="color:var(--t2)">serie</span>, non in
+          chili: fra regioni del corpo i kg non si confrontano — una serie di
+          squat ne muove dieci volte una di alzate laterali. I chili stanno su
+          <a href="{% url 'training:analysis' %}" style="color:var(--volt)">Analisi</a>.
+        </p>
+        <p class="mb-2">
+          Ogni esercizio conta per <span style="color:var(--t2)">un solo muscolo
+          primario</span>: il lavoro che un muscolo riceve da secondario non
+          arriva qui. Uno spento è un muscolo che non hai allenato
+          <i>direttamente</i>, e non necessariamente un muscolo trascurato.
+        </p>
+        {% if heatmap.mai_misurabili %}
+        <p class="mb-0">
+          {% for m in heatmap.mai_misurabili %}{{ m.nome|lower }}{% if not forloop.last %}, {% endif %}{% endfor %}
+          {% if heatmap.mai_misurabili|length == 1 %}resta spento{% else %}restano spenti{% endif %}
+          perché nessun esercizio del catalogo li ha come muscolo
+          <span style="color:var(--t2)">primario</span>: lì la mappa dice
+          &laquo;non misurato&raquo;, non &laquo;trascurato&raquo;.
+        </p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</div>

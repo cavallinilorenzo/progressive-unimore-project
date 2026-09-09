@@ -14,9 +14,37 @@ nessun confronto con gli altri, che resta fase 2.
 Le finestre sono **mobili** (7 e 30 giorni) e non «questa settimana»: i dati
 sintetici finiscono a una data fissa, quindi un ancoraggio al calendario
 tornerebbe a zero al primo lunedì buono, cioè forse la mattina dell'orale.
+
+Con #101 la pagina smette di essere quattro cifre. Entra la **heatmap
+muscolare** — che vive solo qui, ed è il richiamo visivo di cui `/analisi/` è
+la spiegazione — e la costanza diventa **W1**: la stessa media, con sotto le
+quattro settimane una per una, vuote comprese. La finestra di quelle due è di
+quattro settimane di calendario e non di 28 giorni mobili: è la griglia dei
+lunedì su cui `/analisi/` raggruppa, e resta comunque ancorata a oggi, quindi
+scorre coi dati come le altre.
 {% endcomment %}
 
 {% block title %}Dashboard — Progressive{% endblock %}
+
+{% block extra_head %}
+{% if heatmap_ha_dati %}
+{% comment %}
+**L'unica cosa che la view genera della figura è questo blocco**: una riga di
+`fill` per muscolo. `_corpo.svg` resta un partial statico che nessuno tocca a
+runtime, e il colore entra per classe — stesso principio di `json_script`, i
+dati entrano come dati e non come DOM costruito a mano (#37).
+
+Sta nel `extra_head` e non in mezzo al corpo perché un `<style>` nel `body` è
+tollerato dai browser ma non è HTML che si mostra a un esame. Il resto del CSS
+della heatmap — il disegno, il menu a gruppi — è statico e vive in
+`progressive.css`: qui c'è solo ciò che cambia da un utente all'altro.
+{% endcomment %}
+<style>
+  {% for m in heatmap.muscoli %}.corpo .m-{{ m.codice }} { fill: {{ m.colore }}; }
+  {% endfor %}
+</style>
+{% endif %}
+{% endblock %}
 
 {% block content %}
 
@@ -87,9 +115,27 @@ finisce nell'HTML della pagina. Rilevato in #69.
   </div>
   <div class="col-6 col-lg-3">
     <div class="card-ink p-3 h-100">
+      {% comment %}
+      W1 — la costanza (`04-analisi.md`). Non è un riquadro nuovo accanto a
+      quello che c'era: è quello, con sotto le quattro settimane una per una.
+      La media di 2 può essere due settimane da quattro e due da zero, e le due
+      storie meritano consigli opposti — mostrare solo la media le confonde.
+
+      Le settimane **vuote ci sono**, in grigio: una settimana saltata non
+      esiste come riga nel database, e un widget che mostrasse solo quelle
+      piene mentirebbe proprio sulla costanza. È la lezione di #99, sulla
+      misura che di costanza parla per mestiere.
+      {% endcomment %}
       <div class="eyebrow mb-2">Costanza</div>
-      <div class="hero-num">{{ costanza }}<span style="font-size:.5em;color:var(--t2)"> /sett</span></div>
-      <div class="mt-2" style="color:var(--t3);font-size:.82rem">media su 4 settimane</div>
+      <div class="hero-num">{{ costanza.media }}<span style="font-size:.5em;color:var(--t2)"> /sett</span></div>
+      <div class="settimane mt-2" title="Allenamenti per settimana, dal {{ costanza.da|date:'j F' }}">
+        {% for s in costanza.settimane %}
+        <i class="{% if not s.allenamenti %}vuota{% endif %}" style="height:{{ s.altezza }}%"></i>
+        {% endfor %}
+      </div>
+      <div class="mt-2" style="color:var(--t3);font-size:.82rem">
+        {{ costanza.sedute }} in 4 settimane{% if costanza.vuote %} &middot; {{ costanza.vuote }} vuot{{ costanza.vuote|pluralize:"a,e" }}{% endif %}
+      </div>
     </div>
   </div>
   <div class="col-6 col-lg-3">
@@ -106,6 +152,41 @@ finisce nell'HTML della pagina. Rilevato in #69.
     </div>
   </div>
 </div>
+
+{% if heatmap_ha_dati %}
+{% include "training/_heatmap.html" %}
+{% else %}
+{% comment %}
+**Un corpo tutto spento non si mostra.** La figura è una scala normalizzata sul
+massimo: senza serie nella finestra il massimo è finto, e un corpo grigio si
+legge come «non ti alleni» mentre la verità è «non lo so».
+
+E i due vuoti sono diversi, come su `/analisi/` (#99): chi non ha mai
+registrato niente va invitato a cominciare, chi ha 443 allenamenti alle spalle
+ma nessuno nelle ultime quattro settimane va mandato allo storico, non trattato
+da nuovo iscritto.
+{% endcomment %}
+<div class="card-ink p-3 mb-4">
+  <div class="rail">
+    <div class="eyebrow mb-1">Cosa hai allenato</div>
+    {% if allenamenti_totali %}
+    <div class="fw-bold">Nelle ultime 4 settimane, niente.</div>
+    <div style="color:var(--t2);font-size:.88rem">
+      La mappa muscolare si accende con le serie di questo mese: senza, sarebbe
+      un corpo tutto spento, che è un'altra cosa. Lo storico resta —
+      <a href="{% url 'training:workout-list' %}" style="color:var(--volt)">i tuoi allenamenti</a>
+      e le <a href="{% url 'training:analysis' %}" style="color:var(--volt)">analisi</a> guardano più indietro.
+    </div>
+    {% else %}
+    <div class="fw-bold">La mappa muscolare è ancora vuota.</div>
+    <div style="color:var(--t2);font-size:.88rem">
+      Si accende da sola: registra un allenamento e i muscoli che hai lavorato
+      si colorano qui, uno per uno.
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
 
 {% if ultimi_allenamenti %}
 <div class="card-ink p-3 mb-4">

@@ -102,3 +102,51 @@ footer { color: var(--t3); font-size: .8rem; border-top: 1px solid var(--surface
    appena acceso: la riga va trovata scorrendo, non deve gridare. */
 .riga-mia > * { background: rgba(201, 255, 61, .06); }
 .riga-mia > td:first-child { box-shadow: inset 2px 0 0 var(--volt); }
+
+/* --- la heatmap muscolare (#101) ----------------------------------------- */
+
+/* Qui sta solo il **disegno**: il colore lo genera la view, una riga di `fill`
+   per classe, ed è l'unica cosa che cambia da un utente all'altro.
+   `_corpo.svg` è un partial statico e nessuno lo tocca a runtime — è il
+   principio di `json_script` applicato a una figura (#37). */
+.corpo { width: 100%; height: auto; display: block; }
+/* Tutto ciò che non è muscolo — contorni, testa, mani — resta neutro. */
+.corpo path { fill: #23262D; stroke: #15171B; stroke-width: 1.5; }
+.corpo .overlay { stroke: none; }
+.corpo .deep { opacity: .45; }
+
+.legenda { display: flex; align-items: center; gap: 0; }
+.legenda i { display: block; height: 10px; flex: 1; }
+.pastiglia { display: inline-block; width: 11px; height: 11px;
+             border-radius: 3px; vertical-align: -1px; }
+.tabellina td { padding: .2rem .5rem .2rem 0; font-size: .82rem;
+                font-variant-numeric: tabular-nums; }
+.tabellina tr.spento { color: var(--t3); }
+
+/* Il menu a gruppi: `<details>`/`<summary>`, HTML nativo. Sei righe che si
+   aprono una per volta invece di 23 righe piatte, e zero JavaScript. */
+.gruppo { border-bottom: 1px solid var(--surface-2); }
+.gruppo:last-of-type { border-bottom: 0; }
+.gruppo > summary { display: flex; align-items: center; gap: .5rem;
+                    padding: .5rem .25rem; cursor: pointer; list-style: none;
+                    font-size: .88rem; }
+.gruppo > summary::-webkit-details-marker { display: none; }
+/* Il triangolino se lo disegna il CSS, così ruota con lo stato aperto. */
+.gruppo > summary::before { content: "\203A"; color: var(--t3); font-weight: 700;
+                            width: .6rem; transition: transform .12s ease; }
+.gruppo[open] > summary::before { transform: rotate(90deg); }
+.gruppo > summary:hover { background: var(--surface-2); border-radius: 6px; }
+.gruppo > summary .nome { font-weight: 600; }
+.gruppo > summary .conteggio { margin-left: auto; color: var(--t2);
+                               font-size: .8rem; font-variant-numeric: tabular-nums; }
+.gruppo table { padding-left: 1.1rem; }
+.badge-spenti { font-size: .68rem; color: var(--t3); border: 1px solid var(--surface-2);
+                border-radius: 999px; padding: .05rem .4rem; }
+
+/* --- le settimane della costanza (W1) ------------------------------------ */
+
+/* Quattro colonnine sotto la cifra hero: una media di 2 può essere due
+   settimane da 4 e due da zero, e le due storie non si somigliano. */
+.settimane { display: flex; align-items: flex-end; gap: 4px; height: 22px; }
+.settimane i { flex: 1; background: var(--volt); border-radius: 2px; min-height: 2px; }
+.settimane i.vuota { background: var(--surface-2); }
