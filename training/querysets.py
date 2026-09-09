@@ -10,8 +10,13 @@ definizioni — il filtro universale e Epley — e scriverle dentro la view
 significherebbe tenerne una seconda copia proprio nel punto in cui la fase 2
 scriverà la prima. È la lezione di #75: una regola scritta due volte diverge al
 primo ripensamento, e nessun test lo segnala perché due copie identiche
-passano entrambe. Qui c'è **solo** ciò che le classifiche consumano; le altre
-analisi aggiungeranno i propri metodi a questa stessa classe.
+passano entrambe. Le altre analisi aggiungono i propri metodi a questa stessa
+classe: la fase 2 ci ha portato `VOLUME` e `with_volume()` (#97), insieme alla
+riconciliazione della dashboard, che il volume se lo era riscritto a mano.
+
+Cosa entra qui e quando: **solo ciò che ha almeno due consumatori previsti**,
+il resto lo aggiunge il ticket che lo consuma. Un metodo che nessuno chiama è
+codice da spiegare all'orale che non serve a niente.
 
 `models.py` importa questo file, non il contrario: le espressioni parlano di
 colonne per nome (`F("weight")`) e non hanno bisogno di conoscere i modelli.
@@ -66,6 +71,23 @@ EPLEY = ExpressionWrapper(
     output_field=FloatField(),
 )
 
+#: Il volume di **una serie**: carico effettivo × ripetizioni.
+#:
+#: È l'espressione che A1 e A2 sommano (`docs/spec/04-analisi.md`) e che la
+#: dashboard aggrega sulla finestra mobile. Vive qui e non dentro le `Sum` che
+#: la consumano perché scritta due volte diverge: la dashboard di #95 la
+#: calcolava come `Sum(F("reps") * F("weight"))`, cioè **senza carico
+#: effettivo**, e su corpo libero quel volume è zero — nessun test lo
+#: segnalava, perché due definizioni identiche nella forma passano entrambe
+#: (#75).
+#:
+#: Il `Cast` su `reps` per la ragione di sempre: `reps` è un intero e
+#: `EFFECTIVE_LOAD` un float, e un'espressione mista Django non la indovina.
+VOLUME = ExpressionWrapper(
+    EFFECTIVE_LOAD * Cast(F("reps"), FloatField()),
+    output_field=FloatField(),
+)
+
 
 class WorkoutSetQuerySet(models.QuerySet):
     """Il custom QuerySet di `WorkoutSet`, concatenabile.
@@ -88,6 +110,24 @@ class WorkoutSetQuerySet(models.QuerySet):
     def with_effective_load(self):
         """Annota `carico_effettivo` — vedi `EFFECTIVE_LOAD`."""
         return self.annotate(carico_effettivo=EFFECTIVE_LOAD)
+
+    def with_volume(self):
+        """Annota `volume` **per serie** — vedi `VOLUME`.
+
+        Il nome resta al valore di riga, non all'aggregato, e la scelta è
+        quella che tiene il file coerente con sé stesso: qui stanno
+        **espressioni**, non risposte, e un metodo che restituisse già una
+        somma non sarebbe più concatenabile — nessuno potrebbe metterci un
+        `.filter()` dopo, né raggrupparlo per settimana come fa A1.
+
+        «Volume» di una singola serie non è un abuso del termine: il volume è
+        additivo per costruzione, e la somma di un gruppo di righe è la
+        domanda, che sta in chi la pone. Chi aggrega ha due strade, entrambe
+        con la stessa definizione sotto: `Sum(VOLUME)` direttamente, o
+        `.with_volume()` seguito da `Sum("volume")` quando la riga serve anche
+        da sola.
+        """
+        return self.annotate(volume=VOLUME)
 
     def with_estimated_1rm(self):
         """Annota `massimale_stimato`, **senza** applicare il tetto a 12.

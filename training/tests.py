@@ -27,6 +27,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.db import IntegrityError, connection, models, transaction
+from django.db.models import Sum
 from django.template import TemplateDoesNotExist
 from django.template.loader import get_template
 from django.test import TestCase, override_settings
@@ -49,6 +50,7 @@ from training.importer import (
     scrivi,
 )
 from training.forms import VoteForm
+from training.querysets import CORPO_LIBERO, VOLUME
 from training.management.commands import seed_synthetic
 from training.models import (
     Equipment,
@@ -887,6 +889,166 @@ class RoutineCrudTests(TestCase):
         self.assertIn('class="">Esercizi</a>', body)
 
 
+class WorkoutSetQuerySetTests(TestCase):
+    """Le definizioni condivise, provate come espressioni e non attraverso una pagina.
+
+    `training/querysets.py` è il posto in cui il volume, il filtro universale e
+    Epley hanno un nome solo. Finché a consumarle c'erano solo le classifiche,
+    i loro test bastavano; dal motore analitico in poi le consumano tre
+    superfici, e una definizione provata solo di riflesso è una definizione che
+    può cambiare senza che nessuno lo dica.
+
+    Fonte: #97, `docs/spec/04-analisi.md` §«Il custom QuerySet».
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user(
+            username="atleta", password=PASSWORD, body_mass_kg=Decimal("80")
+        )
+        gruppo = MuscleGroup.objects.create(code="back", label_it="Schiena", sort_order=1)
+        muscolo = Muscle.objects.create(
+            code="lats", group=gruppo, label_it="Dorsali", sort_order=1
+        )
+        bilanciere = Equipment.objects.create(
+            code="barbell", label_it="Bilanciere", sort_order=1
+        )
+        corpo_libero = Equipment.objects.create(
+            code=CORPO_LIBERO, label_it="Corpo libero", sort_order=2
+        )
+        cls.rematore = Exercise.objects.create(
+            name="Rematore", slug="rematore",
+            primary_muscle=muscolo, equipment=bilanciere,
+        )
+        cls.trazioni = Exercise.objects.create(
+            name="Trazioni", slug="trazioni",
+            primary_muscle=muscolo, equipment=corpo_libero,
+        )
+        cls.workout = Workout.objects.create(
+            user=cls.user, title="Schiena", started_at=timezone.now()
+        )
+
+    def serie(self, exercise, reps, weight, **kwargs):
+        campi = {
+            "set_type": WorkoutSet.SetType.WORKING,
+            "is_completed": True,
+            **kwargs,
+        }
+        return WorkoutSet.objects.create(
+            workout=self.workout, exercise=exercise,
+            set_number=WorkoutSet.objects.filter(
+                workout=self.workout, exercise=exercise
+            ).count() + 1,
+            reps=reps, weight=Decimal(weight), **campi,
+        )
+
+    def volume_di(self, riga):
+        return WorkoutSet.objects.with_volume().get(pk=riga.pk).volume
+
+    def test_the_volume_of_a_barbell_set_is_reps_times_weight(self):
+        """Il caso semplice: 10 × 60 = 600, e il `default` del `Case` basta."""
+        riga = self.serie(self.rematore, reps=10, weight="60")
+
+        self.assertEqual(self.volume_di(riga), 600.0)
+
+    def test_a_bodyweight_set_is_not_worth_zero(self):
+        """Il motivo per cui `EFFECTIVE_LOAD` esiste (ADR-0006).
+
+        8 trazioni a peso aggiunto nullo sono 8 × 80 kg di corpo sollevato. Con
+        `reps × weight` varrebbero zero, e la schiena sparirebbe dalle analisi
+        di chi si allena a corpo libero **senza che niente segnali errore**.
+        """
+        riga = self.serie(self.trazioni, reps=8, weight="0")
+
+        self.assertEqual(self.volume_di(riga), 640.0)
+
+    def test_a_weighted_pull_up_adds_the_belt_to_the_body(self):
+        """Le trazioni zavorrate: il `+` del `Case` le gestisce senza un ramo in più."""
+        riga = self.serie(self.trazioni, reps=5, weight="20")
+
+        self.assertEqual(self.volume_di(riga), 500.0)
+
+    def test_a_missing_body_mass_leaves_the_volume_unknown_not_zero(self):
+        """Senza peso corporeo il carico effettivo è **nullo**, non zero.
+
+        È la scelta di ADR-0008 letta sul volume: la somma salta quelle righe,
+        e chi mostra il numero deve dire che è incompleto. Zero sarebbe una
+        risposta, e sarebbe falsa.
+        """
+        anonimo = User.objects.create_user(username="anonimo", password=PASSWORD)
+        allenamento = Workout.objects.create(
+            user=anonimo, title="Schiena", started_at=timezone.now()
+        )
+        riga = WorkoutSet.objects.create(
+            workout=allenamento, exercise=self.trazioni, set_number=1,
+            reps=8, weight=Decimal("0"),
+            set_type=WorkoutSet.SetType.WORKING, is_completed=True,
+        )
+
+        self.assertIsNone(self.volume_di(riga))
+
+    def test_the_volume_keeps_the_sets_above_twelve_reps(self):
+        """Il tetto a 12 è del massimale, non del volume.
+
+        Una serie da 15 ripetizioni non concorre a Epley (gonfia) ma è
+        allenamento avvenuto, quindi resta nel volume. Le due regole vivono
+        separate apposta: il tetto è un filtro sulle righe, non una proprietà
+        dell'espressione.
+        """
+        riga = self.serie(self.rematore, reps=15, weight="40")
+
+        self.assertEqual(self.volume_di(riga), 600.0)
+
+    def test_the_volume_is_not_truncated_by_integer_division(self):
+        """La trappola dei tipi misti, sul mezzo chilo.
+
+        `reps` è un intero e il carico un decimale: senza il `Cast`
+        l'espressione mescola due tipi, e 10 × 2,5 diventerebbe 20 invece di
+        25. Sbaglia **ordinando lo stesso**, che è la forma peggiore.
+        """
+        riga = self.serie(self.rematore, reps=10, weight="2.5")
+
+        self.assertEqual(self.volume_di(riga), 25.0)
+
+    def test_working_and_with_volume_chain_and_the_result_is_still_a_queryset(self):
+        """Concatenabile: è la ragione per cui `with_volume()` annota la riga.
+
+        Se il metodo restituisse già una somma, nessuno potrebbe filtrarci
+        dopo, né raggrupparlo per settimana come fa A1. Qui si concatena tre
+        volte e si somma alla fine, che è il modo in cui le analisi lo useranno.
+        """
+        self.serie(self.rematore, reps=10, weight="60")
+        self.serie(self.trazioni, reps=8, weight="0")
+        self.serie(self.rematore, reps=10, weight="900",
+                   set_type=WorkoutSet.SetType.WARMUP)
+
+        totale = (
+            WorkoutSet.objects.working()
+            .filter(workout__user=self.user)
+            .with_volume()
+            .aggregate(v=Sum("volume"))["v"]
+        )
+
+        self.assertEqual(totale, 1240.0)
+
+    def test_the_expression_and_the_method_are_the_same_definition(self):
+        """`Sum(VOLUME)` e `.with_volume()` non possono divergere.
+
+        Le due strade esistono entrambe — la prima quando serve solo il totale,
+        la seconda quando serve anche la riga — e devono restare una
+        definizione sola. Questo è il test che lo dice a voce alta.
+        """
+        self.serie(self.rematore, reps=10, weight="60")
+        self.serie(self.trazioni, reps=8, weight="0")
+
+        righe = WorkoutSet.objects.working().filter(workout__user=self.user)
+
+        self.assertEqual(
+            righe.aggregate(v=Sum(VOLUME))["v"],
+            righe.with_volume().aggregate(v=Sum("volume"))["v"],
+        )
+
+
 class DashboardTests(TestCase):
     """Le quattro cifre della dashboard, che fino a #78 erano trattini.
 
@@ -902,19 +1064,38 @@ class DashboardTests(TestCase):
 
     @classmethod
     def setUpTestData(cls):
-        cls.user = User.objects.create_user(username="lorenzo", password=PASSWORD)
+        cls.user = User.objects.create_user(
+            username="lorenzo", password=PASSWORD, body_mass_kg=Decimal("70")
+        )
         cls.vuoto = User.objects.create_user(username="nuovo", password=PASSWORD)
+        # Chi non ha dichiarato il peso corporeo: le sue trazioni non hanno un
+        # carico effettivo (ADR-0006), quindi restano fuori dal volume. È
+        # un'assenza che la pagina deve **dichiarare**, non nascondere.
+        cls.senza_peso = User.objects.create_user(
+            username="anonimo", password=PASSWORD
+        )
 
         gruppo = MuscleGroup.objects.create(code="chest", label_it="Petto", sort_order=1)
         muscolo = Muscle.objects.create(
             code="chestMid", group=gruppo, label_it="Petto medio", sort_order=1
         )
+        dorso = MuscleGroup.objects.create(code="back", label_it="Schiena", sort_order=2)
+        dorsale = Muscle.objects.create(
+            code="lats", group=dorso, label_it="Dorsali", sort_order=1
+        )
         attrezzo = Equipment.objects.create(
             code="barbell", label_it="Bilanciere", sort_order=1
+        )
+        corpo_libero = Equipment.objects.create(
+            code=CORPO_LIBERO, label_it="Corpo libero", sort_order=2
         )
         cls.panca = Exercise.objects.create(
             name="Panca piana", slug="panca-piana",
             primary_muscle=muscolo, equipment=attrezzo,
+        )
+        cls.trazioni = Exercise.objects.create(
+            name="Trazioni", slug="trazioni",
+            primary_muscle=dorsale, equipment=corpo_libero,
         )
         cls.workout = Workout.objects.create(
             user=cls.user, title="Petto", started_at=timezone.now()
@@ -937,6 +1118,24 @@ class DashboardTests(TestCase):
             reps=10, weight=Decimal("900"), set_type=WorkoutSet.SetType.WORKING,
             is_completed=False,
         )
+        # 8 trazioni a peso aggiunto zero. Col carico effettivo valgono
+        # 8 × (0 + 70) = 560 kg; con `reps × weight` varrebbero **zero**, ed è
+        # esattamente la divergenza che #97 è nato per chiudere.
+        WorkoutSet.objects.create(
+            workout=cls.workout, exercise=cls.trazioni, set_number=1,
+            reps=8, weight=Decimal("0"), set_type=WorkoutSet.SetType.WORKING,
+            is_completed=True,
+        )
+
+        # Lo stesso allenamento, per chi il peso corporeo non l'ha dichiarato.
+        senza = Workout.objects.create(
+            user=cls.senza_peso, title="Schiena", started_at=timezone.now()
+        )
+        WorkoutSet.objects.create(
+            workout=senza, exercise=cls.trazioni, set_number=1,
+            reps=8, weight=Decimal("0"), set_type=WorkoutSet.SetType.WORKING,
+            is_completed=True,
+        )
 
     def setUp(self):
         self.client.login(username="lorenzo", password=PASSWORD)
@@ -945,12 +1144,63 @@ class DashboardTests(TestCase):
         """Il riscaldamento e le serie non spuntate stanno fuori.
 
         Sono i due carichi più alti del fixture apposta: se entrassero, il
-        volume sarebbe 15.000 invece di 1.000, e un test che guardasse solo
+        volume sarebbe 15.560 invece di 1.560, e un test che guardasse solo
         «c'è un numero» non se ne accorgerebbe.
         """
         response = self.client.get(reverse("training:dashboard"))
 
-        self.assertEqual(response.context["volume_recente"], Decimal("1000"))
+        self.assertEqual(response.context["volume_recente"], 1560.0)
+
+    def test_the_volume_counts_the_bodyweight_sets_too(self):
+        """La regressione che #97 è nato per chiudere.
+
+        Fino a #97 questa view calcolava il volume come `reps × weight`, che
+        sulle trazioni fa **zero**: 8 ripetizioni a peso aggiunto nullo
+        sparivano dal riquadro che apre la prima pagina. Col carico effettivo
+        valgono 8 × (0 + 70) = 560 kg, e il totale passa da 1.000 a 1.560.
+
+        Il numero è scritto qui per esteso apposta: se qualcuno riscrivesse il
+        volume a mano, tornerebbe 1.000 e il test lo direbbe.
+        """
+        response = self.client.get(reverse("training:dashboard"))
+
+        self.assertEqual(response.context["volume_recente"], 1560.0)
+        self.assertNotEqual(response.context["volume_recente"], 1000.0)
+
+    def test_the_dashboard_volume_is_the_shared_definition(self):
+        """Il ponte fra le due superfici, che prima non esisteva.
+
+        La divergenza di #95 è passata perché **nessun test confrontava la
+        dashboard con le analisi**: due definizioni identiche nella forma e
+        diverse nel risultato passavano entrambe. Questo test fallisce se la
+        pagina torna a calcolarsi il volume per conto suo, qualunque sia la
+        formula che sceglie.
+        """
+        atteso = (
+            WorkoutSet.objects.working()
+            .filter(workout__user=self.user)
+            .aggregate(v=Sum(VOLUME))["v"]
+        )
+
+        response = self.client.get(reverse("training:dashboard"))
+
+        self.assertEqual(response.context["volume_recente"], atteso)
+
+    def test_without_a_body_mass_the_bodyweight_volume_is_declared_missing(self):
+        """Senza peso corporeo le trazioni non hanno un carico, e si dice.
+
+        `EFFECTIVE_LOAD` somma `weight + body_mass_kg`, quindi con un peso
+        corporeo nullo l'espressione è nulla e la `Sum` salta quelle righe: il
+        volume non è «zero», è **incompleto**. Un numero incompleto senza
+        etichetta è il guasto che non si vede, quindi l'avviso di ADR-0008 lo
+        dichiara accanto agli altri due costi.
+        """
+        self.client.login(username="anonimo", password=PASSWORD)
+
+        response = self.client.get(reverse("training:dashboard"))
+
+        self.assertIsNone(response.context["volume_recente"])
+        self.assertContains(response, "non entrano nel volume")
 
     def test_the_record_of_the_month_ignores_the_warm_up(self):
         """500 kg di riscaldamento non sono un record: il record è 100."""
