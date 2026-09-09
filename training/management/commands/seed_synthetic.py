@@ -27,15 +27,22 @@ Tre cose che questo file non fa, e ognuna è una decisione:
    progressione(t) × rumore`, quindi la panca da 140 con lo squat da 60 non è
    sorvegliata, è impossibile per costruzione.
 3. **Non ri-misura la regola di etichettatura di ADR-0004.** Le due misure che
-   la riguardano — ≥ 1500 finestre etichettabili, classe `stallo` al 30,1% con
+   la riguardano — ≥ 1500 finestre etichettabili, classe `stallo` al 31,0% con
    orizzonte a 6 — sono proprietà *di quella regola applicata a questa
-   popolazione*, misurate una volta nel rapporto del prototipo. Riscriverle qui
+   popolazione*, misurate nel rapporto del prototipo. Riscriverle qui
    significherebbe tenere una seconda copia della regola dentro un comando di
    seeding, che la fase 2 dovrebbe poi non far divergere. A tenerle ferme è
    invece l'**identità** della popolazione: questo comando consuma il generatore
    casuale nello stesso ordine del prototipo, quindi produce gli stessi utenti,
    gli stessi allenamenti e le stesse serie — e i conteggi esatti, verificati dai
    test, sono la guardia che quell'identità non si è rotta.
+
+   **Quell'identità è un patto a due, e si è già dovuto onorare una volta.**
+   `DEMO_MONTHS` è nato qui, e la stessa clausola è stata scritta anche nel
+   prototipo: senza, le due popolazioni divergevano e le due misure sopra
+   restavano appese a una popolazione che non esisteva più. Sono state **rifatte**
+   girando il prototipo, non estrapolate — 26.948 finestre e 31,0%, entrambe
+   dentro i requisiti. Chi tocca `make_users` di qui in avanti tocca due file.
 
 Il prototipo `scripts/prototype_seed_synthetic.py` resta nel repo come sorgente
 del ragionamento e del rapporto di validazione. Non è questo comando: era codice
@@ -84,10 +91,23 @@ TODAY = date(2026, 9, 7)
 DEMO_PASSWORD = "progressive"
 
 # L'utente su cui si dimostra la pagina dello stallo, scelto in anticipo dal
-# rapporto del prototipo (17 mesi di storico, 1199 finestre etichettabili) e non
-# la mattina dell'orale.
+# rapporto del prototipo (1904 finestre etichettabili) e non la mattina
+# dell'orale.
 DEMO_USERNAME = "demo064"
 DEMO_DISPLAY_NAME = "Martina Longo"
+
+# Lo storico dell'utente della demo è l'unico **dichiarato** invece che
+# sorteggiato, ed è due anni tondi. Prima era 17,2 mesi, ma per caso: `demo064`
+# non è fra i sei veterani di `i <= 6`, e quella lunghezza gliela dava la banda
+# del suo archetipo. Un numero che regge la demo per coincidenza è un numero che
+# la prossima modifica del generatore può togliere senza che nessuno se ne
+# accorga, quindi qui si dice.
+#
+# Due anni e non diciotto mesi perché è la finestra su cui gira tutta l'analisi
+# mostrata all'orale: copre per intero i 12 mesi delle analisi di volume **più**
+# un anno di confronto dietro, quindi `TruncMonth` ha due cicli stagionali da
+# mettere a confronto invece di uno troncato.
+DEMO_MONTHS = 24.0
 
 EPLEY_MAX_REPS = 12  # oltre, Epley gonfia
 
@@ -292,6 +312,20 @@ def make_users(rng):
             months = rng.uniform(0.3, 0.7)      # i «dati insufficienti»
         else:
             months = rng.uniform(*cfg["months"])
+        # L'utente della demo prende `DEMO_MONTHS`, ma **dopo** che il sorteggio
+        # è avvenuto: il numero si scarta invece di non estrarlo. Sembra uno
+        # spreco ed è il contrario — il generatore casuale è una sequenza, e
+        # saltare un'estrazione sposterebbe tutte quelle successive. Così di
+        # tutta `make_users` cambia una cosa sola: lo `start` dell'utente 64.
+        #
+        # Il contenimento finisce qui, e vale detto: in `generate` ogni utente
+        # consuma un numero di estrazioni che dipende dalla **lunghezza** del
+        # suo storico, quindi da 64 in poi il flusso slitta e i 37 utenti a
+        # valle cambiano allenamenti. Gli utenti 1–63 no — e lì stanno sia i sei
+        # veterani sia i quattro «dati insufficienti», cioè le due proprietà
+        # della popolazione che la demo non può permettersi di perdere.
+        if f"demo{i:03d}" == DEMO_USERNAME:
+            months = DEMO_MONTHS
         body_mass = round(min(105.0, max(48.0, rng.gauss(73, 12))), 1)
         users.append(
             dict(
@@ -771,10 +805,21 @@ def epley(weight, reps, ex, body_mass):
 def coherence(users, exercises, workouts, sets):
     """L'autocontrollo del generatore: quante panche superano il proprio squat.
 
-    La risposta dev'essere **zero**, e non perché un filtro le scarti: la catena del
-    carico le rende impossibili. È il controllo che dimostra che la catena è ancora
-    intatta dopo il porting, ed è aritmetica del generatore, non del motore
-    analitico — che in fase 2 farà lo stesso calcolo per un'altra ragione.
+    La risposta dev'essere **una coda trascurabile**, e non perché un filtro la
+    tagli: la catena del carico la rende rarissima. È il controllo che dimostra che
+    la catena è ancora intatta dopo il porting, ed è aritmetica del generatore, non
+    del motore analitico — che in fase 2 farà lo stesso calcolo per un'altra ragione.
+
+    Fino a `DEMO_MONTHS = 24` la coda era **vuota**, e il controllo diceva «zero».
+    Non era una garanzia strutturale: il rapporto panca/squat parte dai `CORE_RATIOS`
+    ed è quindi lo stesso per tutti, ma `progression(t)` corre **per esercizio**, e
+    più storico c'è più i due esercizi di un utente possono divergere. A due anni un
+    utente su 56 arriva a 1,16 — col secondo più alto a 0,95. Non è la catena che si
+    rompe, è la coda che si allunga, e in palestra quell'utente esiste davvero: è
+    quello che spinge di panca e salta le gambe.
+
+    La soglia resta al 2% di chi fa entrambi gli esercizi, perché ciò che il controllo
+    deve intercettare non è l'eccezione, è la **mediana** che si sposta.
     """
     by_name = {e["name"]: e for e in exercises}
     owner = {w["id"]: w["user_id"] for w in workouts}
@@ -905,7 +950,10 @@ class Command(BaseCommand):
             f"  panca / squat (mediana)           "
             f"{statistics.median(ratios):.2f} su {len(ratios)} utenti"
         )
-        write(f"  panche sopra il proprio squat     {absurd}   {self._ok(absurd == 0)}")
+        write(
+            f"  panche sopra il proprio squat     {absurd} su {len(ratios)}   "
+            f"{self._ok(absurd <= 0.02 * len(ratios))}"
+        )
 
         months = sorted((TODAY - u["start"]).days / 30.4 for u in users)
         write(

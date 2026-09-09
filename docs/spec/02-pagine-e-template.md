@@ -35,7 +35,7 @@ Progressive eredita l'identità **Pulse** di Overload:
 - tipografia compressa e maiuscola per le etichette
 - il chip delta `▲ +2.5` come elemento firma
 
-Sopra **Bootstrap 5.3.0 da CDN**, con **~200 righe di CSS custom**: quasi tutte token di colore più tre classi di utilità (`.eyebrow`, `.hero-num`, `.delta`). All'orale si difende in una frase — è la palette di un'app che esiste già.
+Sopra **Bootstrap 5.3.0 da CDN**, con **~100 righe di CSS custom**: quasi tutte token di colore più tre classi di utilità (`.eyebrow`, `.hero-num`, `.delta`). All'orale si difende in una frase — è la palette di un'app che esiste già.
 
 La gerarchia della dashboard è **il numero**: la riga di cifre hero apre la pagina, il resto la spiega. Lo stallo compare come avviso sul rail volt, non come pannello: il coach avvisa, non è il prodotto.
 

@@ -37,7 +37,7 @@ Regola posta da Lorenzo il 2026-09-07, e ha deciso quasi tutto lo stack:
 - **Niente JavaScript applicativo** — l'unica eccezione è Chart.js, alimentato da `json_script`
 - **Solo locale**, nessun deploy
 
-Le due deviazioni consapevoli, **entrambe da dichiarare all'orale**: il **custom user model** al posto di `Profile` in OneToOne ([ADR-0003](../adr/0003-custom-user-model.md)), e le **~200 righe di CSS custom** del guscio Pulse.
+Le due deviazioni consapevoli, **entrambe da dichiarare all'orale**: il **custom user model** al posto di `Profile` in OneToOne ([ADR-0003](../adr/0003-custom-user-model.md)), e le **~100 righe di CSS custom** del guscio Pulse.
 
 ## Checklist della traccia, riga per riga
 
@@ -88,7 +88,7 @@ Nell'ordine, perché ogni passo dipende dal precedente:
 
 Il custom QuerySet, poi **A3 per prima** (è l'unica con un'incognita: `Window` sopra un aggregato), poi le altre cinque, i tre grafici via `json_script`, la pagina di analisi muscolare, la heatmap.
 
-Alla fine della fase 2 va fatta **una misura vera** dei tempi di query di percentile e classifica su 299.367 serie: è la condizione a cui è subordinata la questione dei valori derivati (vedi *Confini*).
+Alla fine della fase 2 va fatta **una misura vera** dei tempi di query di percentile e classifica su 296.724 serie: è la condizione a cui è subordinata la questione dei valori derivati (vedi *Confini*).
 
 ### Fase 3 — il coach
 
@@ -110,7 +110,7 @@ Quella riga **è il ponte**, e all'orale si percorre in un ordine solo: *da `ann
 |---|---|---|
 | `annotate(Count(...))` | classifica sociale | Il punto di partenza: è quella del corso |
 | `aggregate` | media globale dei voti | «`annotate` dà un numero per riga, `aggregate` uno per l'intero queryset» |
-| `F()` | volume, carico effettivo | «serve moltiplicare due colonne fra loro, e in Python significherebbe scaricare 299.367 righe» |
+| `F()` | volume, carico effettivo | «serve moltiplicare due colonne fra loro, e in Python significherebbe scaricare 296.724 righe» |
 | `Case`/`When` | carico effettivo | «sul corpo libero il carico è un'altra cosa, e la condizione deve stare nel database» |
 | `Subquery`/`OuterRef` | PR, `best_at` | «per ogni riga serve un valore che viene da un'altra query» |
 | `Window` + `Lag` | progressione | «serve confrontare una riga con la precedente, e `GROUP BY` non sa farlo» |
@@ -151,6 +151,6 @@ Fuori scope per decisione presa, non per dimenticanza:
 - **Corpus pubblico di standard di forza** — i percentili si calcolano sulla popolazione interna
 - **Modifiche a Overload** — è la sorgente dello schema e dei dati, non un bersaglio di lavoro
 
-**Rinviato a dopo la fase 2, con una condizione precisa:** materializzare i valori derivati (volume, massimale, punteggi). Oggi si calcolano nell'ORM a ogni query, per scelta, ed è proprio ciò che il progetto deve dimostrare. La decisione si riapre **solo** se la misura sui 299.367 record al termine della fase 2 mostra query lente — **dopo** averle scritte, non prima.
+**Rinviato a dopo la fase 2, con una condizione precisa:** materializzare i valori derivati (volume, massimale, punteggi). Oggi si calcolano nell'ORM a ogni query, per scelta, ed è proprio ciò che il progetto deve dimostrare. La decisione si riapre **solo** se la misura sui 296.724 record al termine della fase 2 mostra query lente — **dopo** averle scritte, non prima.
 
 **Rinviato a dopo la build:** la **demo orale** — quali dati caricare, in che ordine mostrare le pagine, cosa dire su ogni requisito. Ha bisogno dell'app che gira per essere provata; deciderla ora significherebbe deciderla al buio. Due vincoli sono però già fissati: lo storico reale è troppo corto per la pagina dello stallo, e l'utente su cui si dimostra è già scelto — **`demo064`, Martina Longo**.
