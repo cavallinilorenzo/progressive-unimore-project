@@ -15,7 +15,7 @@ import shutil
 import statistics
 import tempfile
 from collections import Counter
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 from io import BytesIO, StringIO
 from pathlib import Path
@@ -41,6 +41,7 @@ from training.analytics import coach as analytics_coach
 from training.analytics.coach import carico as coach_carico
 from training.analytics import costanza as analytics_costanza
 from training.analytics import muscles as analytics_muscles
+from training.analytics import plateau as analytics_plateau
 from training.analytics import progressione as analytics_progressione
 from training.analytics import volume as analytics_volume
 from training.exporter import (
@@ -7418,6 +7419,388 @@ class DoubleProgressionTests(TestCase):
             self.sessione(indietro * 7, serie=[(8, "60", True), (8, "60", True)])
 
         self.assertEqual(prima, rendi())
+
+
+
+class ProgressionWindowTests(TestCase):
+    """La finestra, lo stato e la regola a soglia (#114).
+
+    La regola 2 della mappa #111 vale qui più che altrove: un verdetto
+    plausibile ma falso rende una pagina perfetta. Quindi il test portante non
+    inventa dati, **ricostruisce serie per serie** la panca piana dell'utente
+    della demo (`cavallinilorenzo`, pk 64) e inchioda i numeri calcolati a
+    mano prima di guardare cosa risponde il codice.
+
+    Lo storico vero, letto dal database il 2026-09-09 — Epley è
+    `carico × (1 + reps/30)` e il bilanciere non passa dal peso corporeo:
+
+    | Sessione | Serie di punta | Massimale | Record? |
+    |---|---|---|---|
+    | 9 ago 14:30  | 8 × 110    | 139,333 | sì (la prima) |
+    | 12 ago 12:45 | 12 × 100   | 140,000 | sì |
+    | 15 ago 16:45 | 5 × 120    | 140,000 | no (pareggia) |
+    | 18 ago 13:00 | 6 × 115    | 138,000 | no |
+    | 21 ago 15:15 | 10 × 107,5 | 143,333 | **sì** |
+    | 27 ago 19:15 | 6 × 110    | 132,000 | no |
+    | 31 ago 14:30 | 5 × 117,5  | 137,083 | no |
+    | 5 set 12:15  | 6 × 117,5  | 141,000 | no |
+
+    Da cui, a mano: la finestra è **15 ago → 5 set**, sei sedute e ventuno
+    giorni esatti (cinque sedute coprirebbero 18 giorni, troppo pochi); il
+    record è dentro la finestra ma tre sessioni fa; con `N = 3` è **stallo**.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user(
+            username="atleta", password=PASSWORD, body_mass_kg=Decimal("96")
+        )
+        gruppo = MuscleGroup.objects.create(
+            code="chest", label_it="Petto", sort_order=1
+        )
+        muscolo = Muscle.objects.create(
+            code="chestMain", group=gruppo, label_it="Petto", sort_order=1
+        )
+        bilanciere = Equipment.objects.create(
+            code="barbell",
+            label_it="Bilanciere",
+            default_bar_weight_kg=Decimal("20"),
+            load_increment_kg=Decimal("2.5"),
+            sort_order=1,
+        )
+        cls.panca = Exercise.objects.create(
+            name="Panca piana con bilanciere",
+            slug="panca-piana",
+            primary_muscle=muscolo,
+            equipment=bilanciere,
+        )
+
+    # --- la fixture --------------------------------------------------------
+
+    def sessione(self, quando, serie, esercizio=None):
+        """Una sessione a un istante **esatto**, non a «giorni fa».
+
+        L'ora conta: la finestra si misura in giorni di calendario, e un test
+        ancorato a `timezone.now()` non saprebbe mai riprodurre una coppia di
+        sedute che distano ventuno giorni sul calendario e venti d'orologio.
+        """
+        istante = timezone.make_aware(quando)
+        allenamento = Workout.objects.create(
+            user=self.user, title="Sessione", started_at=istante
+        )
+        for numero, (reps, carico) in enumerate(serie, start=1):
+            WorkoutSet.objects.create(
+                workout=allenamento,
+                exercise=esercizio or self.panca,
+                set_number=numero,
+                reps=reps,
+                weight=Decimal(carico),
+                set_type=WorkoutSet.SetType.WORKING,
+                is_completed=True,
+            )
+        return allenamento
+
+    def storico_della_demo(self):
+        """Le otto sedute vere di `pk 64` sulla panca piana, con le loro ore."""
+        for quando, serie in [
+            (datetime(2026, 8, 9, 14, 30), [(8, "110"), (8, "110"), (6, "110")]),
+            (datetime(2026, 8, 12, 12, 45), [(12, "100"), (12, "100"), (10, "100")]),
+            (datetime(2026, 8, 15, 16, 45), [(5, "120"), (4, "120"), (4, "120")]),
+            (datetime(2026, 8, 18, 13, 0), [(6, "115"), (4, "115"), (6, "115")]),
+            (datetime(2026, 8, 21, 15, 15), [(10, "107.5"), (9, "107.5")]),
+            (datetime(2026, 8, 27, 19, 15), [(6, "110"), (6, "110"), (5, "110")]),
+            (datetime(2026, 8, 31, 14, 30), [(5, "117.5"), (3, "117.5")]),
+            (datetime(2026, 9, 5, 12, 15), [(6, "117.5"), (6, "117.5")]),
+        ]:
+            self.sessione(quando, serie)
+
+    def stato(self, esercizio=None):
+        return analytics_plateau.stato_progressione(
+            self.user, esercizio or self.panca
+        )
+
+    # --- il test portante: i numeri veri, calcolati a mano ------------------
+
+    def test_la_panca_dell_utente_della_demo_e_in_stallo(self):
+        """Tutti i numeri della tabella nel docstring, uno per uno."""
+        self.storico_della_demo()
+        stato = self.stato()
+
+        self.assertEqual(stato.stato, analytics_plateau.STALLO)
+        self.assertTrue(stato.e_stallo)
+        self.assertTrue(stato.deciso)
+
+        # La finestra: sei sedute, ventuno giorni esatti. Non sette — è il
+        # suffisso **minimo** — e non cinque, che ne coprirebbero diciotto.
+        finestra = stato.finestra
+        self.assertEqual(len(finestra.sessioni), 6)
+        self.assertEqual(finestra.giorni, 21)
+        self.assertEqual(finestra.sessioni[0].giorno, date(2026, 8, 15))
+        self.assertEqual(finestra.sessioni[-1].giorno, date(2026, 9, 5))
+        self.assertEqual(stato.avanzamento, "6 allenamenti in 21 giorni")
+
+        # I massimali della finestra, a mano con Epley.
+        self.assertEqual(
+            [round(s.massimale, 3) for s in finestra.sessioni],
+            [140.0, 138.0, 143.333, 132.0, 137.083, 141.0],
+        )
+
+        # Il record è il 21 agosto, dentro la finestra: e la regola scatta
+        # lo stesso, perché guarda le **ultime** tre sessioni, non la finestra
+        # intera. È il caso che distingue la soglia da «finestra piatta».
+        self.assertEqual(
+            [s.record for s in finestra.sessioni],
+            [False, False, True, False, False, False],
+        )
+        self.assertEqual(finestra.sessioni_senza_record, 3)
+        self.assertAlmostEqual(finestra.massimo, 143.333, places=3)
+
+        # Pendenza a mano sui minimi quadrati, x in giorni dall'inizio
+        # (0, 3, 6, 12, 16, 21): −0,0759 kg al giorno, cioè −0,383% a
+        # settimana sul massimale medio di 138,569.
+        self.assertAlmostEqual(finestra.pendenza, -0.383, places=3)
+
+        # Sopra la soglia di regressione (−0,667): in stallo, ma non in discesa.
+        self.assertFalse(stato.in_regressione)
+        self.assertFalse(finestra.in_regressione)
+
+    def test_ventuno_giorni_sono_di_calendario_non_di_orologio(self):
+        """La trappola che lo storico vero contiene già, ed è muta.
+
+        Il 15 agosto la seduta è alle 16:45, il 5 settembre alle 12:15: ventuno
+        giorni di calendario, ma `timedelta.days` ne conta **venti**, perché
+        tronca le quattro ore e mezza che mancano. Con la sottrazione fra
+        datetime la finestra si allargava a sette sedute — e sette sedute sono
+        una finestra perfettamente legittima, solo non quella che la spec
+        descrive: nessun test sarebbe fallito, nessuna pagina sarebbe sembrata
+        rotta, e il numero all'orale sarebbe stato di un'altra regola.
+        """
+        self.storico_della_demo()
+        finestra = self.stato().finestra
+
+        prima, ultima = finestra.sessioni[0], finestra.sessioni[-1]
+        self.assertEqual((ultima.giorno - prima.giorno).days, 21)
+        self.assertEqual(len(finestra.sessioni), 6)
+
+    # --- la finestra: le due condizioni, e il suffisso minimo ---------------
+
+    def test_la_finestra_e_il_suffisso_piu_corto_che_soddisfa_entrambe(self):
+        """Chi si allena spesso prende più di sei sedute, non «dati insufficienti».
+
+        Sei sedute a giorni alterni coprono dieci giorni, sotto i ventuno: con
+        una finestra fissa a sei questo utente non riceverebbe mai un verdetto,
+        e — la parte che decide — allenandosi **di più** peggiorerebbe, perché
+        sei sedute più fitte coprono meno calendario. Sull'utente della demo il
+        caso è reale: due esercizi su ventotto stanno sotto i ventuno giorni
+        sulle ultime sei sedute.
+        """
+        for i in range(12):
+            self.sessione(
+                datetime(2026, 7, 1, 18, 0) + timedelta(days=2 * i),
+                [(8, "100")],
+            )
+        stato = self.stato()
+
+        self.assertTrue(stato.deciso)
+        self.assertEqual(stato.finestra.giorni, 22)
+        self.assertEqual(len(stato.finestra.sessioni), 12)
+
+    def test_una_pausa_lunga_fa_ripartire_il_conto(self):
+        """Oltre `BUCO_MASSIMO_GIORNI` la serie si spezza, e con lei la finestra.
+
+        Le sei sedute di prima della pausa non spariscono dalla storia — il
+        record resta il record — ma non entrano in una finestra che misurerebbe
+        due mesi di divano invece dell'allenamento.
+        """
+        for i in range(6):
+            self.sessione(
+                datetime(2026, 4, 1, 18, 0) + timedelta(days=5 * i), [(8, "100")]
+            )
+        for i in range(4):
+            self.sessione(
+                datetime(2026, 7, 1, 18, 0) + timedelta(days=7 * i), [(8, "90")]
+            )
+
+        stato = self.stato()
+        self.assertEqual(stato.stato, analytics_plateau.DATI_INSUFFICIENTI)
+        self.assertEqual(stato.allenamenti, 4)
+        self.assertEqual(stato.giorni, 21)
+
+    # --- «dati insufficienti» è un avanzamento ------------------------------
+
+    def test_dati_insufficienti_si_mostra_come_avanzamento(self):
+        """La frase della spec, alla lettera, e i due conti che la compongono."""
+        for i in range(4):
+            self.sessione(
+                datetime(2026, 7, 1, 18, 0) + timedelta(days=4 * i), [(8, "100")]
+            )
+
+        stato = self.stato()
+        self.assertEqual(stato.stato, analytics_plateau.DATI_INSUFFICIENTI)
+        self.assertFalse(stato.deciso)
+        self.assertFalse(stato.e_stallo)
+        self.assertIsNone(stato.finestra)
+        self.assertEqual(stato.avanzamento, "4 allenamenti su 6 — 12 giorni su 21")
+
+    def test_esercizio_mai_registrato_e_zero_su_sei_e_non_un_errore(self):
+        stato = self.stato()
+        self.assertEqual(stato.stato, analytics_plateau.DATI_INSUFFICIENTI)
+        self.assertEqual(stato.avanzamento, "0 allenamenti su 6 — 0 giorni su 21")
+
+    # --- il record: pareggiare non basta -----------------------------------
+
+    def test_pareggiare_il_proprio_massimale_non_e_un_record(self):
+        """`>` e non `>=`, ed è la distinzione che la regola esiste per vedere.
+
+        Sei sedute identiche: la prima fa record perché il record nasce lì, le
+        altre cinque ripetono lo stesso numero. Se pareggiare contasse, questo
+        utente non risulterebbe mai in stallo pur non essendo mai migliorato —
+        che è precisamente la situazione che il progetto vuole nominare.
+        """
+        for i in range(6):
+            self.sessione(
+                datetime(2026, 7, 1, 18, 0) + timedelta(days=5 * i), [(8, "100")]
+            )
+
+        stato = self.stato()
+        self.assertEqual(
+            [s.record for s in stato.finestra.sessioni],
+            [True, False, False, False, False, False],
+        )
+        self.assertEqual(stato.finestra.sessioni_senza_record, 5)
+        self.assertEqual(stato.stato, analytics_plateau.STALLO)
+
+    def test_in_regressione_convive_con_lo_stallo(self):
+        """Un'etichetta accanto, non un terzo stato.
+
+        Sei sedute in discesa da 100 a 85 kg su 25 giorni: nessun record dopo
+        la prima, quindi stallo; e la pendenza sfonda la soglia, quindi anche
+        in regressione. I due campi sono veri insieme perché ADR-0004 tiene le
+        classi binarie e la regressione si calcola invece di predirla.
+        """
+        for i, carico in enumerate(["100", "97", "95", "92", "88", "85"]):
+            self.sessione(
+                datetime(2026, 7, 1, 18, 0) + timedelta(days=5 * i), [(8, carico)]
+            )
+
+        stato = self.stato()
+        self.assertEqual(stato.stato, analytics_plateau.STALLO)
+        self.assertTrue(stato.in_regressione)
+        self.assertLess(stato.finestra.pendenza, analytics_plateau.SOGLIA_REGRESSIONE)
+
+        # In pagina la discesa si dice col segno girato: «scende di -3,2%»
+        # è una doppia negazione, e si rilegge due volte per capirla.
+        self.client.login(username="atleta", password=PASSWORD)
+        html = self.client.get(
+            reverse("training:exercise-detail", args=[self.panca.slug])
+        ).content.decode()
+        self.assertIn("e in regressione", html)
+        self.assertIn("scende del", html)
+        self.assertNotIn("scende del -", html)
+
+    def test_la_soglia_di_regressione_non_e_un_numero_scelto(self):
+        """È la tolleranza di ADR-0004 distribuita sulla finestra minima.
+
+        Il test non ricalcola la formula: verifica che il numero **discenda**
+        dalle due costanti, così che cambiarne una senza aggiornare l'altra non
+        possa passare in silenzio. È l'unica soglia del rilevamento che non è
+        stata scelta, e vale la pena che resti tale.
+        """
+        settimane = analytics_plateau.GIORNI_MINIMI / 7
+        self.assertAlmostEqual(
+            analytics_plateau.SOGLIA_REGRESSIONE * settimane,
+            -analytics_plateau.TOLLERANZA_PIATTA_PCT,
+        )
+
+    # --- la cucitura che la fase 4 sostituisce ------------------------------
+
+    def test_la_fase_4_sostituisce_una_funzione_sola(self):
+        """`rileva_stallo` è il taglio, e questo test lo tiene tale.
+
+        Si sostituisce il rilevatore con uno finto — è quello che farà ADR-0005
+        col prodotto scalare dei coefficienti appresi — e lo stato,
+        l'avanzamento e la finestra restano identici: cambia solo il verdetto.
+        Se un giorno qualcuno riscrivesse la regola a soglia anche dentro
+        `stato_progressione`, questo test fallirebbe, che è il suo mestiere.
+        """
+        self.storico_della_demo()
+        self.assertEqual(self.stato().stato, analytics_plateau.STALLO)
+
+        with patch.object(analytics_plateau, "rileva_stallo", return_value=False):
+            finto = self.stato()
+
+        self.assertEqual(finto.stato, analytics_plateau.NON_STALLO)
+        self.assertEqual(finto.avanzamento, "6 allenamenti in 21 giorni")
+        self.assertEqual(len(finto.finestra.sessioni), 6)
+        self.assertFalse(finto.in_regressione)
+
+    def test_il_rilevatore_vede_solo_la_finestra(self):
+        """La condizione di ADR-0004, come proprietà del tipo e non come promessa.
+
+        `rileva_stallo` prende una `Finestra`, e una `Finestra` porta solo le
+        sue sessioni: niente utente, niente esercizio, niente storia. Non c'è
+        modo, da dentro il rilevatore, di guardare le sessioni successive — che
+        è ciò che renderebbe circolare l'etichetta della fase 4 senza far
+        fallire nulla.
+        """
+        self.assertEqual(
+            set(analytics_plateau.Finestra.__dataclass_fields__), {"sessioni"}
+        )
+        self.assertEqual(
+            set(analytics_plateau.Sessione.__dataclass_fields__),
+            {"giorno", "massimale", "record"},
+        )
+
+    # --- la pagina ----------------------------------------------------------
+
+    def test_la_pagina_mostra_i_tre_stati(self):
+        self.client.login(username="atleta", password=PASSWORD)
+        url = reverse("training:exercise-detail", args=[self.panca.slug])
+
+        # Sotto soglia: avanzamento, e la parola che la spec vieta di far
+        # sembrare un errore.
+        html = self.client.get(url).content.decode()
+        self.assertIn("Dati insufficienti", html)
+        self.assertIn("0 allenamenti su 6 — 0 giorni su 21", html)
+        self.assertNotIn("In stallo", html)
+
+        # Deciso: stallo, con il numero che l'ha prodotto e la regola dichiarata.
+        self.storico_della_demo()
+        html = self.client.get(url).content.decode()
+        self.assertIn("In stallo", html)
+        self.assertIn("6 allenamenti in 21 giorni", html)
+        self.assertIn("regola a soglia", html)
+        self.assertNotIn("Dati insufficienti", html)
+
+        # Deciso in senso opposto: basta un record nell'ultima seduta.
+        self.sessione(datetime(2026, 9, 8, 12, 0), [(10, "120")])
+        html = self.client.get(url).content.decode()
+        self.assertIn("In progressione", html)
+        self.assertNotIn("In stallo", html)
+
+    def test_lo_stato_non_costa_una_query_in_piu(self):
+        """A3 è già materializzata per il grafico: lo stato la riceve, non la richiede.
+
+        È la guardia di #102 sulla pagina più cara del progetto, e la stessa
+        forma di test che #113 ha lasciato sul consiglio di carico: il conto non
+        cresce con lo storico.
+        """
+        self.client.login(username="atleta", password=PASSWORD)
+        url = reverse("training:exercise-detail", args=[self.panca.slug])
+        self.storico_della_demo()
+
+        with CaptureQueriesContext(connection) as ctx:
+            self.client.get(url)
+        prima = len(ctx.captured_queries)
+
+        for i in range(40):
+            self.sessione(
+                datetime(2026, 5, 1, 18, 0) + timedelta(days=i), [(8, "80")]
+            )
+
+        with CaptureQueriesContext(connection) as ctx:
+            self.client.get(url)
+        self.assertEqual(len(ctx.captured_queries), prima)
 
 
 class ProvenanceTests(TestCase):

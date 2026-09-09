@@ -178,6 +178,83 @@ posta a due popolazioni diverse.
 
 </div>
 
+{% comment %}
+LO STATO DI PROGRESSIONE (#114), e sta **sopra** la curva che lo produce.
+
+L'ordine è quello del resto della pagina — prima la risposta, poi il dato da
+cui esce — e qui vale doppio: la curva del massimale è leggibile solo se si sa
+già cosa ci si deve vedere.
+
+I TRE STATI NON SI DISEGNANO UGUALI, ed è tutta la decisione di questo
+riquadro. `stallo` e `non stallo` sono verdetti e hanno un numero dietro;
+«dati insufficienti» è un AVANZAMENTO, non un errore e non un modo educato di
+dire «non stallo» (`CONTEXT.md`). Un riquadro grigio con scritto «non
+disponibile» direbbe all'utente nuovo che la app non funziona; una barra che
+dice quanto manca gli dice cosa fare.
+
+IL RIQUADRO C'È SEMPRE, anche a zero sessioni. È l'unico posto della pagina in
+cui la soglia è scritta, e a chi apre un esercizio mai provato risponde alla
+domanda che si sta facendo davvero — «quanto devo allenarlo perché mi dica
+qualcosa» — invece di tacere.
+
+LA REGOLA SI DICHIARA. Lo stato esce da una regola a soglia, non da un
+modello: il progetto lo scrive in pagina perché la spec ammette che il ML sia
+tagliato, e in quel caso «si mostra il baseline e lo si dichiara» — dichiararlo
+da subito è la stessa frase, detta quando non costa niente.
+
+«In regressione» è un'ETICHETTA ACCANTO, mai un terzo stato: convive con lo
+stallo (ADR-0004 tiene le classi binarie), quindi è un'aggiunta alla riga e non
+un ramo dell'`{% templatetag openblock %} if {% templatetag closeblock %}`.
+{% endcomment %}
+<div class="card-ink p-3 mb-4">
+  <div class="rail">
+    <div class="eyebrow mb-2" style="color:var(--volt)">Stato di progressione</div>
+
+    {% if stato_progressione.deciso %}
+    <div class="h5 fw-bold mb-1">
+      {% if stato_progressione.e_stallo %}In stallo{% else %}In progressione{% endif %}
+      {% if stato_progressione.in_regressione %}
+      <span class="eyebrow ms-2" style="color:var(--t2)">e in regressione</span>
+      {% endif %}
+    </div>
+    <div style="color:var(--t2);font-size:.9rem">
+      {% if stato_progressione.e_stallo %}
+      Nessun record personale nelle ultime
+      {{ stato_progressione.finestra.sessioni_senza_record }} sessioni della finestra.
+      {% else %}
+      L'ultimo record personale è dentro la finestra.
+      {% endif %}
+      {% if stato_progressione.in_regressione %}
+      Sulla finestra il massimale scende del
+      {{ stato_progressione.finestra.discesa|floatformat:"1" }}% a settimana.
+      {% endif %}
+    </div>
+    <div class="mt-2 eyebrow" style="color:var(--t3)">
+      finestra: {{ stato_progressione.avanzamento }}
+    </div>
+
+    {% else %}
+    <div class="h5 fw-bold mb-1">Dati insufficienti</div>
+    <div style="color:var(--t2);font-size:.9rem">
+      Non è un «no»: è che la finestra non è ancora abbastanza lunga per dire
+      qualcosa di questo esercizio.
+    </div>
+    <div class="mt-2 eyebrow" style="color:var(--volt)">
+      {{ stato_progressione.avanzamento }}
+    </div>
+    {% endif %}
+
+    <div class="mt-3 eyebrow" style="color:var(--t3);line-height:1.7">
+      Serve una finestra di almeno
+      <span style="color:var(--t2)">{{ soglie.allenamenti }} allenamenti</span> e
+      <span style="color:var(--t2)">{{ soglie.giorni }} giorni</span>, e una pausa
+      oltre {{ soglie.buco }} giorni la fa ripartire da capo. Lo stato esce da una
+      <span style="color:var(--t2)">regola a soglia</span> — nessun record nelle
+      ultime {{ soglie.senza_record }} sessioni — e non da un modello.
+    </div>
+  </div>
+</div>
+
 {% if ha_serie_utili %}
 {% comment %}
 A3. Il grafico porta tutta la storia e non un ritaglio recente: il massimo
@@ -312,17 +389,20 @@ classifica è una cosa che di quell'esercizio si vuole sapere.
 {% endif %}
 
 {% comment %}
-Il riquadro resta, ma dice molto meno: progressione, record e percentile ora ci
-sono. Quello che manca è fase 3, il coach — e dichiararlo qui è più onesto che
-lasciar credere che la pagina abbia già letto la progressione al posto tuo.
+Il riquadro si è svuotato quasi del tutto, ed è il segno che la pagina è
+arrivata: il consiglio di carico c'è da #113, lo stato di progressione da #114.
+Quel che resta è **fase 4**, e resta scritto qui perché è l'unica promessa
+ancora aperta — cancellare la riga lascerebbe credere che la regola a soglia
+sia l'ultima parola, che è esattamente ciò che la spec chiede di non far
+credere.
 {% endcomment %}
 <div class="card-ink p-3">
   <div class="rail">
     <div class="eyebrow mb-1">Cosa arriva qui</div>
     <div style="color:var(--t2);font-size:.88rem">
-      La progressione dice come sei andato; non dice ancora <em>cosa fare la
-      prossima volta</em>. Il rilevamento dello stallo e il consiglio di carico
-      leggono questa stessa curva e arrivano dopo.
+      Lo stato di progressione lo decide oggi una regola a soglia. Al suo posto
+      arriva un modello addestrato sulle finestre di tutti — e il numero che
+      conta non sarà il suo, sarà <em>quanto batte questa regola</em>.
     </div>
   </div>
 </div>
