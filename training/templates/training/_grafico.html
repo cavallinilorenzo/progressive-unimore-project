@@ -1,0 +1,28 @@
+{% comment %}
+Un grafico: il payload nel documento, e il canvas che lo disegna.
+
+Parametri — `dati` (il dizionario dichiarativo costruito dalla view), `id`
+(l'identificatore del blocco JSON, unico nella pagina), `altezza` (in pixel,
+facoltativo).
+
+`json_script` e **non** un endpoint JSON: il filtro serializza il dizionario
+dentro un `<script type="application/json">` già intercettato contro l'XSS, e
+la vista che rende la pagina è l'unica vista che serve. Un endpoint, senza
+HTMX, sarebbe una seconda superficie da scrivere, testare e proteggere per
+mostrare numeri che la pagina ha già (`docs/spec/04-analisi.md`, §I grafici).
+
+Il canvas non porta configurazione: il tipo di figura viaggia **dentro** il
+payload, e `static/js/grafici.js` non sa cosa sta disegnando. È ciò che rende
+questo partial riusabile dal terzo grafico senza toccare né il JS né il markup.
+{% endcomment %}
+{{ dati|json_script:id }}
+<div style="position:relative;height:{{ altezza|default:280 }}px">
+  {% comment %}
+  L'altezza sta sul contenitore e non sul canvas: con
+  `maintainAspectRatio: false` Chart.js ridimensiona il canvas a ogni
+  ridisegno, e un canvas senza un genitore di altezza fissa cresce a ogni
+  evento di resize finché la pagina non è alta chilometri. È il difetto più
+  noto della libreria, e si evita con questo `div`.
+  {% endcomment %}
+  <canvas data-grafico="{{ id }}"></canvas>
+</div>

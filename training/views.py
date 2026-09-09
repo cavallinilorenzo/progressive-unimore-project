@@ -28,12 +28,14 @@ from django.http import Http404, HttpResponse
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse, reverse_lazy
 from django.utils import timezone
+from django.utils.formats import date_format
 from django.utils.functional import cached_property
 from django.views import View
 from django.views.generic import DetailView, ListView, TemplateView
 from django.views.generic.edit import CreateView, DeleteView, FormView, UpdateView
 
 from training import rankings
+from training.analytics import volume as analytics_volume
 from training.forms import (
     AbbinamentoFormSet,
     ImportUploadForm,
@@ -167,6 +169,90 @@ class DashboardView(LoginRequiredMixin, TemplateView):
         context["giorni_recenti"] = GIORNI_RECENTI
         context["giorni_mese"] = GIORNI_MESE
         return context
+
+
+class AnalysisView(LoginRequiredMixin, TemplateView):
+    """`/analisi/` — A1 e A2, e il primo grafico del progetto.
+
+    **La sesta voce dell'header**, e la pagina che `docs/spec/04-analisi.md`
+    nominava («Analisi muscolare») senza che `02-pagine-e-template.md` le desse
+    un URL. La contraddizione si sana qui, e nel verso di darle l'indirizzo:
+    infilare A1 e A2 in dashboard sovraccaricherebbe la prima pagina e
+    lascerebbe la heatmap unico contenuto di una pagina che non esiste.
+
+    La divisione del lavoro fra le due superfici è quella, e vale anche per i
+    ticket che seguono: **la heatmap in dashboard è il richiamo visivo,
+    `/analisi/` è dove si va a capire perché.**
+
+    Le due analisi non hanno incognite — sono la stessa `Sum(VOLUME)`
+    raggruppata due volte, e vivono in `training/analytics/volume.py`. Il
+    lavoro vero è la presentazione, e sta quasi tutto in due posti: i **buchi**
+    (una settimana senza allenamenti non esiste come riga, e un grafico che
+    non la disegna mente sulla costanza) e il **vuoto** (un utente appena
+    registrato non deve vedere due figure piatte, ma il motivo per cui non c'è
+    niente da disegnare — la stessa regola del percentile sotto soglia).
+
+    Il grafico entra da qui e non da un ticket suo, perché «aggiungi il CDN»
+    non chiuderebbe su niente di verificabile. Chart.js è l'**unica deviazione
+    JavaScript del progetto** e va dichiarata all'orale: i dati arrivano con
+    `json_script`, **mai** da un endpoint JSON, che senza HTMX sarebbe una
+    seconda superficie di viste da scrivere, testare e proteggere, e
+    reintrodurrebbe il `fetch` che #21 ha escluso.
+    """
+
+    template_name = "training/analysis.html"
+
+    def get_context_data(self, **kwargs):
+        contesto = super().get_context_data(**kwargs)
+
+        settimane = analytics_volume.finestra_settimanale()
+        per_settimana = analytics_volume.volume_per_settimana(
+            self.request.user, settimane
+        )
+        per_gruppo = analytics_volume.volume_per_gruppo(self.request.user, settimane)
+
+        contesto["settimane"] = analytics_volume.SETTIMANE_DI_DEFAULT
+        contesto["da"] = settimane[0]
+        contesto["per_settimana"] = per_settimana
+        contesto["per_gruppo"] = per_gruppo
+        contesto["volume_totale"] = sum(riga["volume"] for riga in per_settimana)
+
+        # I due payload dei grafici sono **dichiarativi**: portano il tipo di
+        # figura insieme ai dati, e il renderer generico di `static/js/grafici.js`
+        # non sa niente né di volume né di gruppi muscolari. È ciò che permette
+        # al terzo grafico (A3, la progressione) di nascere senza scrivere una
+        # riga di JavaScript in più — che è il punto, visto che di JavaScript
+        # applicativo questo progetto non ne vuole.
+        contesto["grafico_settimane"] = {
+            "tipo": "line",
+            "etichette": [
+                date_format(riga["settimana"], "j M") for riga in per_settimana
+            ],
+            "valori": [riga["volume"] for riga in per_settimana],
+            "unita": "kg",
+            "serie": "Volume settimanale",
+        }
+        contesto["grafico_gruppi"] = {
+            # **Barre e non torta.** Una torta su sei gruppi è leggibile, ma
+            # dice solo delle proporzioni di oggi; le barre condividono l'asse
+            # dei kg col grafico sopra, quindi si confrontano fra loro e nel
+            # tempo, che è la domanda vera di chi guarda questa pagina.
+            "tipo": "bar",
+            "etichette": [riga["gruppo"] for riga in per_gruppo],
+            "valori": [riga["volume"] for riga in per_gruppo],
+            "unita": "kg",
+            "serie": "Volume per gruppo",
+        }
+
+        # Due vuoti diversi, e confonderli sarebbe il difetto che si nota per
+        # primo: chi non ha **mai** registrato niente va invitato a cominciare,
+        # chi ha 443 allenamenti ma nessuno nelle ultime 12 settimane va
+        # mandato allo storico, non trattato da nuovo iscritto.
+        contesto["ha_dati_in_finestra"] = contesto["volume_totale"] > 0
+        contesto["ha_dati_in_assoluto"] = (
+            WorkoutSet.objects.working().filter(workout__user=self.request.user).exists()
+        )
+        return contesto
 
 
 class SignUpView(CreateView):

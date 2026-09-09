@@ -1,0 +1,22 @@
+{% load static %}
+{% comment %}
+Chart.js e il suo renderer — da includere nel blocco `scripts` di **ogni**
+pagina che ha un grafico, e in nessun'altra.
+
+Perché non in `base.html`, che pure ha il blocco apposta: i grafici sono tre su
+una ventina di pagine, e metterlo nel guscio farebbe scaricare la libreria
+anche a chi apre il form di una scheda. Una riga di `include` per pagina è il
+prezzo giusto; il blocco `scripts` di `base.html` resta il **punto** in cui
+questa riga va, ed è quella la convenzione che #99 lascia in eredità.
+
+Versione **fissata**, come Bootstrap in `base.html`: un CDN senza versione
+cambia la libreria sotto i piedi del progetto, e all'orale il grafico o si
+disegna o non si disegna.
+
+`defer` su entrambi, nell'ordine: il renderer chiama `new Chart(...)`, quindi
+deve girare dopo la libreria, e gli script differiti mantengono l'ordine del
+documento. `grafici.js` cerca i canvas subito — non aspetta `DOMContentLoaded`
+— e può farlo proprio perché `defer` lo esegue a documento già analizzato.
+{% endcomment %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js" defer></script>
+<script src="{% static 'js/grafici.js' %}" defer></script>

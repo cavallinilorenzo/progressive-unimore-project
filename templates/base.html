@@ -32,10 +32,18 @@ Vedi `docs/spec/02-pagine-e-template.md`.
 
 {% block header %}
 {% comment %}
-CINQUE VOCI, e con esse la regola di navigazione: ogni altra pagina si
+SEI VOCI, e con esse la regola di navigazione: ogni altra pagina si
 raggiunge da *dentro* la sezione a cui appartiene per dominio, mai da un link
 orfano. Le schede della community stanno dentro Schede, stalli e progressione
 dentro la pagina del singolo esercizio, l'import nel menu utente.
+
+Cinque fino a #99, che ha aggiunto **Analisi**: `04-analisi.md` la nominava e
+`02-pagine-e-template.md` non le dava un URL, quindi la pagina esisteva solo
+come nome. Sesta voce e non un widget in più sulla dashboard, perché sono due
+mestieri diversi — la heatmap in dashboard è il richiamo visivo, `/analisi/` è
+dove si va a capire perché — e perché una prima pagina che risponde a tutto non
+risponde bene a niente. Sta subito dopo Dashboard: è il suo approfondimento,
+non una sezione a sé.
 
 Le rotte entrano una alla volta con i ticket della mappa #53, e ognuno
 sostituisce il proprio `href` letterale con il tag `url` quando la sua sezione
@@ -55,6 +63,7 @@ letterale, e portava a un 404. Ora nessuna voce dell'header ne ha più.
       voci accese sono peggio di nessuna. Rilevato in #69.
       {% endcomment %}
       <a href="{% url 'training:dashboard' %}" class="{% if request.path == '/' %}attivo{% endif %}">Dashboard</a>
+      <a href="{% url 'training:analysis' %}" class="{% if request.path|slice:':9' == '/analisi/' %}attivo{% endif %}">Analisi</a>
       <a href="{% url 'training:routine-list' %}" class="{% if request.path|slice:':8' == '/schede/' %}attivo{% endif %}">Schede</a>
       <a href="{% url 'training:workout-list' %}" class="{% if request.path|slice:':13' == '/allenamenti/' %}attivo{% endif %}">Storico</a>
       <a href="{% url 'training:exercise-list' %}" class="{% if request.path|slice:':10' == '/esercizi/' %}attivo{% endif %}">Esercizi</a>

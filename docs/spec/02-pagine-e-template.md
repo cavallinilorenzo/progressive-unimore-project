@@ -43,7 +43,9 @@ La gerarchia della dashboard è **il numero**: la riga di cifre hero apre la pag
 
 ## La regola di navigazione
 
-L'header porta **cinque sezioni**. Ogni altra pagina si raggiunge **da dentro la sezione a cui appartiene per dominio, mai da un link orfano.**
+L'header porta **sei sezioni**. Ogni altra pagina si raggiunge **da dentro la sezione a cui appartiene per dominio, mai da un link orfano.**
+
+> Cinque fino a [#99](https://github.com/cavallinilorenzo/progetto-django-uni/issues/99), che ha aggiunto **Analisi**. Non è un ripensamento sulla regola: è la sanatoria di una contraddizione fra questo documento e `04-analisi.md`, che assegnava A1 e A2 a una «Analisi muscolare» a cui la sitemap qui sotto non dava alcun URL. La pagina era nominata e non esisteva. L'alternativa — infilare A1 e A2 in dashboard — sovraccaricava la prima pagina e lasciava la heatmap unico contenuto di una pagina che non c'era.
 
 Questa regola nasce da un'obiezione precisa in #19: cinque voci nell'header contro le undici che una sidebar avrebbe mostrato — dove finiscono le altre? Non spariscono, **si annidano**:
 
@@ -92,6 +94,20 @@ CRUD **completo** su `Workout` più le sue serie.
 | `/allenamenti/<pk>/serie/` | `workoutset-manage` | Formset sulle serie |
 
 **«Avvia allenamento da scheda»** è un bottone sulla scheda: crea un `Workout` e lo precompila con le serie pianificate e il carico dell'ultima volta; l'utente corregge i numeri veri e deseleziona ciò che ha saltato. Una pagina, un `POST`, zero JavaScript — è il motivo per cui `is_completed` esiste, col significato «eseguita» contro «saltata».
+
+### 3-bis. Analisi — `/analisi/`
+
+| URL | Nome | View |
+|---|---|---|
+| `/analisi/` | `analysis` | `TemplateView` — A1 (volume nel tempo) e A2 (distribuzione sui sei gruppi) |
+
+La divisione del lavoro con la dashboard, che è la ragione per cui sono due pagine e non una: **la heatmap in dashboard è il richiamo visivo, `/analisi/` è dove si va a capire perché.**
+
+Una rotta sola e nessuna sotto. Le altre analisi hanno già la loro sezione — la progressione del carico sta dentro la pagina dell'esercizio, che *è* la sua storia — e la heatmap vive solo in dashboard.
+
+Finestra di **12 settimane**, non 12 mesi: la finestra lunga nasconde il buco che la pagina si dà la pena di riempire, e una settimana saltata dentro un punto mensile è un punto un po' più basso, non un avvallamento. Il toggle settimana/mese resta da specificare.
+
+Qui entrano i **primi due grafici** del progetto, e con essi la convenzione per il terzo: Chart.js sta nel blocco `scripts` della **pagina** (`training/_grafici_js.html`), mai in `base.html`, o la libreria arriverebbe addosso anche a chi apre il form di una scheda. I dati passano da `training/_grafico.html`, che è un `json_script` più un canvas; il payload è dichiarativo e porta il tipo di figura, quindi `static/js/grafici.js` non sa cosa sta disegnando e il terzo grafico non lo tocca.
 
 ### 4. Esercizi — `/esercizi/`
 

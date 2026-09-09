@@ -2,7 +2,9 @@
 
 Fonte: [#16](https://github.com/cavallinilorenzo/progetto-django-uni/issues/16) (catalogo delle analisi), [#33](https://github.com/cavallinilorenzo/progetto-django-uni/issues/33) (classifiche).
 
-**Sei analisi su nove candidate**, tutte calcolate **nel database**, su quattro pagine. Il criterio di ammissione ha due assi e il primo è **obbligatorio**:
+**Sei analisi su nove candidate**, tutte calcolate **nel database**, su quattro pagine.
+
+> La pagina che questo documento chiamava «Analisi muscolare» è **`/analisi/`**, sesta voce dell'header: fino a [#99](https://github.com/cavallinilorenzo/progetto-django-uni/issues/99) era nominata qui e senza URL nella sitemap di `02-pagine-e-template.md`, cioè esisteva solo come nome. Il criterio di ammissione ha due assi e il primo è **obbligatorio**:
 
 1. **Alimenta una decisione** — l'utente, letta la schermata, fa qualcosa di diverso il prossimo allenamento.
 2. **Mostra ORM che il corso non ha insegnato.**
@@ -47,6 +49,8 @@ Metodi: `working()`, `with_effective_load()`, `with_volume()`, `with_estimated_1
 
 Convive con `analytics/plateau.py` senza sovrapporsi: qui stanno le **espressioni**, lì il **servizio** che le consuma.
 
+Il pacchetto `training/analytics/` nasce con #99 (`volume.py`, A1 e A2). Il confine ha una formulazione sola: **se ha senso metterci un `.filter()` dopo è un metodo del QuerySet, se restituisce righe pronte per un template è una funzione di `analytics/`.** Un pacchetto e non un modulo — al contrario di `rankings.py`, che pure fa lo stesso mestiere — perché le analisi arrivano una per ticket e su un file unico due ticket si toccherebbero.
+
 ```python
 # training/querysets.py — i due blocchi condivisi
 EFFECTIVE_LOAD = Case(
@@ -69,8 +73,8 @@ EPLEY = ExpressionWrapper(
 
 | # | Analisi | Query | Pagina |
 |---|---|---|---|
-| A1 | **Volume nel tempo** | `Sum` del carico effettivo × ripetizioni, `TruncWeek`/`TruncMonth` | Dashboard (sintesi) + Analisi muscolare |
-| A2 | **Distribuzione sui 6 gruppi** | stessa `Sum`, raggruppata per gruppo | Analisi muscolare |
+| A1 | **Volume nel tempo** | `Sum` del carico effettivo × ripetizioni, `TruncWeek`/`TruncMonth` | Dashboard (sintesi) + `/analisi/` |
+| A2 | **Distribuzione sui 6 gruppi** | stessa `Sum`, raggruppata per gruppo | `/analisi/` |
 | A3 | **Progressione del carico** | `Window(Max)` cumulativo + `Lag` per il delta | Dettaglio esercizio |
 | A4 | **PR** | `Subquery` + `OuterRef` | Dettaglio esercizio |
 | A5 | **Percentile di forza relativa** | `Window(PercentRank)` | Dettaglio esercizio |
@@ -237,7 +241,9 @@ I pari merito sulla forza sono **realistici, non teorici**: 100 kg × 5 a 80 kg 
 
 ## Il tempo
 
-**Settimana e mese**, con toggle **solo su A1 e A2**. La progressione del carico non è aggregata per periodo — è una serie di allenamenti, uno per punto — quindi lì il toggle non ha senso. Default: **12 settimane** o **12 mesi**.
+**Settimana e mese**, con toggle **solo su A1 e A2**. La progressione del carico non è aggregata per periodo — è una serie di allenamenti, uno per punto — quindi lì il toggle non ha senso.
+
+Il default è **12 settimane**, scelto in #99 (`training/analytics/volume.py`, `SETTIMANE_DI_DEFAULT`): la finestra annuale *nasconde* proprio il buco che la vista si dà la pena di riempire — una settimana saltata dentro un punto mensile è un punto un po' più basso, non un avvallamento — e leviga la costanza, che è il primo consiglio del coach. Vale anche dal verso pratico: su 12 mesi lo storico reale di 26 giorni sarebbe undici punti vuoti e uno pieno. Il **toggle** non è ancora costruito.
 
 **I buchi vanno riempiti nella vista.** `TruncWeek` restituisce solo i periodi in cui esiste almeno una serie: una settimana saltata non compare, e il grafico disegna due punti adiacenti che in realtà distano un mese. Con 15 sessioni in 26 giorni i buchi ci sono davvero.
 
