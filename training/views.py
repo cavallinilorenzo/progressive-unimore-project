@@ -38,6 +38,7 @@ from training import querysets, rankings
 from training.analytics import coach as analytics_coach
 from training.analytics import costanza as analytics_costanza
 from training.analytics import muscles as analytics_muscles
+from training.analytics import plateau as analytics_plateau
 from training.analytics import progressione as analytics_progressione
 from training.analytics import volume as analytics_volume
 from training.forms import (
@@ -779,8 +780,17 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
             .exists()
         )
 
+        # **Lo stato di progressione** (#114), e costa **zero query**: A3 è già
+        # materializzata sopra per il grafico, e `stato_progressione` la
+        # riceve invece di richiederla. È lo stesso patto con cui la dashboard
+        # passa la heatmap al coach (#112).
+        stato = analytics_plateau.stato_progressione(
+            self.request.user, self.object, righe=righe
+        )
+
         analisi = {
             "progressione": righe,
+            "stato_progressione": stato,
             "salti": analytics_progressione.salti(righe),
             "record": analytics_progressione.record_personale(righe),
             "percentile": analytics_progressione.percentile_forza(
@@ -789,6 +799,16 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
             "ha_serie_utili": bool(righe),
             "ha_storico": ha_storico,
             "tetto_ripetizioni": querysets.MAX_REPS_FOR_1RM,
+            # Le soglie della finestra in un dizionario solo, e non quattro
+            # chiavi di contesto: sono un blocco, si leggono insieme in una
+            # frase sola, e un template che le nomini una per una renderebbe
+            # più facile aggiungerne una quinta senza accorgersene.
+            "soglie": {
+                "allenamenti": analytics_plateau.ALLENAMENTI_MINIMI,
+                "giorni": analytics_plateau.GIORNI_MINIMI,
+                "buco": analytics_plateau.BUCO_MASSIMO_GIORNI,
+                "senza_record": analytics_plateau.SESSIONI_SENZA_RECORD_PER_STALLO,
+            },
         }
 
         # Il payload del terzo grafico del progetto, nella stessa forma
