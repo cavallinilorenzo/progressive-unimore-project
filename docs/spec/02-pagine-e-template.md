@@ -152,7 +152,14 @@ Sta in piedi **senza JavaScript**: `_corpo.svg` è un partial statico con `class
 
 Sotto, la lista dei muscoli **annidata sotto i sei gruppi** con `<details>`/`<summary>` — HTML nativo, sei righe che si aprono una per volta. **Due scale di colore tenute separate**: il gruppo sulla scala dei gruppi, i muscoli su quella dei muscoli, perché «quale gruppo peso di più» e «dentro questo gruppo cosa trascuro» sono domande diverse. Scala normalizzata sul **massimo**, non sul totale.
 
+**La finestra e la misura**, decise in [#101](https://github.com/cavallinilorenzo/progetto-django-uni/issues/101) portando il prototipo in dashboard:
+
+- **Quattro settimane**, cioè i 28 giorni dello squilibrio di `04-analisi.md`, ma contate sulla **griglia dei lunedì** di `/analisi/`: «settimana» deve voler dire una cosa sola in tutto il progetto, o le stesse serie cadrebbero in settimane diverse su due pagine e nessuna delle due sarebbe sbagliata.
+- **Serie, non chili.** Fra regioni del corpo i kg non si confrontano — una serie di squat ne muove dieci volte una di alzate laterali — quindi una mappa normalizzata sul volume avrebbe le gambe accese e le spalle spente per sempre, e direbbe dell'anatomia invece che dell'allenamento. I kg per gruppo stanno su `/analisi/` (A2): sono due grandezze diverse, con due nomi diversi, e ogni pagina dichiara la propria.
+- **Un corpo tutto spento non si disegna.** La scala è normalizzata sul massimo: senza serie nella finestra il massimo è finto, e un corpo grigio si legge come «non ti alleni» mentre la verità è «non lo so». Al suo posto va detto perché, distinguendo chi non ha mai registrato niente da chi ha uno storico e un mese fermo.
+
 **Da dichiarare, due volte.**
 
-1. **Limite noto:** 4 muscoli su 23 (schiena alta, adduttori, abduttori, trasverso) sono **sempre spenti**, perché il catalogo tagga un solo muscolo primario. La mappa dice «trascurato» dove la verità è «non misurato».
+1. **Limite noto:** la figura vede **solo il muscolo primario**, perché il catalogo ne tagga uno solo per esercizio: uno spento è un muscolo non allenato *direttamente*, non per forza trascurato. La dichiarazione sta in pagina e non è condizionata, perché il limite è strutturale.
+   > I «4 su 23 sempre spenti» erano una misura del prototipo #37 sui suoi dati finti. Sul catalogo vero tutti e 23 i muscoli hanno almeno un esercizio che li ha come primari, e quei quattro erano zeri dell'utente della demo, non del modello (#101).
 2. **Provenienza:** `_corpo.svg` è versionato ma **non è lavoro nostro**. `prototypes/t37-heatmap/build_body_svg.mjs` non ridisegna niente: copia i path anatomici di Overload identici e ci aggiunge solo le classi. Questo va scritto nel README **e detto all'orale** — è la conclusione di [#40](https://github.com/cavallinilorenzo/progetto-django-uni/issues/40), e tenerlo in `.gitignore` era peggio, perché il progetto non girava più da un clone pulito.

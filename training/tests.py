@@ -37,6 +37,8 @@ from django.urls import reverse
 from django.utils import timezone
 
 from training import rankings, views
+from training.analytics import costanza as analytics_costanza
+from training.analytics import muscles as analytics_muscles
 from training.analytics import progressione as analytics_progressione
 from training.analytics import volume as analytics_volume
 from training.exporter import (
@@ -5829,3 +5831,476 @@ class AdminTests(TestCase):
         for modello in (Workout, WorkoutSet, Vote):
             with self.subTest(modello=modello.__name__):
                 self.assertNotIn(modello, admin.site._registry)
+
+
+# --- La dashboard: la heatmap muscolare e W1 (#101) -------------------------
+#
+# Quattro cose vanno protette qui, e «la pagina rende» non è nessuna delle
+# quattro.
+#
+# La prima è la **misura**: la heatmap conta serie, `/analisi/` conta chili, e
+# sono due grandezze diverse per una ragione scritta (fra regioni del corpo i kg
+# non si confrontano). Il test è ciò che impedisce alla prossima mano di
+# «uniformare» le due pagine e trasformare la mappa in un ritratto
+# dell'anatomia.
+#
+# La seconda è il **vuoto**: un corpo tutto spento si legge come «non ti
+# alleni» mentre la verità è «non lo so», e la figura è normalizzata sul
+# massimo, quindi senza dati il massimo è finto. Non deve comparire.
+#
+# La terza è il **limite noto**: 4 muscoli su 23 sono spenti per come è fatto
+# il catalogo, e la pagina lo dichiara. Ricavato dal catalogo e non scritto a
+# mano, o al primo esercizio nuovo la pagina si scuserebbe per un muscolo che
+# nel frattempo si accende.
+#
+# La quarta è l'**invarianza delle query** (#86): la heatmap aggiunge tre query
+# e nessuna cresce con lo storico. Una heatmap che facesse una query per
+# muscolo renderebbe benissimo qui e morirebbe su 296.724 serie.
+
+
+class DashboardHeatmapTests(TestCase):
+    """La heatmap muscolare in dashboard, e la costanza che diventa W1."""
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user(
+            username="atleta", password=PASSWORD, body_mass_kg=Decimal("80")
+        )
+        cls.nuovo = User.objects.create_user(username="nuovo", password=PASSWORD)
+        cls.dormiente = User.objects.create_user(
+            username="dormiente", password=PASSWORD, body_mass_kg=Decimal("70")
+        )
+
+        cls.gruppi = {
+            codice: MuscleGroup.objects.create(
+                code=codice, label_it=etichetta, sort_order=ordine
+            )
+            for ordine, (codice, etichetta) in enumerate(
+                [
+                    ("chest", "Petto"),
+                    ("back", "Schiena"),
+                    ("shoulders", "Spalle"),
+                    ("arms", "Braccia"),
+                    ("legs", "Gambe"),
+                    ("core", "Core"),
+                ],
+                start=1,
+            )
+        }
+        cls.petto = Muscle.objects.create(
+            code="chestMid",
+            group=cls.gruppi["chest"],
+            label_it="Petto medio",
+            sort_order=1,
+        )
+        # Due muscoli nello stesso gruppo: senza, il massimo di gruppo e quello
+        # di muscolo coinciderebbero sempre e le due scale non si potrebbero
+        # distinguere nemmeno in teoria.
+        cls.petto_alto = Muscle.objects.create(
+            code="chestUpper",
+            group=cls.gruppi["chest"],
+            label_it="Petto alto",
+            sort_order=2,
+        )
+        cls.dorsali = Muscle.objects.create(
+            code="lats", group=cls.gruppi["back"], label_it="Dorsali", sort_order=1
+        )
+        cls.deltoide = Muscle.objects.create(
+            code="deltoidLateral",
+            group=cls.gruppi["shoulders"],
+            label_it="Deltoide laterale",
+            sort_order=1,
+        )
+        # Il muscolo che **nessun esercizio** ha come primario: è il limite noto
+        # dei quattro spenti su 23, in miniatura.
+        cls.schiena_alta = Muscle.objects.create(
+            code="upperBack",
+            group=cls.gruppi["back"],
+            label_it="Schiena alta",
+            sort_order=2,
+        )
+
+        cls.bilanciere = Equipment.objects.create(
+            code="barbell", label_it="Bilanciere", sort_order=1
+        )
+        manubri = Equipment.objects.create(
+            code="dumbbell", label_it="Manubri", sort_order=2
+        )
+        cls.panca = Exercise.objects.create(
+            name="Panca piana",
+            slug="panca-piana",
+            primary_muscle=cls.petto,
+            equipment=cls.bilanciere,
+        )
+        cls.inclinata = Exercise.objects.create(
+            name="Panca inclinata",
+            slug="panca-inclinata",
+            primary_muscle=cls.petto_alto,
+            equipment=cls.bilanciere,
+        )
+        cls.stacco = Exercise.objects.create(
+            name="Stacco",
+            slug="stacco",
+            primary_muscle=cls.dorsali,
+            equipment=cls.bilanciere,
+        )
+        cls.alzate = Exercise.objects.create(
+            name="Alzate laterali",
+            slug="alzate-laterali",
+            primary_muscle=cls.deltoide,
+            equipment=manubri,
+        )
+
+    def setUp(self):
+        self.client.login(username="atleta", password=PASSWORD)
+        # La finestra si calcola una volta e si riusa: le serie vanno scritte
+        # *dentro* settimane note, o scivolerebbero fuori a seconda del giorno
+        # in cui i test girano.
+        self.settimane = analytics_muscles.finestra_settimanale(
+            analytics_muscles.SETTIMANE_HEATMAP
+        )
+
+    def serie(self, lunedi, exercise=None, quante=1, user=None, peso="100", **kwargs):
+        """`quante` serie nel martedì della settimana che comincia `lunedi`."""
+        istante = timezone.make_aware(
+            timezone.datetime.combine(
+                lunedi + timedelta(days=1), timezone.datetime.min.time()
+            )
+        ) + timedelta(hours=18)
+        allenamento = Workout.objects.create(
+            user=user or self.user, title="Sessione", started_at=istante
+        )
+        campi = {
+            "set_type": WorkoutSet.SetType.WORKING,
+            "is_completed": True,
+            **kwargs,
+        }
+        for numero in range(1, quante + 1):
+            WorkoutSet.objects.create(
+                workout=allenamento,
+                exercise=exercise or self.panca,
+                set_number=numero,
+                reps=10,
+                weight=Decimal(peso),
+                **campi,
+            )
+        return allenamento
+
+    def mappa(self, user=None):
+        return analytics_muscles.serie_per_muscolo(user or self.user, self.settimane)
+
+    def muscolo(self, mappa, codice):
+        return next(m for m in mappa["muscoli"] if m["codice"] == codice)
+
+    def gruppo(self, mappa, codice):
+        return next(g for g in mappa["gruppi"] if g["codice"] == codice)
+
+    # --- la misura: serie, non chili --------------------------------------
+
+    def test_the_map_counts_sets_and_not_kilos(self):
+        """La decisione di #101, e il test che impedisce di «uniformarla» ad A2.
+
+        Uno stacco pesantissimo in una serie sola contro tre alzate laterali
+        leggere: in chili la schiena schiaccerebbe le spalle, in serie vince
+        chi si è allenato di più. La mappa risponde a «cosa trascuro», che è un
+        confronto fra regioni del corpo, e in kg quel confronto direbbe
+        dell'anatomia, non dell'allenamento.
+        """
+        self.serie(self.settimane[-1], self.stacco, quante=1, peso="200")
+        self.serie(self.settimane[-1], self.alzate, quante=3, peso="8")
+
+        mappa = self.mappa()
+
+        self.assertEqual(self.muscolo(mappa, "lats")["serie"], 1)
+        self.assertEqual(self.muscolo(mappa, "deltoidLateral")["serie"], 3)
+        self.assertEqual(mappa["max_muscolo"], 3)
+
+    def test_the_universal_filter_keeps_warmups_and_skipped_sets_out(self):
+        """Il riscaldamento non è volume allenante, e una serie non spuntata
+        non è successa: la stessa regola delle classifiche e delle analisi, e
+        arriva dal custom QuerySet invece di essere riscritta qui."""
+        self.serie(self.settimane[-1], self.panca, quante=2)
+        self.serie(
+            self.settimane[-1],
+            self.panca,
+            quante=5,
+            set_type=WorkoutSet.SetType.WARMUP,
+        )
+        self.serie(self.settimane[-1], self.panca, quante=4, is_completed=False)
+
+        self.assertEqual(self.muscolo(self.mappa(), "chestMid")["serie"], 2)
+
+    # --- la finestra -------------------------------------------------------
+
+    def test_a_set_older_than_the_window_does_not_light_the_muscle(self):
+        """Quattro settimane, e la quinta indietro non conta.
+
+        Altrimenti la mappa non direbbe «cosa hai allenato», direbbe «cosa hai
+        allenato una volta», che è la domanda delle classifiche.
+        """
+        self.serie(self.settimane[0] - timedelta(weeks=1), self.panca, quante=6)
+
+        mappa = self.mappa()
+
+        self.assertEqual(self.muscolo(mappa, "chestMid")["serie"], 0)
+        self.assertEqual(mappa["totale"], 0)
+
+    def test_the_window_is_the_same_grid_of_mondays_the_analysis_page_uses(self):
+        """Una parola sola, «settimana», e una griglia sola in tutto il progetto.
+
+        Se la dashboard contasse 28 giorni mobili e `/analisi/` le settimane di
+        calendario, le stesse serie cadrebbero in settimane diverse sulle due
+        pagine, e nessuna delle due sarebbe sbagliata.
+        """
+        lunghe = analytics_volume.finestra_settimanale()
+
+        self.assertEqual(self.settimane, lunghe[-len(self.settimane) :])
+
+    # --- il catalogo intero, e i due assi di colore ------------------------
+
+    def test_every_muscle_of_the_catalogue_has_a_row_even_at_zero(self):
+        """Un muscolo assente dalla `values()` non si distingue da un muscolo
+        che la figura si è dimenticata di colorare: la stessa ragione per cui
+        A2 riempie i sei gruppi (#99)."""
+        self.serie(self.settimane[-1], self.panca)
+
+        mappa = self.mappa()
+
+        self.assertEqual(len(mappa["muscoli"]), Muscle.objects.count())
+        self.assertEqual(len(mappa["gruppi"]), MuscleGroup.objects.count())
+        self.assertEqual(self.muscolo(mappa, "upperBack")["serie"], 0)
+
+    def test_a_group_is_the_sum_of_its_muscles(self):
+        """Il totale di gruppo non è una seconda query: è la somma delle righe
+        che stanno sotto, e le due cifre della pagina devono tornare."""
+        self.serie(self.settimane[-1], self.stacco, quante=3)
+
+        gruppo = self.gruppo(self.mappa(), "back")
+
+        self.assertEqual(gruppo["serie"], 3)
+        self.assertEqual(gruppo["serie"], sum(m["serie"] for m in gruppo["muscoli"]))
+
+    def test_the_two_colour_scales_stay_separate(self):
+        """La decisione di #37: il gruppo si colora sulla scala dei gruppi, il
+        muscolo su quella dei muscoli.
+
+        Il petto somma 5 serie su due muscoli, e nessun muscolo passa le 3.
+        Le stesse **2 serie** dei dorsali valgono quindi due tinte diverse: due
+        quinti sulla scala dei gruppi, due terzi su quella dei muscoli. Con una
+        scala sola i muscoli starebbero tutti nel primo tratto della rampa, e
+        la domanda «dentro questo gruppo cosa trascuro» resterebbe senza
+        risposta visiva.
+        """
+        self.serie(self.settimane[-1], self.panca, quante=3)
+        self.serie(self.settimane[-2], self.inclinata, quante=2)
+        self.serie(self.settimane[-1], self.stacco, quante=2)
+
+        mappa = self.mappa()
+
+        self.assertEqual(mappa["max_gruppo"], 5)
+        self.assertEqual(mappa["max_muscolo"], 3)
+        self.assertEqual(
+            self.gruppo(mappa, "back")["colore"], analytics_muscles.colore(2 / 5)
+        )
+        self.assertEqual(
+            self.muscolo(mappa, "lats")["colore"], analytics_muscles.colore(2 / 3)
+        )
+
+    def test_the_muscles_no_exercise_can_light_come_from_the_catalogue(self):
+        """I «4 su 23» sono ricavati, non elencati.
+
+        Una lista scritta a mano sarebbe vera oggi e falsa al primo esercizio
+        caricato, e la pagina continuerebbe a scusarsi per un muscolo che nel
+        frattempo si accende.
+        """
+        mappa = self.mappa()
+
+        self.assertEqual([m["codice"] for m in mappa["mai_misurabili"]], ["upperBack"])
+
+        Exercise.objects.create(
+            name="Face pull",
+            slug="face-pull",
+            primary_muscle=self.schiena_alta,
+            equipment=self.bilanciere,
+        )
+
+        self.assertEqual(self.mappa()["mai_misurabili"], [])
+
+    # --- la pagina ---------------------------------------------------------
+
+    def test_the_dashboard_draws_the_figure_and_the_fill_rules(self):
+        """Senza JavaScript: l'SVG è un partial statico, e l'unica cosa che la
+        view genera è una riga di `fill` per classe."""
+        self.serie(self.settimane[-1], self.panca, quante=2)
+
+        response = self.client.get(reverse("training:dashboard"))
+
+        self.assertContains(response, 'viewBox="0 0 1448 1448"')
+        self.assertContains(response, ".corpo .m-chestMid { fill: ")
+        self.assertContains(response, "Deltoide laterale")
+
+    def test_the_figure_is_a_static_partial_the_view_never_touches(self):
+        """`_corpo.svg` è un template, non un file generato a runtime: se
+        sparisse dal repo la heatmap resterebbe vuota da un clone pulito, che è
+        il motivo per cui è versionato (#37)."""
+        get_template("training/_corpo.svg")
+
+    def test_the_page_declares_the_limit_of_the_map(self):
+        """Il limite noto va detto **in pagina**, non solo negli ADR: senza, la
+        mappa dice «trascurato» dove la verità è «non misurato»."""
+        self.serie(self.settimane[-1], self.panca)
+
+        response = self.client.get(reverse("training:dashboard"))
+
+        self.assertContains(response, "un solo muscolo")
+        self.assertContains(response, "non misurato")
+        self.assertContains(response, "schiena alta")
+
+    def test_the_structural_limit_is_declared_even_when_no_muscle_is_dark(self):
+        """E questa è la ragione per cui la dichiarazione **non è condizionata**.
+
+        Il prototipo #37 aveva contato 4 muscoli spenti su 23, ma su numeri
+        finti: sul catalogo vero ogni muscolo ha almeno un esercizio, e la
+        lista derivata esce vuota. Il limite però resta, perché non dipende da
+        quella lista — un esercizio ha un solo muscolo primario, e il lavoro da
+        secondario non arriva sulla figura. Legare la frase alla lista l'avrebbe
+        fatta sparire proprio dalla pagina che il prof apre.
+        """
+        Exercise.objects.create(
+            name="Face pull",
+            slug="face-pull",
+            primary_muscle=self.schiena_alta,
+            equipment=self.bilanciere,
+        )
+        self.serie(self.settimane[-1], self.panca)
+
+        response = self.client.get(reverse("training:dashboard"))
+
+        self.assertEqual(self.mappa()["mai_misurabili"], [])
+        self.assertContains(response, "un solo muscolo")
+        self.assertNotContains(response, "non misurato")
+
+    def test_an_empty_window_does_not_paint_a_grey_body(self):
+        """Un corpo tutto spento si legge come «non ti alleni».
+
+        La figura è normalizzata sul massimo: senza serie nella finestra il
+        massimo è finto, e disegnarla comunque sarebbe una risposta inventata a
+        una domanda a cui non si sa rispondere.
+        """
+        self.client.login(username="nuovo", password=PASSWORD)
+
+        response = self.client.get(reverse("training:dashboard"))
+
+        self.assertNotContains(response, 'viewBox="0 0 1448 1448"')
+        self.assertContains(response, "La mappa muscolare è ancora vuota")
+
+    def test_the_two_kinds_of_emptiness_are_told_apart(self):
+        """Chi ha uno storico e non si allena da un mese non è un nuovo
+        iscritto: va mandato allo storico, non invitato a cominciare. È la
+        regola di `/analisi/` (#99), e sulla prima pagina vale doppio."""
+        self.serie(
+            self.settimane[0] - timedelta(weeks=3),
+            self.panca,
+            quante=4,
+            user=self.dormiente,
+        )
+        self.client.login(username="dormiente", password=PASSWORD)
+
+        response = self.client.get(reverse("training:dashboard"))
+
+        self.assertNotContains(response, 'viewBox="0 0 1448 1448"')
+        self.assertContains(response, "Nelle ultime 4 settimane, niente")
+        self.assertNotContains(response, "La mappa muscolare è ancora vuota")
+
+    # --- W1, la costanza ---------------------------------------------------
+
+    def test_the_constancy_shows_the_empty_weeks_too(self):
+        """Il buco è il dato: una media di 2 può essere due settimane da 4 e
+        due da zero, e le due storie meritano consigli opposti."""
+        self.serie(self.settimane[-1], self.panca)
+        self.serie(self.settimane[-2], self.panca)
+
+        risultato = analytics_costanza.costanza(self.user, self.settimane)
+
+        self.assertEqual(len(risultato["settimane"]), 4)
+        self.assertEqual(
+            [riga["allenamenti"] for riga in risultato["settimane"]], [0, 0, 1, 1]
+        )
+        self.assertEqual(risultato["vuote"], 2)
+
+    def test_the_constancy_divides_by_the_weeks_that_have_gone_by(self):
+        """L'ultima settimana è in corso: dividere per quattro tonde farebbe
+        scendere la costanza ogni lunedì mattina senza che l'utente abbia fatto
+        niente di diverso."""
+        oggi = self.settimane[-1] + timedelta(days=3)  # un giovedì
+        for lunedi in self.settimane:
+            self.serie(lunedi, self.panca)
+
+        risultato = analytics_costanza.costanza(self.user, self.settimane, oggi=oggi)
+
+        # Quattro allenamenti in **25 giorni** trascorsi, non in 28: tre
+        # settimane piene più i quattro giorni da lunedì a oggi, oggi compreso,
+        # perché un allenamento fatto stamattina è costanza di questa settimana.
+        self.assertEqual(risultato["sedute"], 4)
+        self.assertEqual(risultato["media"], round(4 / (25 / 7), 1))
+
+    def test_the_dashboard_has_one_measure_of_constancy_and_not_two(self):
+        """W1 *è* il riquadro che c'era, non un secondo accanto: due misure di
+        costanza sulla stessa pagina sono la divergenza di #75 un'altra volta,
+        con l'aggravante che sarebbero entrambe giuste e discordi."""
+        self.serie(self.settimane[-1], self.panca)
+        self.serie(self.settimane[-2], self.panca)
+
+        response = self.client.get(reverse("training:dashboard"))
+
+        self.assertEqual(response.context["costanza"]["sedute"], 2)
+        self.assertContains(response, "Costanza", count=1)
+        self.assertContains(response, "2 in 4 settimane")
+
+    # --- la guardia di #86 -------------------------------------------------
+
+    def test_the_number_of_queries_does_not_grow_with_the_history(self):
+        """La guardia di #86 sulla pagina che il prof apre per prima.
+
+        Protegge l'**invarianza**, non il numero: una heatmap che facesse una
+        query per muscolo renderebbe benissimo su tre allenamenti e morirebbe
+        sui 443 dell'utente della demo.
+        """
+
+        def rendi():
+            with CaptureQueriesContext(connection) as contesto:
+                self.assertEqual(
+                    self.client.get(reverse("training:dashboard")).status_code, 200
+                )
+            return len(contesto.captured_queries)
+
+        for lunedi in self.settimane:
+            self.serie(lunedi, self.panca, quante=2)
+        prima = rendi()
+
+        for lunedi in self.settimane:
+            for esercizio in (self.panca, self.stacco, self.alzate):
+                self.serie(lunedi, esercizio, quante=5)
+
+        self.assertEqual(prima, rendi())
+
+
+class ProvenanceTests(TestCase):
+    """La provenienza della figura anatomica, che è **condizione di ammissione**.
+
+    `_corpo.svg` è versionato ma non è lavoro nostro: `build_body_svg.mjs` copia
+    i path di Overload identici e aggiunge solo le classi (#40). Finché la
+    dichiarazione non esisteva nel repo, la figura non poteva starci. Questo
+    test è la guardia che non torni a sparire, nella stessa forma in cui #77 ha
+    messo sotto tutela i requisiti della traccia.
+    """
+
+    def test_the_repository_says_where_the_anatomical_figure_comes_from(self):
+        readme = Path(settings.BASE_DIR) / "README.md"
+
+        self.assertTrue(readme.exists(), "manca il README alla radice")
+        testo = readme.read_text(encoding="utf-8")
+
+        self.assertIn("_corpo.svg", testo)
+        self.assertIn("Overload", testo)
+        self.assertIn("non è lavoro nostro", testo.lower())

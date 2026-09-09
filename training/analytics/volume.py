@@ -253,7 +253,9 @@ def volume_nel_tempo(user, taglio=TAGLIO_DI_DEFAULT, finestra=None, oggi=None):
         .order_by("periodo")
     )
 
-    per_periodo = {_a_data(riga["periodo"]): riga["volume"] or 0.0 for riga in righe}
+    per_periodo = {
+        data_locale(riga["periodo"]): riga["volume"] or 0.0 for riga in righe
+    }
     return [
         {"periodo": inizio, "volume": round(per_periodo.get(inizio, 0.0), 1)}
         for inizio in finestra
@@ -334,8 +336,14 @@ def quanto_e_trascorso(taglio, finestra, oggi=None):
     return {"trascorsi": min((oggi - inizio).days + 1, giorni), "totali": giorni}
 
 
-def _a_data(periodo):
+def data_locale(periodo):
     """L'inizio del periodo troncato dal database, come `date` locale.
+
+    Pubblica e non più `_a_data` da #101: la costanza (W1) raggruppa per
+    settimana come A1 e ha bisogno della stessa conversione. Una seconda copia
+    di questa funzione sarebbe una seconda regola di fuso orario, cioè la
+    divergenza di #75 nel punto in cui non si vede — le due misure
+    sbaglierebbero settimana in due modi diversi, e solo d'inverno.
 
     Con `USE_TZ = True` la troncatura restituisce un `datetime` **aware** a
     mezzanotte di Roma: confrontarlo con una `date` senza passare da
