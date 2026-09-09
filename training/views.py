@@ -35,6 +35,7 @@ from django.views.generic import DetailView, ListView, TemplateView
 from django.views.generic.edit import CreateView, DeleteView, FormView, UpdateView
 
 from training import querysets, rankings
+from training.analytics import coach as analytics_coach
 from training.analytics import costanza as analytics_costanza
 from training.analytics import muscles as analytics_muscles
 from training.analytics import progressione as analytics_progressione
@@ -119,9 +120,16 @@ class DashboardView(LoginRequiredMixin, TemplateView):
     divergenza di #75 un'altra volta, quindi W1 *è* quel riquadro, non un
     secondo.
 
+    Con #112 la pagina smette di raccontare solo il passato: in cima, **sopra
+    le quattro cifre**, entra il riquadro del coach con **un** consiglio, quello
+    a priorità più alta (ADR-0007). È la prima superficie del progetto che dice
+    cosa fare invece di cosa è successo, e il posto in cui sta è parte della
+    decisione: in fondo alla pagina sarebbe un piè di pagina della heatmap.
+
     Il conto delle query resta **invariante rispetto allo storico**, che è la
     guardia lasciata da #86: la heatmap ne aggiunge quattro — l'aggregazione e
-    tre letture di catalogo — e nessuna delle quattro cresce con le righe.
+    tre letture di catalogo — e il coach una, l'aggregato dei tre conteggi di
+    `analytics/costanza.py`. Nessuna delle cinque cresce con le righe.
 
     Il `LoginRequiredMixin` entra con #68: la dashboard è una pagina personale,
     senza un utente non ha niente da dire.
@@ -204,6 +212,31 @@ class DashboardView(LoginRequiredMixin, TemplateView):
         # settimane si manda allo storico. È la regola già scritta su
         # `/analisi/` (#99), e vale doppio sulla prima pagina.
         context["heatmap_ha_dati"] = heatmap["totale"] > 0
+
+        # **Il coach, e sta in cima** (#112). La dashboard è già a otto riquadri
+        # e a dodici query: se «dire cosa fare» è la tesi del progetto, il
+        # consiglio non può stare in fondo, sotto la heatmap, dove si arriva
+        # scorrendo. Sopra le quattro cifre, quindi — è la prima cosa che si
+        # legge, e la decisione è reversibile in dieci righe di template.
+        #
+        # La heatmap si passa perché **è già stata calcolata due righe sopra**:
+        # lo squilibrio legge le stesse serie per gruppo che la figura disegna,
+        # e ricalcolarle qui vorrebbe dire quattro query in più per ottenere
+        # l'oggetto identico. Le query che il coach aggiunge sono quindi
+        # **una**, l'aggregato dei tre conteggi, e non cresce con lo storico:
+        # la guardia di #86 resta in piedi e il test la verifica.
+        #
+        # `None` è un esito normale e non un errore: con due dei quattro tipi
+        # ancora da scrivere capita spesso, e il template in quel caso **non
+        # disegna il riquadro**. Un riquadro vuoto che dicesse «nessun
+        # consiglio» sarebbe peggio del silenzio: suonerebbe come «va tutto
+        # bene» mentre metà delle regole non esiste ancora, cioè una diagnosi
+        # rassicurante emessa da un coach che non ha guardato. Il caso si
+        # stringe quasi a zero col consiglio di carico, che scatta per chiunque
+        # abbia registrato una serie.
+        context["consiglio"] = analytics_coach.consiglio_per_dashboard(
+            self.request.user, heatmap=heatmap
+        )
 
         # Il limite noto — i muscoli che nessun esercizio ha come primario —
         # esce già dalla riga della heatmap, e la pagina lo dichiara: la mappa

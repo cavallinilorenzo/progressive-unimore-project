@@ -15,7 +15,7 @@ training/
 ├── views/               # pacchetto, non un file: sono ~30 view
 ├── analytics/
 │   ├── plateau.py       # servizio stallo + coefficienti appresi come costanti
-│   └── coach.py         # le regole del coach
+│   └── coach/           # le regole del coach (pacchetto, #112)
 ├── management/commands/
 │   ├── load_catalog.py  # già scritto
 │   └── seed_synthetic.py

@@ -37,6 +37,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from training import rankings, views
+from training.analytics import coach as analytics_coach
 from training.analytics import costanza as analytics_costanza
 from training.analytics import muscles as analytics_muscles
 from training.analytics import progressione as analytics_progressione
@@ -6354,6 +6355,402 @@ class DashboardHeatmapTests(TestCase):
                 self.serie(lunedi, esercizio, quante=5)
 
         self.assertEqual(prima, rendi())
+
+
+class CoachAdviceTests(TestCase):
+    """Il coach di #112: la costanza, lo squilibrio, e la selezione per priorità.
+
+    La regola 2 della mappa #111 vale per tutta questa classe, ed è la ragione
+    per cui i test qui sotto inchiodano **stringhe e numeri esatti** invece di
+    controllare che «esca un consiglio». Un'analisi sbagliata dà un numero che
+    si controlla a mente; un consiglio plausibile ma falso rende una pagina
+    perfetta e supera qualunque test scritto al ribasso.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user(
+            username="atleta", password=PASSWORD, body_mass_kg=Decimal("80")
+        )
+        cls.nuovo = User.objects.create_user(username="nuovo", password=PASSWORD)
+
+        # **Un muscolo e un esercizio per ciascuno dei sei gruppi**, al
+        # contrario di `DashboardHeatmapTests`: lì i gruppi senza muscoli erano
+        # innocui, qui sarebbero tre gruppi eternamente a zero e lo squilibrio
+        # scatterebbe sempre, su qualunque dato, senza che nessun test se ne
+        # accorga.
+        cls.esercizi = {}
+        attrezzo = Equipment.objects.create(
+            code="barbell", label_it="Bilanciere", sort_order=1
+        )
+        for ordine, (codice, etichetta) in enumerate(
+            [
+                ("chest", "Petto"),
+                ("back", "Schiena"),
+                ("shoulders", "Spalle"),
+                ("arms", "Braccia"),
+                ("legs", "Gambe"),
+                ("core", "Core"),
+            ],
+            start=1,
+        ):
+            gruppo = MuscleGroup.objects.create(
+                code=codice, label_it=etichetta, sort_order=ordine
+            )
+            muscolo = Muscle.objects.create(
+                code=f"{codice}Main",
+                group=gruppo,
+                label_it=etichetta,
+                sort_order=1,
+            )
+            cls.esercizi[codice] = Exercise.objects.create(
+                name=f"Esercizio {etichetta}",
+                slug=f"esercizio-{codice}",
+                primary_muscle=muscolo,
+                equipment=attrezzo,
+            )
+
+    def setUp(self):
+        self.client.login(username="atleta", password=PASSWORD)
+        self.settimane = analytics_muscles.finestra_settimanale(
+            analytics_muscles.SETTIMANE_HEATMAP
+        )
+
+    def allenamento(self, giorno, gruppo="chest", user=None, quante=1):
+        """Un allenamento con `quante` serie di lavoro, alle 18 di `giorno`."""
+        istante = timezone.make_aware(
+            timezone.datetime.combine(giorno, timezone.datetime.min.time())
+        ) + timedelta(hours=18)
+        sessione = Workout.objects.create(
+            user=user or self.user, title="Sessione", started_at=istante
+        )
+        for numero in range(1, quante + 1):
+            WorkoutSet.objects.create(
+                workout=sessione,
+                exercise=self.esercizi[gruppo],
+                set_number=numero,
+                reps=10,
+                weight=Decimal("60"),
+                set_type=WorkoutSet.SetType.WORKING,
+                is_completed=True,
+            )
+        return sessione
+
+    def consiglio(self, user=None, oggi=None):
+        return analytics_coach.consiglio_per_dashboard(user or self.user, oggi=oggi)
+
+    # --- il ponte fra le due finestre della costanza -----------------------
+
+    def test_the_constancy_advice_reads_a_rolling_fortnight_and_not_the_monday_grid(
+        self,
+    ):
+        """La decisione aperta di #112, e il caso che la costringe.
+
+        Chi si allena **una volta a settimana** ha 2 allenamenti in 14 giorni
+        mobili — e la spec dice che a 2 il consiglio *non* scatta — ma sulla
+        griglia dei lunedì, la mattina di lunedì, ne ha 1: il consiglio
+        comparirebbe e sparirebbe da solo ogni settimana, senza che l'utente
+        abbia fatto niente di diverso.
+
+        Le due finestre restano quindi **diverse e dichiarate**, non
+        riconciliate, e vivono nello stesso modulo perché non possano
+        divergere. È lo stesso difetto da cui `media` si difende dividendo per
+        i giorni trascorsi (#101).
+        """
+        # Il lunedì mattina della settimana in corso: il momento peggiore per
+        # la griglia dei lunedì, che ha appena buttato via una settimana.
+        oggi = self.settimane[-1]
+        # Una volta a settimana, di martedì. Le due dentro i 14 giorni mobili
+        # che finiscono oggi sono quelle di W1 e W2.
+        self.allenamento(self.settimane[1] + timedelta(days=1))
+        self.allenamento(self.settimane[2] + timedelta(days=1))
+        # Lo storico che apre il consiglio: senza, la regola tace comunque e il
+        # test non proverebbe niente.
+        for indietro in range(1, 4):
+            self.allenamento(self.settimane[0] - timedelta(weeks=indietro))
+
+        conteggi = analytics_costanza.allenamenti_per_il_coach(self.user, oggi=oggi)
+        griglia = analytics_costanza.costanza(self.user, self.settimane, oggi=oggi)
+
+        # Il numero su cui le due finestre si separano, ed è il punto del test.
+        self.assertEqual(conteggi["recenti"], 2)
+        self.assertEqual(
+            sum(riga["allenamenti"] for riga in griglia["settimane"][-2:]), 1
+        )
+        self.assertEqual(conteggi["totali"], 5)
+        self.assertIsNone(self.consiglio(oggi=oggi))
+
+    def test_the_fortnight_counts_today_in(self):
+        """14 giorni che finiscono stasera cominciano 13 giorni fa, non 14.
+
+        Un allenamento fatto stamattina è costanza di oggi: la stessa ragione
+        per cui W1 aggiunge `+ 1` ai giorni trascorsi (#101).
+        """
+        oggi = self.settimane[-1] + timedelta(days=3)
+        self.allenamento(oggi)
+        self.allenamento(oggi - timedelta(days=13))
+        # Un giorno fuori dalla finestra, che deve restare fuori.
+        self.allenamento(oggi - timedelta(days=14))
+
+        conteggi = analytics_costanza.allenamenti_per_il_coach(self.user, oggi=oggi)
+
+        self.assertEqual(conteggi["recenti"], 2)
+        self.assertEqual(conteggi["totali"], 3)
+
+    # --- il consiglio di costanza -----------------------------------------
+
+    def test_the_constancy_advice_carries_the_number_that_produced_it(self):
+        """Un consiglio senza il suo numero non si distingue da uno inventato,
+        ed è il modo in cui un consiglio falso passa inosservato."""
+        oggi = self.settimane[-1] + timedelta(days=3)
+        self.allenamento(oggi - timedelta(days=2))
+        for indietro in range(1, 5):
+            self.allenamento(self.settimane[0] - timedelta(weeks=indietro))
+
+        consiglio = self.consiglio(oggi=oggi)
+
+        self.assertEqual(consiglio.tipo, "costanza")
+        self.assertEqual(consiglio.misura, "1 allenamento negli ultimi 14 giorni")
+        # Il singolare: «1 allenamenti» su una pagina in italiano è il genere di
+        # dettaglio che il prof legge prima di qualunque query.
+        self.assertNotIn("allenamenti", consiglio.misura)
+
+    def test_the_constancy_advice_says_nothing_to_someone_who_just_started(self):
+        """A tre allenamenti totali «ti stai allenando poco» non è un consiglio,
+        è un rimprovero rivolto a chi ha appena cominciato — e calcolato su una
+        finestra che contiene tutta la sua storia."""
+        oggi = self.settimane[-1] + timedelta(days=3)
+        for indietro in range(1, 4):
+            self.allenamento(self.settimane[0] - timedelta(weeks=indietro))
+
+        conteggi = analytics_costanza.allenamenti_per_il_coach(self.user, oggi=oggi)
+
+        self.assertEqual(conteggi["totali"], 3)
+        self.assertEqual(conteggi["recenti"], 0)
+        self.assertIsNone(self.consiglio(oggi=oggi))
+
+    # --- il consiglio di squilibrio ---------------------------------------
+
+    def test_the_imbalance_needs_a_busy_window_or_it_is_just_an_absence(self):
+        """Chi si è allenato sette volte in un mese ha cinque gruppi a zero, e
+        il suo problema non è lo squilibrio: è la costanza, che infatti ha la
+        priorità sopra. La soglia degli 8 allenamenti è ciò che distingue le
+        due cose."""
+        # Sette allenamenti di solo petto, cinque gruppi a zero, e tre di essi
+        # negli ultimi giorni perché la costanza — più prioritaria — resti
+        # zitta: senza, questo test proverebbe la priorità e non la soglia.
+        for indice in range(4):
+            self.allenamento(
+                self.settimane[1] + timedelta(days=indice), gruppo="chest"
+            )
+        for indice in range(3):
+            self.allenamento(
+                self.settimane[-1] + timedelta(days=indice), gruppo="chest"
+            )
+
+        conteggi = analytics_costanza.allenamenti_per_il_coach(self.user)
+
+        self.assertEqual(conteggi["nella_finestra"], 7)
+        self.assertGreaterEqual(
+            conteggi["recenti"], analytics_costanza.ALLENAMENTI_DELLA_SOGLIA
+        )
+        self.assertIsNone(self.consiglio())
+
+        # E all'ottavo scatta, sugli stessi identici dati: la soglia è l'unica
+        # cosa che è cambiata fra le due metà di questo test.
+        self.allenamento(self.settimane[2] + timedelta(days=1), gruppo="chest")
+
+        self.assertEqual(self.consiglio().tipo, "squilibrio")
+
+    def test_the_imbalance_names_the_group_and_declares_what_it_cannot_see(self):
+        """Il limite del muscolo secondario **si dichiara sempre**.
+
+        Il catalogo tagga un solo muscolo primario per esercizio (ADR-0001), e
+        sul database della demo la regola scatta per 33 utenti su 55: in 32
+        casi su 33 il gruppo mancante è **braccia**, cioè proprio quello che
+        riceve più lavoro da secondario. Il consiglio resta vero — l'utente
+        della demo non ha mai registrato una serie con primario braccia in 443
+        allenamenti — ma senza la parola «direttamente» direbbe una cosa più
+        grande di quella che sa.
+
+        I numeri qui sotto sono la forma dell'utente della demo in miniatura:
+        cinque gruppi allenati, le braccia a zero, la finestra piena.
+        """
+        for indice in range(10):
+            gruppo = ["chest", "back", "shoulders", "legs", "core"][indice % 5]
+            self.allenamento(
+                self.settimane[1] + timedelta(days=indice % 5), gruppo=gruppo
+            )
+        # Gli allenamenti recenti che tengono zitto il consiglio di costanza,
+        # che è più prioritario: senza, questo test proverebbe la priorità e
+        # non lo squilibrio.
+        for giorno in range(3):
+            self.allenamento(self.settimane[-1] + timedelta(days=giorno))
+
+        consiglio = self.consiglio()
+
+        self.assertEqual(consiglio.tipo, "squilibrio")
+        self.assertEqual(consiglio.titolo, "Braccia: nessun lavoro diretto")
+        self.assertEqual(
+            consiglio.misura,
+            "0 serie con muscolo primario nel gruppo Braccia, "
+            "in 4 settimane su 13 allenamenti",
+        )
+        self.assertIn("muscolo primario", consiglio.limite)
+        self.assertIn("da secondario", consiglio.limite)
+
+    def test_the_imbalance_keeps_the_catalogue_order_when_two_groups_are_out(self):
+        """Con due gruppi a zero serve un ordine, e dev'essere **quello della
+        figura accanto**: un criterio che si riordinasse a ogni ricarica
+        mostrerebbe due consigli diversi a due aggiornamenti di distanza, sugli
+        stessi identici dati."""
+        for indice in range(11):
+            gruppo = ["chest", "back", "shoulders", "legs"][indice % 4]
+            self.allenamento(
+                self.settimane[1] + timedelta(days=indice % 5), gruppo=gruppo
+            )
+        for giorno in range(3):
+            self.allenamento(self.settimane[-1] + timedelta(days=giorno))
+
+        consiglio = self.consiglio()
+
+        # Braccia (`sort_order` 4) prima di Core (6): l'ordine del catalogo, che
+        # è quello in cui la heatmap elenca i gruppi.
+        self.assertEqual(consiglio.titolo, "Braccia: nessun lavoro diretto")
+
+    # --- la selezione per priorità ----------------------------------------
+
+    def test_the_priority_is_an_integer_wired_to_the_type(self):
+        """Mai un punteggio calcolato: un punteggio sarebbe una terza cosa da
+        giustificare all'orale e nessuno dei suoi pesi sarebbe misurato
+        (ADR-0007). E l'ordine sta in **un posto solo**, `REGOLE`: due elenchi
+        da tenere allineati sono due elenchi che prima o poi non lo sono più."""
+        self.assertEqual(
+            analytics_coach.PRIORITA,
+            {tipo: numero for numero, (tipo, _) in enumerate(analytics_coach.REGOLE, 1)},
+        )
+        self.assertLess(
+            analytics_coach.PRIORITA["costanza"],
+            analytics_coach.PRIORITA["squilibrio"],
+        )
+
+    def test_constancy_wins_over_imbalance_when_both_would_fire(self):
+        """Se non ci si allena, nessun altro consiglio conta: è la riga che
+        regge da sola l'intera gerarchia. Un consiglio di squilibrio dato a chi
+        non entra in palestra da tre settimane è corretto e inutile."""
+        # Finestra piena di allenamenti, ma tutti **vecchi**: 12 nella finestra
+        # delle quattro settimane, nessuno negli ultimi 14 giorni.
+        for indice in range(12):
+            gruppo = ["chest", "back", "shoulders", "legs", "core"][indice % 5]
+            self.allenamento(
+                self.settimane[0] + timedelta(days=indice % 6), gruppo=gruppo
+            )
+        oggi = self.settimane[-1] + timedelta(days=6)
+
+        conteggi = analytics_costanza.allenamenti_per_il_coach(self.user, oggi=oggi)
+        consiglio = self.consiglio(oggi=oggi)
+
+        # Le due condizioni sono vere entrambe, ed è il punto del test.
+        self.assertGreaterEqual(
+            conteggi["nella_finestra"], analytics_coach.ALLENAMENTI_PER_LO_SQUILIBRIO
+        )
+        self.assertEqual(conteggi["recenti"], 0)
+        self.assertEqual(consiglio.tipo, "costanza")
+
+    def test_the_coach_asks_the_heatmap_only_once(self):
+        """Passata la heatmap dall'esterno, il coach costa **una query**: i tre
+        conteggi in un `aggregate()` solo.
+
+        Tre `.count()` separati sarebbero tre scansioni della stessa tabella in
+        cima alla pagina più visitata del progetto, per un risultato identico —
+        e questo test è ciò che impedisce di dividerli «per leggibilità».
+        """
+        self.allenamento(self.settimane[-1])
+        heatmap = analytics_muscles.serie_per_muscolo(self.user, self.settimane)
+
+        with self.assertNumQueries(1):
+            analytics_coach.consiglio_per_dashboard(self.user, heatmap=heatmap)
+
+    def test_the_advice_for_the_exercise_page_is_a_list_and_not_the_dashboard_one(self):
+        """L'altra metà della superficie pubblica di ADR-0007, vuota in #112 e
+        deliberatamente presente: lo stallo e il carico si innestano qui senza
+        aprire un terzo punto d'ingresso."""
+        self.assertEqual(
+            analytics_coach.consigli_per_esercizio(self.user, self.esercizi["chest"]),
+            [],
+        )
+
+    # --- il riquadro in pagina --------------------------------------------
+
+    def test_the_box_sits_above_the_four_hero_figures(self):
+        """Il vincolo 7 della mappa #111: se «dire cosa fare» è la tesi del
+        progetto, il consiglio non può stare in fondo, sotto la heatmap, dove
+        si arriva scorrendo."""
+        for indice in range(10):
+            gruppo = ["chest", "back", "shoulders", "legs", "core"][indice % 5]
+            self.allenamento(
+                self.settimane[1] + timedelta(days=indice % 5), gruppo=gruppo
+            )
+        for giorno in range(3):
+            self.allenamento(self.settimane[-1] + timedelta(days=giorno))
+
+        pagina = self.client.get(reverse("training:dashboard")).content.decode()
+
+        self.assertLess(pagina.index("Il coach dice"), pagina.index("hero-num"))
+        self.assertIn("Braccia: nessun lavoro diretto", pagina)
+
+    def test_the_dashboard_shows_one_advice_and_never_a_list(self):
+        """Con quattro consigli calcolati, mostrarne uno *sembra* uno spreco ed
+        è invece la tesi del progetto (ADR-0007). Il ciclo `for` che qui
+        scriverebbe l'elenco è la modifica più naturale del mondo."""
+        for indice in range(12):
+            gruppo = ["chest", "back", "shoulders", "legs", "core"][indice % 5]
+            self.allenamento(
+                self.settimane[0] + timedelta(days=indice % 6), gruppo=gruppo
+            )
+
+        response = self.client.get(reverse("training:dashboard"))
+
+        self.assertContains(response, "Il coach dice", count=1)
+        self.assertIsInstance(
+            response.context["consiglio"], analytics_coach.Consiglio
+        )
+
+    def test_the_box_disappears_when_no_rule_fires(self):
+        """La risposta **provvisoria** di #112 al riquadro muto, e il ticket del
+        carico può stringerla.
+
+        Un riquadro che dicesse «nessun consiglio» suonerebbe come «va tutto
+        bene» mentre due dei quattro tipi non esistono ancora: una diagnosi
+        rassicurante emessa da un coach che non ha guardato. Meglio il silenzio,
+        finché il carico — priorità 4, e scatta per chiunque abbia registrato
+        una serie — non lo restringe quasi al solo utente nuovo.
+        """
+        for giorno in range(4):
+            self.allenamento(self.settimane[-1] + timedelta(days=giorno))
+
+        response = self.client.get(reverse("training:dashboard"))
+
+        self.assertIsNone(response.context["consiglio"])
+        self.assertNotContains(response, "Il coach dice")
+
+    def test_a_brand_new_user_is_told_nothing_by_the_coach(self):
+        """Il **vuoto vero**, che #112 doveva scoprire se esistesse: esiste, ed
+        è l'utente appena registrato.
+
+        Nessuna delle due regole ha una soglia che lui superi — 4 allenamenti
+        per la costanza, 8 nella finestra per lo squilibrio — quindi il coach
+        tace, e a parlare resta il vuoto che la dashboard dichiarava già da
+        #101. Sui 100 utenti del database della demo il caso non compare
+        nemmeno una volta: nessuno di loro ha zero allenamenti.
+        """
+        self.client.login(username="nuovo", password=PASSWORD)
+
+        response = self.client.get(reverse("training:dashboard"))
+
+        self.assertIsNone(response.context["consiglio"])
+        self.assertNotContains(response, "Il coach dice")
+        self.assertContains(response, "La mappa muscolare è ancora vuota")
 
 
 class ProvenanceTests(TestCase):
