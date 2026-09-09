@@ -98,16 +98,34 @@ W1 è un **widget**, non una pagina: passa l'asse 1 ma non l'asse 2, quindi non 
      .annotate(volume=Sum(EFFECTIVE_LOAD * F("reps")))
      .order_by("-volume"))
 
-# A3 — progressione: due passaggi, aggregato poi finestra
-per_workout = (WorkoutSet.objects.working()
-    .filter(exercise=ex, workout__user=user, reps__lte=12)
-    .values("workout_id", "workout__started_at")
-    .annotate(best_1rm=Max(EPLEY)))
-progression = per_workout.annotate(
-    running_max=Window(Max("best_1rm"), order_by="workout__started_at",
-                       frame=RowRange(start=None, end=0)),
-    previous=Window(Lag("best_1rm"), order_by="workout__started_at"),
-)
+# A3 — progressione: la Subquery SOTTO le due finestre, righe = allenamenti
+#
+# ATTENZIONE: la forma "aggregato poi finestra" che stava qui NON GIRA.
+# `Window(Max("best_1rm"))` sopra `Max(EPLEY)` solleva un FieldError in
+# COSTRUZIONE — «Cannot compute Max('best_1rm'): 'best_1rm' is an aggregate» —
+# perché Django non impila un aggregato dentro un aggregato. Non è un limite di
+# SQLite, che `MAX ... OVER` ce l'ha. Misurato in #98; questa è la forma
+# verificata (una sola query, 5,9 ms sul caso peggiore del database), scritta
+# in `training/analytics/progressione.py`.
+massimale_sessione = (WorkoutSet.objects.working()
+    .filter(workout=OuterRef("pk"), exercise=ex, reps__lte=12)
+    .values("workout").annotate(m=Max(EPLEY)).values("m"))
+sessioni = (WorkoutSet.objects.working()
+    .filter(exercise=ex, reps__lte=12).values("workout_id"))
+progression = (Workout.objects.filter(user=user, pk__in=sessioni)
+    .annotate(best_1rm=Subquery(massimale_sessione, output_field=FloatField()))
+    .annotate(
+        running_max=Window(Max("best_1rm"), order_by="started_at",
+                           frame=RowRange(start=None, end=0)),
+        previous=Window(Lag("best_1rm"), order_by="started_at"))
+    .order_by("started_at"))
+# Due trappole mute, entrambe pagate dal prototipo:
+# - MAI `Workout.objects.filter(sets__exercise=ex).distinct()`: il join
+#   moltiplica, le finestre vedono i duplicati PRIMA del DISTINCT (281 righe
+#   invece di 146). Si passa da `pk__in=<subquery>`.
+# - MAI tagliare il periodo con `.filter()`: finisce in WHERE, cioè prima
+#   della finestra, e il massimo cumulativo RIPARTE dal taglio. Il taglio
+#   temporale, se serve, si fa in Python dopo la query.
 
 # A4 — PR per esercizio
 best = (WorkoutSet.objects.working()
@@ -126,7 +144,9 @@ Exercise.objects.annotate(pr=Subquery(best, output_field=FloatField()))
     .annotate(pct=Window(PercentRank(), order_by=F("relative").asc())))
 ```
 
-**A3 è l'unica da prototipare per prima**: impila una `Window` sopra un aggregato, che Django supporta ma con vincoli su cosa si può poi filtrare. Se non regge, il ripiego è una `Subquery` correlata — **non** SQL grezzo. Nessuna delle altre cinque ha incognite.
+**A3 era l'unica da prototipare per prima**, e il prototipo (#98) ha risposto: la forma della spec non si costruisce affatto, e il ripiego non è la `Subquery` correlata *pura* — che gira ma costa **320 volte** tanto, perché SQLite la rivaluta riga per riga — bensì la forma **ibrida** qui sopra, con la `Subquery` sotto le finestre. Nessuna delle altre cinque ha incognite.
+
+**A4 vive in due forme, e la differenza è la pagina.** La forma con `OuterRef` annota `Exercise.objects`, cioè è pensata per una **lista**, dove l'alternativa sarebbero cento query. Sul **dettaglio**, che è una riga sola, il record esce già dalle righe di A3 — è l'ultimo `running_max`, e la sua data è il primo giorno in cui il massimale l'ha toccato: zero query in più. `Subquery` + `OuterRef` non spariscono per questo, perché A3 stessa ne è costruita sopra.
 
 > L'`exclude` su `body_mass_kg` in A5 **non era nel ticket #16**: è arrivato da #33 (terza condizione di ammissione) e va allineato anche qui, o il percentile divide per null.
 
