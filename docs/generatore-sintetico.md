@@ -61,10 +61,14 @@ ha già escluso.
 ### 3. Storico variabile, non uniforme
 
 Una popolazione in cui tutti hanno la stessa anzianità non esiste, e soprattutto non
-serve. Lo storico va da **0,5 a 17,8 mesi**, mediana 10,2:
+serve. Lo storico va da **0,5 a 24,0 mesi**, mediana 10,2:
 
-- **sei veterani** a 15–18 mesi, che sono gli unici a riempire davvero la finestra a
-  12 mesi delle analisi di volume, e da cui esce l'utente della demo;
+- **sei veterani** a 15–18 mesi, che riempiono la finestra a 12 mesi delle analisi di
+  volume;
+- **l'utente della demo a 24 mesi tondi**, unico storico dichiarato invece che
+  sorteggiato: due anni coprono i 12 mesi delle analisi di volume *più* un anno di
+  confronto dietro, così `TruncMonth` ha due cicli da mettere a fianco invece di uno
+  troncato. Prima ne aveva 17,2, ma per caso — `demo064` non è fra i sei veterani;
 - la maggior parte fra 4 e 12 mesi;
 - **quattro utenti sotto i 21 giorni**, apposta, perché la pagina dello stallo possa
   mostrare dal vivo lo stato «dati insufficienti — 4 allenamenti su 6» che #17 vuole
@@ -137,12 +141,12 @@ La spazzata su orizzonte e soglia, misurata sulla popolazione finale:
 | orizzonte futuro | soglia +0% | +1% | +2% |
 | --- | --- | --- | --- |
 | 4 sessioni | 34,3% | 37,6% | **42,2%** |
-| 6 sessioni | 24,1% | 26,5% | **30,1%** |
+| 6 sessioni | 25,0% | 27,5% | **31,0%** |
 | 8 sessioni | 18,5% | 20,2% | 22,9% |
 | 10 sessioni | 15,1% | 16,4% | 18,6% |
 
 **Emendamento proposto a #17: l'orizzonte futuro passa da 4 a 6 sessioni**, lasciando la
-soglia del 2% dov'è. Con quel solo cambio la classe `stallo` sta al **30,1%**, dentro la
+soglia del 2% dov'è. Con quel solo cambio la classe `stallo` sta al **31,0%**, dentro la
 banda, senza toccare un solo parametro del generatore. La motivazione non è di comodo: un
 esercizio si allena circa una volta e mezzo a settimana, quindi 4 sessioni sono meno di
 tre settimane — troppo poco per dichiarare uno stallo — mentre 6 sono all'incirca un mese.
@@ -171,7 +175,7 @@ Il prototipo resta nel repo come sorgente del ragionamento e del rapporto qui so
 Il porting ha una proprietà che vale la pena dichiarare: il comando produce **la stessa
 popolazione**, non una equivalente. Consuma il generatore casuale nello stesso ordine del
 prototipo, ed è stato verificato riga per riga contro i suoi CSV su tutte e sei le
-tabelle — 299.367 serie comprese. È da lì che discende il fatto che le misure di questo
+tabelle — 296.724 serie comprese. È da lì che discende il fatto che le misure di questo
 documento restino valide senza essere ri-misurate a ogni seeding: in particolare le due
 sullo stallo, che sono proprietà della **regola di etichettatura** applicata a questa
 popolazione, e riscriverle nel comando significherebbe tenerne una seconda copia dentro
@@ -183,20 +187,20 @@ proteggono.
 | | |
 | --- | --- |
 | utenti | 100 |
-| allenamenti | 11.916 |
-| serie | 299.367 |
-| schede (di cui pubbliche) | 187 (55) |
-| voti | 728 |
+| allenamenti | 11.855 |
+| serie | 296.724 |
+| schede (di cui pubbliche) | 199 (58) |
+| voti | 887 |
 
 I voti hanno distribuzione **a coda lunga con un livello di fondo**: la scheda più votata
-ne ha 43, la **mediana è 10**, dieci schede pubbliche ne hanno zero. La mediana non è
+ne ha 61, la **mediana è 12**, cinque schede pubbliche ne hanno zero. La mediana non è
 estetica — [#33](https://github.com/cavallinilorenzo/progetto-django-uni/issues/33) ne
 chiede **almeno 8**, perché sotto quella soglia la media bayesiana con `C = 3` è dominata
 dal prior e la classifica sociale finisce per ordinare il rumore. Le schede a zero voti
 restano lo stesso: una scheda pubblicata ieri non ne ha, ed è il caso che la media
 bayesiana deve saper gestire.
 
-Le **299.367 serie** sono il numero che la mappa aspettava per decidere se materializzare
+Le **296.724 serie** sono il numero che la mappa aspettava per decidere se materializzare
 i valori derivati: quella scelta resta aperta e resta subordinata a una misura vera delle
 query, ma ora si sa su quante righe misurare.
 
@@ -214,5 +218,6 @@ scritto.
 #17 vuole che la pagina dello stallo si dimostri su un utente sintetico «scelto e nominato
 in anticipo». Lo sceglie il rapporto, non la fretta del giorno dell'orale:
 
-**`demo064` — Martina Longo**, archetipo intermedio in plateau, 17 mesi di storico,
-1199 finestre etichettabili.
+**`demo064` — Martina Longo**, archetipo intermedio in plateau, **24 mesi** di storico,
+**1904 finestre etichettabili**. I due anni sono dichiarati in `DEMO_MONTHS`, non
+sorteggiati: prima ne aveva 17,2 e 1199 finestre, e li aveva per caso.

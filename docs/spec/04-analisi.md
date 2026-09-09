@@ -184,7 +184,7 @@ MIN_WORKOUTS_FOR_RANKING = 2
     .order_by("-relativa", "primo_allenamento", "utente_id"))
 ```
 
-**Il pari merito si rompe sul primo allenamento, e il ripiego di #33 è stato preso.** La versione con la *data del massimale* era una `Subquery` correlata che ordina su un'espressione (`order_by(EPLEY.desc())`): SQLite la rivaluta riga per riga invece che per gruppo, e sui dati veri — 299.367 serie, 86 righe in classifica — la stessa pagina passa da **0,01 s a 31 s**. `Min("workout__started_at")` è un aggregato nella stessa passata, non cambia nessuna altra regola, e resta spiegabile: a parità di forza relativa sta sopra chi quell'esercizio lo pratica da più tempo. Misurato in #76.
+**Il pari merito si rompe sul primo allenamento, e il ripiego di #33 è stato preso.** La versione con la *data del massimale* era una `Subquery` correlata che ordina su un'espressione (`order_by(EPLEY.desc())`): SQLite la rivaluta riga per riga invece che per gruppo, e sui dati veri — allora 299.367 serie, 86 righe in classifica — la stessa pagina passa da **0,01 s a 31 s**. `Min("workout__started_at")` è un aggregato nella stessa passata, non cambia nessuna altra regola, e resta spiegabile: a parità di forza relativa sta sopra chi quell'esercizio lo pratica da più tempo. Misurato in #76.
 
 Due dettagli del frammento originale, corretti scrivendolo: l'`output_field` va **sull'espressione** (`ExpressionWrapper`) e non come argomento di `annotate()`, dove sarebbe una seconda annotazione di nome `output_field`; e i campi dell'utente escono **rinominati**, perché `workout__user__is_synthetic` in un template è una chiave e non un attributo, e il partial dell'«utente dimostrativo» non riuscirebbe a leggerlo.
 

@@ -8,7 +8,7 @@ Tre sorgenti, tre ruoli distinti.
 |---|---|---|---|
 | **Catalogo** | 100 esercizi, 23 muscoli, 6 gruppi, 9 attrezzi | Sì, `data/catalog/` | Il dominio |
 | **Storico reale** | 15 sessioni, 317 serie, 26 giorni | **No**, `.gitignore` | Provare l'import, tarare il realismo |
-| **Popolazione sintetica** | 100 utenti, 299.367 serie | **No**, si rigenera | Percentili, classifiche, training del ML |
+| **Popolazione sintetica** | 100 utenti, 296.724 serie | **No**, si rigenera | Percentili, classifiche, training del ML |
 
 ## Catalogo — già fatto
 
@@ -54,13 +54,13 @@ L'**archetipo** (principiante, intermedio, incostante, avanzato, abbandono) vive
 | Misura | Valore | Requisito di |
 |---|---|---|
 | Utenti | 100 | — |
-| Allenamenti | 11.916 | — |
-| Serie | **299.367** | — |
-| Storico per utente | 0,5 – 17,8 mesi, **4 utenti sotto i 21 giorni apposta** | #17 (lo stato «dati insufficienti» va dimostrato) |
+| Allenamenti | 11.855 | — |
+| Serie | **296.724** | — |
+| Storico per utente | 0,5 – 24,0 mesi, **4 utenti sotto i 21 giorni apposta** e l'utente della demo a **24 mesi dichiarati** | #17 (lo stato «dati insufficienti» va dimostrato) |
 | Esercizi core | 22, **tutti sopra i 20 utenti** | #16 (soglia del percentile) |
-| Voti per scheda pubblica | mediana **10** | #33 (mediana ≥ 8) |
+| Voti per scheda pubblica | mediana **12** | #33 (mediana ≥ 8) |
 | Finestre etichettabili | ≥ 1500 | #17 |
-| Quota `stallo` | **30,1%** con orizzonte a 6 | #17, dopo l'emendamento |
+| Quota `stallo` | **31,0%** con orizzonte a 6 | #17, dopo l'emendamento |
 
 La concentrazione sugli esercizi core non è un dettaglio: spargere 100 utenti su 100 esercizi significherebbe **zero esercizi sopra la soglia**, cioè nessun percentile e nessuna classifica in tutta la demo.
 
@@ -78,7 +78,7 @@ Rieseguire il comando su un database già popolato **non** è idempotente come `
 
 ### L'utente della demo
 
-**`demo064` — Martina Longo**, scelto in anticipo come voleva #17: 17 mesi di storico, 1199 finestre etichettabili. È su questo account che si dimostra la pagina dello stallo, perché quello di Lorenzo è troppo corto.
+**`demo064` — Martina Longo**, scelto in anticipo come voleva #17: **24 mesi** di storico e **1904 finestre etichettabili**. I due anni sono dichiarati in `DEMO_MONTHS` invece che sorteggiati — prima ne aveva 17,2, e li aveva per caso. È su questo account che si dimostra la pagina dello stallo, perché quello di Lorenzo è troppo corto.
 
 ## Ordine di caricamento
 

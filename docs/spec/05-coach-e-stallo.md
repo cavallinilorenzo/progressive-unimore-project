@@ -85,7 +85,7 @@ La via scelta è l'**etichetta dal futuro**: una finestra è `stallo` se nelle s
 | Orizzonte futuro | **6 sessioni** ⚠️ |
 | Tolleranza | **2%** sul massimo di finestra |
 
-> ⚠️ **L'orizzonte era 4 sessioni nel ticket #17.** È stato portato a **6** e ratificato in #20 — vedi l'emendamento in coda ad [ADR-0004](../adr/0004-ground-truth-dello-stallo-dal-futuro-della-finestra.md). Con 4 la quota di `stallo` non era portabile nella banda 15–35% (74,8% → 58,3% → 45,1%); con 6 va al **30,1%** senza toccare un parametro del generatore. **Usare 6.**
+> ⚠️ **L'orizzonte era 4 sessioni nel ticket #17.** È stato portato a **6** e ratificato in #20 — vedi l'emendamento in coda ad [ADR-0004](../adr/0004-ground-truth-dello-stallo-dal-futuro-della-finestra.md). Con 4 la quota di `stallo` non era portabile nella banda 15–35% (74,8% → 58,3% → 45,1%); con 6 va al **31,0%** senza toccare un parametro del generatore. **Usare 6.**
 
 Finestra doppia perché solo le sessioni non bastano (quattro sedute in cinque giorni sono un microciclo, non uno stallo) e solo i giorni è peggio (un mese senza panca è assenza, non stallo).
 
@@ -139,4 +139,4 @@ E il coach **non tace**: quando non può valutare lo stallo dà il consiglio non
 
 ### Vincolo per la demo
 
-Lo storico reale di Lorenzo (26 giorni, nessun esercizio oltre 8 sessioni) **è troppo corto** per superare la soglia. La pagina dello stallo si dimostra su un **utente sintetico**, già scelto e nominato: **`demo064` — Martina Longo**, 17 mesi di storico, 1199 finestre etichettabili.
+Lo storico reale di Lorenzo (26 giorni, nessun esercizio oltre 8 sessioni) **è troppo corto** per superare la soglia. La pagina dello stallo si dimostra su un **utente sintetico**, già scelto e nominato: **`demo064` — Martina Longo**, **24 mesi** di storico e **1904 finestre etichettabili**.

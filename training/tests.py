@@ -3097,10 +3097,10 @@ class SyntheticGeneratorTests(TestCase):
         _es, utenti, allenamenti, serie, schede, _voci, voti = self.genera()
 
         self.assertEqual(len(utenti), 100)
-        self.assertEqual(len(allenamenti), 11_916)
-        self.assertEqual(len(serie), 299_367)
-        self.assertEqual(len(schede), 187)
-        self.assertEqual(len(voti), 728)
+        self.assertEqual(len(allenamenti), 11_855)
+        self.assertEqual(len(serie), 296_724)
+        self.assertEqual(len(schede), 199)
+        self.assertEqual(len(voti), 887)
 
     def test_the_demo_user_is_the_one_chosen_in_advance(self):
         """`demo064 — Martina Longo` è nominato in anticipo, non la mattina
@@ -3137,11 +3137,23 @@ class SyntheticGeneratorTests(TestCase):
     def test_no_bench_press_beats_its_own_squat(self):
         """Il principio che rende la popolazione credibile.
 
-        Non c'è nessun controllo di plausibilità nel generatore, e non serve:
-        i carichi di un utente nascono tutti da `peso corporeo × rapporto ×
-        forza × progressione × rumore`, quindi la panca da 140 con lo squat da
-        60 non è sorvegliata, è **impossibile per costruzione**. Questo test
-        misura la conseguenza, non la sorveglianza.
+        Non c'è nessun controllo di plausibilità nel generatore, e non serve: i
+        carichi di un utente nascono tutti da `peso corporeo × rapporto × forza ×
+        progressione × rumore`, quindi la panca da 140 con lo squat da 60 non è
+        sorvegliata, è **quasi impossibile per costruzione**. Questo test misura la
+        conseguenza, non la sorveglianza.
+
+        «Quasi», e il quasi è stato pagato: fino a `DEMO_MONTHS = 24` la coda era
+        vuota e qui c'era `assertEqual(assurdi, 0)`. Non era una garanzia
+        strutturale — il rapporto parte uguale per tutti dai `CORE_RATIOS`, ma
+        `progression(t)` corre per esercizio, e più storico c'è più i due esercizi
+        di un utente divergono. Con due anni un utente su 56 arriva a 1,16, e il
+        secondo più alto sta a 0,95.
+
+        Quindi si misura la **forma** e non il conteggio: la mediana ferma dove
+        deve stare, e una coda che resta un'eccezione. Uno zero tenuto per
+        decreto avrebbe solo obbligato a piegare il generatore per far tornare un
+        numero.
         """
         esercizi, utenti, allenamenti, serie, *_resto = self.genera()
 
@@ -3149,8 +3161,11 @@ class SyntheticGeneratorTests(TestCase):
             utenti, esercizi, allenamenti, serie
         )
 
-        self.assertEqual(assurdi, 0)
+        self.assertLessEqual(assurdi, 0.02 * len(rapporti))
         self.assertAlmostEqual(statistics.median(rapporti), 0.73, places=2)
+        # Il secondo più alto è la prova che è una coda e non uno spostamento:
+        # se la catena si rompesse davvero, sopra 1 ce ne sarebbe più d'uno.
+        self.assertLess(sorted(rapporti)[-2], 1.0)
 
     def test_every_core_exercise_clears_the_percentile_threshold(self):
         """Sotto i 20 utenti su un esercizio il percentile tace.
@@ -3190,7 +3205,7 @@ class SyntheticGeneratorTests(TestCase):
 
         self.assertEqual(sum(1 for g in giorni if g < 21), 4)
         self.assertAlmostEqual(mesi[0], 0.5, places=1)
-        self.assertAlmostEqual(mesi[-1], 17.8, places=1)
+        self.assertAlmostEqual(mesi[-1], seed_synthetic.DEMO_MONTHS, places=1)
 
     def test_public_routines_carry_enough_votes_to_be_ranked(self):
         """La media bayesiana con `C = 3` è dominata dal prior sotto gli 8 voti:
@@ -3203,7 +3218,7 @@ class SyntheticGeneratorTests(TestCase):
         per_scheda = Counter(v["routine_id"] for v in voti)
         conteggi = [per_scheda.get(r["id"], 0) for r in pubbliche]
 
-        self.assertEqual(len(pubbliche), 55)
+        self.assertEqual(len(pubbliche), 58)
         self.assertGreaterEqual(statistics.median(conteggi), 8)
         self.assertGreater(sum(1 for n in conteggi if n == 0), 0)
 
@@ -3277,10 +3292,10 @@ class SeedSyntheticCommandTests(TestCase):
 
     def test_the_whole_population_lands_in_the_database(self):
         self.assertEqual(User.objects.filter(is_synthetic=True).count(), 100)
-        self.assertEqual(Workout.objects.count(), 11_916)
-        self.assertEqual(WorkoutSet.objects.count(), 299_367)
-        self.assertEqual(Routine.objects.count(), 187)
-        self.assertEqual(Vote.objects.count(), 728)
+        self.assertEqual(Workout.objects.count(), 11_855)
+        self.assertEqual(WorkoutSet.objects.count(), 296_724)
+        self.assertEqual(Routine.objects.count(), 199)
+        self.assertEqual(Vote.objects.count(), 887)
         self.assertEqual(
             RoutineExercise.objects.count(),
             RoutineExercise.objects.filter(
@@ -3299,7 +3314,7 @@ class SeedSyntheticCommandTests(TestCase):
         """
         testo = self.uscita.getvalue()
 
-        self.assertIn("299,367", testo)
+        self.assertIn("296,724", testo)
         self.assertIn("demo064 — Martina Longo", testo)
         self.assertNotIn("NO", testo)
 

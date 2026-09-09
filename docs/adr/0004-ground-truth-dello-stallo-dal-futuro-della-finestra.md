@@ -31,8 +31,8 @@ La causa non è il generatore, ed è per questo che l'emendamento tocca l'ADR e 
 1. **Indistinguibilità reale.** Misurata su serie storiche pure, sotto lo **0,5% di crescita a sessione** uno stallo e una crescita vera non sono separabili — e un atleta intermedio cresce esattamente in quella fascia. Nessuna soglia poteva salvarlo.
 2. **Distorsione strutturale del confronto.** Il massimo di una finestra di **6** sessioni veniva confrontato col massimo delle **4** successive: meno estrazioni a destra, quindi un massimo atteso più basso, quindi un bias sistematico *a favore* dell'etichetta `stallo`. Il confronto era truccato dalla sua stessa forma.
 
-**Ratificato: l'orizzonte futuro è di 6 sessioni**, tolleranza invariata al 2%. Risultato misurato: `stallo` al **30,1%**, dentro la banda, senza toccare un solo parametro del generatore.
+**Ratificato: l'orizzonte futuro è di 6 sessioni**, tolleranza invariata al 2%. Risultato misurato: `stallo` al **31,0%**, dentro la banda, senza toccare un solo parametro del generatore. (Era 30,1% prima che l'utente della demo passasse a 24 mesi dichiarati: la misura è stata **rifatta**, non estrapolata, ed è rimasta dentro la banda.)
 
 Non è solo un numero che torna. Su un esercizio allenato circa 1,5 volte a settimana, sei sessioni sono **un mese** di calendario invece di tre settimane, e «in un mese non ho superato il mio massimo» è una definizione di stallo più difendibile — all'orale e per l'utente — di quanto lo fosse la precedente.
 
-**Conseguenza:** la coda non etichettabile di ogni serie storica si allunga da 4 a 6 sessioni. Il dataset di training si riduce ulteriormente, ed è il prezzo accettato: #18 ha comunque verificato ≥ 1500 finestre etichettabili sulla popolazione da 100 utenti.
+**Conseguenza:** la coda non etichettabile di ogni serie storica si allunga da 4 a 6 sessioni. Il dataset di training si riduce ulteriormente, ed è il prezzo accettato: #18 ha comunque verificato ≥ 1500 finestre etichettabili sulla popolazione da 100 utenti — ri-misurate a 26.948 dopo il passaggio dell'utente della demo a 24 mesi.
