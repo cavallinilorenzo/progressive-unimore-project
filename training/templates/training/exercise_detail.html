@@ -1,18 +1,21 @@
 {% extends "base.html" %}
 {% comment %}
-La pagina del singolo esercizio. La spec la chiama «la pagina più densa del
-progetto», ed è vero — ma di quella densità qui non c'è ancora niente:
-progressione del massimale, PR, percentile, stato di stallo, consiglio di
-carico e classifica ridotta sono fase 2 e 3 (`docs/spec/04-analisi.md`).
+La pagina del singolo esercizio, e la più densa del progetto: tre delle sei
+analisi stanno qui (`docs/spec/04-analisi.md`).
 
-In fase 1 questa pagina porta l'anagrafica e lo STORICO GREZZO delle serie
-dell'utente su questo esercizio: il dato su cui quelle analisi si costruiranno,
-mostrato senza interpretarlo. Un numero calcolato a metà sarebbe peggio di un
-numero assente, perché all'orale sembrerebbe l'analisi finita.
+L'ORDINE È LA RISPOSTA. Prima il record e il percentile, che sono due numeri e
+si leggono in un secondo; poi la progressione, che è la storia da cui quei due
+numeri escono; poi lo storico grezzo, che è il dato. Chi apre questa pagina
+vuole sapere se sta migliorando, non leggere una tabella.
 
-Il riquadro «in arrivo» in coda non è un segnaposto decorativo: dice cosa
-mancherà di vedere a chi apre la pagina oggi, invece di lasciar credere che
-questo sia tutto ciò che la pagina sarà.
+UN SOLO GRAFICO. Percentile e PR restano numeri: un percentile disegnato
+sarebbe una figura da un punto. È la stessa regola per cui `/analisi/` ha due
+figure e non sei.
+
+Ogni analisi che non può rispondere DICE IL MOTIVO invece di sparire. Un
+riquadro assente si legge come una pagina rotta; un riquadro che spiega di non
+avere abbastanza dati è un'informazione — ed è la ragione per cui il percentile
+sotto soglia tace ad alta voce.
 {% endcomment %}
 
 {% block title %}{{ esercizio.name }} — Progressive{% endblock %}
@@ -51,6 +54,166 @@ questo sia tutto ciò che la pagina sarà.
     </div>
   </div>
 </div>
+
+{% comment %}
+A4 e A5 in cima, i due numeri: il record è il proprio passato, il percentile è
+il confronto con gli altri. Due riquadri affiancati perché sono la stessa
+domanda posta a due popolazioni diverse.
+{% endcomment %}
+<div class="row g-3 mb-4">
+
+  <div class="col-12 col-md-6">
+    <div class="card-ink p-3 h-100">
+      <div class="eyebrow mb-2" style="color:var(--volt)">Il tuo record</div>
+      {% if record %}
+      <div class="h3 fw-bold mb-1">{{ record.massimale|floatformat:"1" }} kg</div>
+      <div style="color:var(--t2);font-size:.88rem">
+        {% comment %}
+        La data e non solo il numero: un record di due anni fa e uno di martedì
+        scorso sono due situazioni diverse, e qui costa zero query — esce dalle
+        stesse righe della progressione. Con quale serie sia stato fatto lo
+        dice lo storico qui sotto.
+        {% endcomment %}
+        massimale stimato, il {{ record.quando|date:"j F Y" }}
+      </div>
+      <div class="eyebrow mt-2" style="color:var(--t3)">
+        su {{ record.sessioni }} session{{ record.sessioni|pluralize:"e,i" }} utili
+      </div>
+      {% else %}
+      <div class="h3 fw-bold mb-1" style="color:var(--t3)">&mdash;</div>
+      <div style="color:var(--t2);font-size:.88rem">
+        {% if ha_storico %}
+        Hai allenato questo esercizio, ma mai sotto le {{ tetto_ripetizioni }}
+        ripetizioni: sopra quella soglia la stima del massimale gonfia, quindi
+        quelle serie contano nel volume e non nel record.
+        {% else %}
+        Nessuna serie di lavoro su questo esercizio: il record compare da solo
+        appena ne registri una.
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  <div class="col-12 col-md-6">
+    <div class="card-ink p-3 h-100">
+      <div class="eyebrow mb-2" style="color:var(--volt)">Fra gli altri</div>
+      {% comment %}
+      A5. I tre silenzi non sono errori, sono la risposta — e ognuno dice una
+      cosa diversa da fare. Senza peso corporeo manca il denominatore della
+      forza relativa (ADR-0008) e si va al profilo; sotto soglia il numero
+      sarebbe formalmente corretto e informativamente falso; senza serie utili
+      manca il proprio dato, non quello degli altri.
+      {% endcomment %}
+      {% if percentile.stato == "ok" %}
+      {% comment %}
+      Il caso del primo posto ha una frase sua: `PERCENT_RANK` sulla riga più
+      alta vale esattamente 1, e «sei più forte del 100% degli altri» è vero ma
+      si legge come un arrotondamento sbagliato. Chi è primo va detto primo.
+      {% endcomment %}
+      {% if percentile.percentile == 100 %}
+      <div class="h3 fw-bold mb-1">1&deg;</div>
+      <div style="color:var(--t2);font-size:.88rem">
+        Sei il più forte su questo esercizio, a parità di peso corporeo
+        ({{ percentile.relativa|floatformat:"2" }}&times; il tuo peso).
+      </div>
+      {% else %}
+      <div class="h3 fw-bold mb-1">{{ percentile.percentile }}%</div>
+      <div style="color:var(--t2);font-size:.88rem">
+        Sei più forte del {{ percentile.percentile }}% degli altri che si
+        allenano su questo esercizio, a parità di peso corporeo
+        ({{ percentile.relativa|floatformat:"2" }}&times; il tuo peso).
+      </div>
+      {% endif %}
+      <div class="eyebrow mt-2" style="color:var(--t3)">
+        su {{ percentile.n_utenti }} utenti confrontabili
+      </div>
+      {% elif percentile.stato == "senza_peso" %}
+      <div class="h3 fw-bold mb-1" style="color:var(--t3)">&mdash;</div>
+      <div style="color:var(--t2);font-size:.88rem">
+        La forza relativa è il massimale diviso il peso corporeo: senza il tuo
+        peso il confronto non ha un denominatore.
+        <a href="{% url 'training:profile' %}" style="color:var(--volt)">Dichiaralo dal profilo</a>.
+      </div>
+      {% elif percentile.stato == "popolazione_insufficiente" %}
+      <div class="h3 fw-bold mb-1" style="color:var(--t3)">&mdash;</div>
+      <div style="color:var(--t2);font-size:.88rem">
+        Su questo esercizio ci sono {{ percentile.n_utenti }} utent{{ percentile.n_utenti|pluralize:"e,i" }}
+        confrontabil{{ percentile.n_utenti|pluralize:"e,i" }}, sotto i
+        {{ percentile.soglia }} che servono. Un percentile calcolato su così
+        poche persone sarebbe esatto e falso insieme, quindi non lo mostriamo.
+      </div>
+      {% else %}
+      <div class="h3 fw-bold mb-1" style="color:var(--t3)">&mdash;</div>
+      <div style="color:var(--t2);font-size:.88rem">
+        Gli altri ci sono ({{ percentile.n_utenti }} utenti confrontabili), il
+        tuo dato no: serve almeno una serie sotto le {{ tetto_ripetizioni }}
+        ripetizioni.
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+
+{% if ha_serie_utili %}
+{% comment %}
+A3. Il grafico porta tutta la storia e non un ritaglio recente: il massimo
+cumulativo è un record DI SEMPRE, e tagliarlo con un filtro lo farebbe
+ripartire dal taglio — sulla panca piana il taglio a un anno mostrerebbe 108,5
+al posto del record vero di 143,3, senza un errore (#98).
+{% endcomment %}
+<div class="card-ink p-3 mb-4">
+  <div class="d-flex align-items-baseline justify-content-between mb-3">
+    <div class="eyebrow">Progressione del massimale</div>
+    <div class="eyebrow" style="color:var(--t2)">tutte le {{ progressione|length }} sessioni</div>
+  </div>
+  {% include "training/_grafico.html" with dati=grafico_progressione id="dati-progressione" altezza=300 %}
+
+  {% comment %}
+  La tabella dei salti è il consumo di `Lag`: senza, la seconda finestra di A3
+  sarebbe una tecnica calcolata e mai mostrata. Ordine dal più recente, lo
+  stesso dello storico grezzo qui sotto — due tabelle adiacenti con l'ordine
+  opposto si leggono come un errore.
+  {% endcomment %}
+  <table class="table table-sm align-middle mb-0 mt-3">
+    <thead>
+      <tr class="eyebrow">
+        <th scope="col">Sessione</th>
+        <th scope="col">Massimale stimato</th>
+        <th scope="col">Sulla precedente</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for riga in salti %}
+      <tr>
+        <td style="color:var(--t2)">{{ riga.quando|date:"j M Y" }}</td>
+        <td>
+          {{ riga.massimale|floatformat:"1" }} kg
+          {% if riga.nuovo_record %}<span class="eyebrow ms-2" style="color:var(--volt)">nuovo record</span>{% endif %}
+        </td>
+        <td style="color:{% if riga.salto > 0 %}var(--volt){% else %}var(--t2){% endif %}">
+          {% if riga.salto is None %}
+          <span style="color:var(--t3)">prima sessione</span>
+          {% else %}
+          {% if riga.salto > 0 %}+{% endif %}{{ riga.salto|floatformat:"1" }} kg
+          {% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="mt-3 eyebrow" style="color:var(--t3);line-height:1.7">
+    Il massimale è stimato con <span style="color:var(--t2)">Epley</span> sul
+    carico effettivo, e solo sulle serie fino a
+    <span style="color:var(--t2)">{{ tetto_ripetizioni }} ripetizioni</span>:
+    sopra, la formula gonfia. Una serie da quindici resta nel volume e non
+    concorre al record. Ogni punto è la sessione, non la serie: di ogni
+    allenamento conta il tentativo migliore.
+  </div>
+</div>
+{% endif %}
 
 <div class="card-ink p-3 mb-4">
   <div class="eyebrow mb-2" style="color:var(--volt)">Le tue serie</div>
@@ -126,16 +289,29 @@ classifica è una cosa che di quell'esercizio si vuole sapere.
 </div>
 {% endif %}
 
+{% comment %}
+Il riquadro resta, ma dice molto meno: progressione, record e percentile ora ci
+sono. Quello che manca è fase 3, il coach — e dichiararlo qui è più onesto che
+lasciar credere che la pagina abbia già letto la progressione al posto tuo.
+{% endcomment %}
 <div class="card-ink p-3">
   <div class="rail">
     <div class="eyebrow mb-1">Cosa arriva qui</div>
     <div style="color:var(--t2);font-size:.88rem">
-      Questa diventerà la storia dell'esercizio: progressione del massimale
-      stimato, record personali, il tuo percentile fra gli utenti, e lo stato
-      di stallo col consiglio di carico. Sono il motore analitico, e arrivano
-      dopo: prima serve il dato qui sopra.
+      La progressione dice come sei andato; non dice ancora <em>cosa fare la
+      prossima volta</em>. Il rilevamento dello stallo e il consiglio di carico
+      leggono questa stessa curva e arrivano dopo.
     </div>
   </div>
 </div>
 
+{% endblock %}
+
+{% block scripts %}
+{% comment %}
+Chart.js entra qui e non in `base.html`, la convenzione lasciata da #99: i
+grafici sono tre su una ventina di pagine. Solo quando c'è un canvas da
+disegnare — senza serie utili la libreria si scaricherebbe per non fare niente.
+{% endcomment %}
+{% if ha_serie_utili %}{% include "training/_grafici_js.html" %}{% endif %}
 {% endblock %}

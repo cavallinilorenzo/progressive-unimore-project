@@ -15,7 +15,7 @@ import shutil
 import statistics
 import tempfile
 from collections import Counter
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from io import BytesIO, StringIO
 from pathlib import Path
@@ -39,6 +39,7 @@ from django.utils import timezone
 from training import rankings, views
 from training.analytics import costanza as analytics_costanza
 from training.analytics import muscles as analytics_muscles
+from training.analytics import progressione as analytics_progressione
 from training.analytics import volume as analytics_volume
 from training.exporter import (
     INTESTAZIONE_SERIE,
@@ -54,7 +55,7 @@ from training.importer import (
     scrivi,
 )
 from training.forms import VoteForm
-from training.querysets import CORPO_LIBERO, VOLUME
+from training.querysets import CORPO_LIBERO, MAX_REPS_FOR_1RM, VOLUME
 from training.management.commands import seed_synthetic
 from training.models import (
     Equipment,
@@ -1367,10 +1368,12 @@ class AnalysisPageTests(TestCase):
         """
         self.serie(self.settimane[-1])
 
-        righe = analytics_volume.volume_per_settimana(self.user, self.settimane)
+        righe = analytics_volume.volume_nel_tempo(
+            self.user, analytics_volume.SETTIMANA, self.settimane
+        )
 
         self.assertEqual(len(righe), analytics_volume.SETTIMANE_DI_DEFAULT)
-        self.assertEqual([riga["settimana"] for riga in righe], self.settimane)
+        self.assertEqual([riga["periodo"] for riga in righe], self.settimane)
 
     def test_a_skipped_week_is_a_zero_and_not_a_missing_row(self):
         """Il cuore del ticket.
@@ -1383,7 +1386,9 @@ class AnalysisPageTests(TestCase):
         self.serie(self.settimane[-4], weight="100", reps=10)
         self.serie(self.settimane[-1], weight="100", reps=10)
 
-        righe = analytics_volume.volume_per_settimana(self.user, self.settimane)
+        righe = analytics_volume.volume_nel_tempo(
+            self.user, analytics_volume.SETTIMANA, self.settimane
+        )
         volumi = [riga["volume"] for riga in righe]
 
         self.assertEqual(volumi[-4], 1000.0)
@@ -1418,7 +1423,9 @@ class AnalysisPageTests(TestCase):
                 set_type=WorkoutSet.SetType.WORKING, is_completed=True,
             )
 
-        righe = analytics_volume.volume_per_settimana(self.user, self.settimane)
+        righe = analytics_volume.volume_nel_tempo(
+            self.user, analytics_volume.SETTIMANA, self.settimane
+        )
 
         self.assertEqual(righe[-1]["volume"], 3000.0)
 
@@ -1426,7 +1433,9 @@ class AnalysisPageTests(TestCase):
         """Tredici settimane fa è fuori, e non deve rientrare dalla porta di servizio."""
         self.serie(self.settimane[0] - timedelta(weeks=1))
 
-        righe = analytics_volume.volume_per_settimana(self.user, self.settimane)
+        righe = analytics_volume.volume_nel_tempo(
+            self.user, analytics_volume.SETTIMANA, self.settimane
+        )
 
         self.assertEqual([riga["volume"] for riga in righe], [0.0] * 12)
 
@@ -1442,7 +1451,9 @@ class AnalysisPageTests(TestCase):
         """
         self.serie(self.settimane[-1], exercise=self.trazioni, reps=8, weight="0")
 
-        righe = analytics_volume.volume_per_settimana(self.user, self.settimane)
+        righe = analytics_volume.volume_nel_tempo(
+            self.user, analytics_volume.SETTIMANA, self.settimane
+        )
 
         self.assertEqual(righe[-1]["volume"], 640.0)
         self.assertEqual(
@@ -1461,7 +1472,9 @@ class AnalysisPageTests(TestCase):
         )
         self.serie(self.settimane[-1], reps=10, weight="900", is_completed=False)
 
-        righe = analytics_volume.volume_per_settimana(self.user, self.settimane)
+        righe = analytics_volume.volume_nel_tempo(
+            self.user, analytics_volume.SETTIMANA, self.settimane
+        )
 
         self.assertEqual(righe[-1]["volume"], 1000.0)
 
@@ -1469,7 +1482,9 @@ class AnalysisPageTests(TestCase):
         """Una pagina personale che sommasse tutti sarebbe una fuga di dati muta."""
         self.serie(self.settimane[-1], user=self.dormiente, reps=10, weight="100")
 
-        righe = analytics_volume.volume_per_settimana(self.user, self.settimane)
+        righe = analytics_volume.volume_nel_tempo(
+            self.user, analytics_volume.SETTIMANA, self.settimane
+        )
 
         self.assertEqual([riga["volume"] for riga in righe], [0.0] * 12)
 
@@ -1485,7 +1500,9 @@ class AnalysisPageTests(TestCase):
         """
         self.serie(self.settimane[-1], exercise=self.panca, reps=10, weight="100")
 
-        righe = analytics_volume.volume_per_gruppo(self.user, self.settimane)
+        righe = analytics_volume.volume_per_gruppo(
+            self.user, analytics_volume.SETTIMANA, self.settimane
+        )
 
         self.assertEqual(len(righe), 6)
         self.assertEqual(righe[0], {"gruppo": "Petto", "codice": "chest", "volume": 1000.0, "ordine": 1})
@@ -1500,7 +1517,9 @@ class AnalysisPageTests(TestCase):
         self.serie(self.settimane[-1], exercise=self.panca, reps=10, weight="50")
         self.serie(self.settimane[-1], exercise=self.trazioni, reps=10, weight="20")
 
-        righe = analytics_volume.volume_per_gruppo(self.user, self.settimane)
+        righe = analytics_volume.volume_per_gruppo(
+            self.user, analytics_volume.SETTIMANA, self.settimane
+        )
 
         self.assertEqual([riga["gruppo"] for riga in righe[:2]], ["Schiena", "Petto"])
         self.assertEqual(
@@ -1520,11 +1539,15 @@ class AnalysisPageTests(TestCase):
 
         totale_a1 = sum(
             riga["volume"]
-            for riga in analytics_volume.volume_per_settimana(self.user, self.settimane)
+            for riga in analytics_volume.volume_nel_tempo(
+            self.user, analytics_volume.SETTIMANA, self.settimane
+        )
         )
         totale_a2 = sum(
             riga["volume"]
-            for riga in analytics_volume.volume_per_gruppo(self.user, self.settimane)
+            for riga in analytics_volume.volume_per_gruppo(
+            self.user, analytics_volume.SETTIMANA, self.settimane
+        )
         )
 
         self.assertEqual(totale_a1, 1000.0)
@@ -1560,12 +1583,12 @@ class AnalysisPageTests(TestCase):
         response = self.client.get(reverse("training:analysis"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'id="dati-volume-settimane"')
+        self.assertContains(response, 'id="dati-volume-periodi"')
         self.assertContains(response, 'id="dati-volume-gruppi"')
-        self.assertContains(response, 'data-grafico="dati-volume-settimane"')
+        self.assertContains(response, 'data-grafico="dati-volume-periodi"')
         self.assertContains(response, 'data-grafico="dati-volume-gruppi"')
 
-        payload = self.payload(response, "dati-volume-settimane")
+        payload = self.payload(response, "dati-volume-periodi")
         self.assertEqual(payload["tipo"], "line")
         self.assertEqual(len(payload["valori"]), 12)
         self.assertEqual(payload["valori"][-1], 1000.0)
@@ -1625,7 +1648,7 @@ class AnalysisPageTests(TestCase):
 
         self.assertTrue(response.context["ha_dati_in_assoluto"])
         self.assertFalse(response.context["ha_dati_in_finestra"])
-        self.assertContains(response, "Niente in queste")
+        self.assertContains(response, "Niente in 12 settimane")
         self.assertNotContains(response, "Non c'è ancora niente da analizzare")
 
     def test_the_page_declares_that_a_missing_body_mass_makes_the_volume_partial(self):
@@ -1651,6 +1674,266 @@ class AnalysisPageTests(TestCase):
         self.assertContains(
             response, f'{reverse("training:exercise-list")}?gruppo=chest'
         )
+
+    # --- Il toggle settimana/mese, e i buchi sui mesi (#106) --------------
+    #
+    # Il taglio mensile ha **un** difetto in più di quello settimanale, ed è
+    # tutto il ticket: i mesi non hanno la stessa lunghezza, quindi la finestra
+    # non si costruisce a passo fisso e il riempimento dei buchi non può
+    # scivolare di un giorno senza che nessuno se ne accorga — un volume nel
+    # mese sbagliato si disegna esattamente come un volume nel mese giusto.
+    #
+    # Il resto sono i due modi in cui il toggle può rompere quello che c'era:
+    # A2 che smette di rispondere sulla finestra di A1, e il vuoto che manda
+    # allo storico chi bastava rimandare all'altro taglio.
+
+    def serie_il(self, giorno, exercise=None, reps=10, weight="100", user=None):
+        """Una serie di lavoro a mezzogiorno di una data **assoluta**.
+
+        La sorella di `serie()` per i test mensili, che ragionano su date di
+        calendario e non su offset dalla finestra. Mezzogiorno e non mezzanotte
+        per la stessa ragione di là: un istante lontano dai bordi rende il test
+        una prova sull'aggregazione, non sul fuso orario.
+        """
+        istante = timezone.make_aware(
+            timezone.datetime.combine(giorno, timezone.datetime.min.time())
+        ) + timedelta(hours=12)
+        allenamento = Workout.objects.create(
+            user=user or self.user, title="Sessione", started_at=istante
+        )
+        return WorkoutSet.objects.create(
+            workout=allenamento,
+            exercise=exercise or self.panca,
+            set_number=1,
+            reps=reps,
+            weight=Decimal(weight),
+            set_type=WorkoutSet.SetType.WORKING,
+            is_completed=True,
+        )
+
+    def test_the_monthly_window_counts_months_and_not_days(self):
+        """Dodici primi-del-mese, e il capodanno attraversato correttamente.
+
+        Il modo sbagliato di scrivere questa funzione è indietreggiare di 30
+        giorni per volta: su un anno l'errore si accumula in un paio di mesi, e
+        la finestra finirebbe per contenere due volte lo stesso mese senza mai
+        segnalare niente.
+        """
+        finestra = analytics_volume.finestra_mensile(oggi=date(2026, 3, 15))
+
+        self.assertEqual(len(finestra), 12)
+        self.assertEqual(finestra[-1], date(2026, 3, 1))
+        self.assertEqual(finestra[0], date(2025, 4, 1))
+        self.assertEqual({giorno.day for giorno in finestra}, {1})
+
+    def test_a_skipped_month_is_a_zero_and_not_a_missing_row(self):
+        """Il cuore del ticket, sul taglio che il ticket aggiunge.
+
+        `TruncMonth` ha lo stesso difetto di `TruncWeek` — restituisce solo i
+        mesi in cui esiste una serie — e su base mensile il buco pesa di più:
+        due punti adiacenti che in realtà distano un trimestre sono un anno di
+        allenamento raccontato come continuo.
+        """
+        finestra = analytics_volume.finestra_mensile(oggi=date(2026, 3, 15))
+        self.serie_il(date(2025, 12, 10))
+        self.serie_il(date(2026, 3, 10))
+
+        righe = analytics_volume.volume_nel_tempo(
+            self.user, analytics_volume.MESE, finestra
+        )
+        volumi = [riga["volume"] for riga in righe]
+
+        self.assertEqual(len(righe), 12)
+        self.assertEqual([riga["periodo"] for riga in righe], finestra)
+        self.assertEqual(volumi[-4], 1000.0)
+        self.assertEqual(volumi[-3:-1], [0.0, 0.0])
+        self.assertEqual(volumi[-1], 1000.0)
+
+    def test_months_of_different_lengths_do_not_shift_the_holes(self):
+        """Febbraio non sposta marzo, che è ciò che un passo fisso farebbe.
+
+        Tre mesi consecutivi di lunghezza diversa (31, 28, 31), con una serie
+        ciascuno e volumi distinti: se il riempimento allineasse per offset
+        invece che per data, i valori finirebbero nei punti sbagliati e i
+        totali resterebbero giusti — il guasto invisibile di questa famiglia.
+        """
+        finestra = analytics_volume.finestra_mensile(oggi=date(2026, 3, 20))
+        self.serie_il(date(2026, 1, 15), weight="10")
+        self.serie_il(date(2026, 2, 15), weight="20")
+        self.serie_il(date(2026, 3, 15), weight="30")
+
+        righe = analytics_volume.volume_nel_tempo(
+            self.user, analytics_volume.MESE, finestra
+        )
+
+        per_mese = {riga["periodo"]: riga["volume"] for riga in righe}
+        self.assertEqual(per_mese[date(2026, 1, 1)], 100.0)
+        self.assertEqual(per_mese[date(2026, 2, 1)], 200.0)
+        self.assertEqual(per_mese[date(2026, 3, 1)], 300.0)
+
+    def test_the_monthly_window_reaches_further_back_than_the_weekly_one(self):
+        """Il toggle deve *aggiungere* storia, o non varrebbe la pena.
+
+        Una serie di otto mesi fa è fuori dalle dodici settimane e dentro i
+        dodici mesi: se non lo fosse, i due tagli mostrerebbero la stessa cosa
+        con etichette diverse.
+        """
+        otto_mesi_fa = timezone.localdate() - timedelta(days=240)
+        self.serie_il(otto_mesi_fa)
+
+        settimanale = analytics_volume.volume_nel_tempo(
+            self.user, analytics_volume.SETTIMANA
+        )
+        mensile = analytics_volume.volume_nel_tempo(self.user, analytics_volume.MESE)
+
+        self.assertEqual(sum(riga["volume"] for riga in settimanale), 0.0)
+        self.assertEqual(sum(riga["volume"] for riga in mensile), 1000.0)
+
+    def test_the_two_analyses_share_the_window_on_the_monthly_cut_too(self):
+        """Il vincolo di #99 non è per il taglio settimanale, è per la pagina.
+
+        A2 spiega A1: se il toggle spostasse solo il grafico sopra, la
+        distribuzione sui gruppi resterebbe quella di dodici settimane e
+        starebbe sotto un grafico che parla di dodici mesi.
+        """
+        self.serie_il(timezone.localdate() - timedelta(days=200), weight="100")
+        self.serie_il(timezone.localdate(), exercise=self.trazioni, reps=8, weight="0")
+
+        totale_a1 = sum(
+            riga["volume"]
+            for riga in analytics_volume.volume_nel_tempo(
+                self.user, analytics_volume.MESE
+            )
+        )
+        totale_a2 = sum(
+            riga["volume"]
+            for riga in analytics_volume.volume_per_gruppo(
+                self.user, analytics_volume.MESE
+            )
+        )
+
+        self.assertEqual(totale_a1, 1000.0 + 640.0)
+        self.assertEqual(totale_a1, totale_a2)
+
+    def test_the_partial_point_is_declared_in_days_of_that_month(self):
+        """«Parziale» non basta su dodici mesi: si dice quanti giorni su quanti.
+
+        Il 2 del mese l'ultimo punto vale un trentesimo del periodo, e accanto
+        a undici mesi pieni si legge come un crollo dell'allenamento invece che
+        come un mese appena cominciato. E il denominatore è quello del mese
+        vero: febbraio ne ha 28, non 30.
+        """
+        febbraio = analytics_volume.finestra_mensile(oggi=date(2026, 2, 3))
+        parziale = analytics_volume.quanto_e_trascorso(
+            analytics_volume.MESE, febbraio, oggi=date(2026, 2, 3)
+        )
+
+        self.assertEqual(parziale, {"trascorsi": 3, "totali": 28})
+
+        # Sullo stesso giorno la settimana conta diversamente, ed è il punto:
+        # il 3 febbraio 2026 è un **martedì**, quindi il mese è al terzo giorno
+        # e la settimana al secondo. Due griglie diverse, due denominatori.
+        settimana = analytics_volume.finestra_settimanale(oggi=date(2026, 2, 3))
+        self.assertEqual(
+            analytics_volume.quanto_e_trascorso(
+                analytics_volume.SETTIMANA, settimana, oggi=date(2026, 2, 3)
+            ),
+            {"trascorsi": 2, "totali": 7},
+        )
+
+    def test_the_querystring_chooses_the_cut_and_a_bad_value_falls_back(self):
+        """Lo stato vive nell'URL, e un valore sconosciuto non è un 404.
+
+        La stessa regola dello slug fuori soglia sulla classifica di forza: una
+        domanda malposta ha una risposta legittima, che è la pagina di default.
+        """
+        self.serie(self.settimane[-1])
+
+        mese = self.client.get(reverse("training:analysis"), {"periodo": "mese"})
+        self.assertEqual(mese.context["taglio"], analytics_volume.MESE)
+        self.assertEqual(mese.context["taglio"].plurale, "mesi")
+
+        assurdo = self.client.get(
+            reverse("training:analysis"), {"periodo": "trimestre"}
+        )
+        self.assertEqual(assurdo.status_code, 200)
+        self.assertEqual(assurdo.context["taglio"], analytics_volume.SETTIMANA)
+
+        default = self.client.get(reverse("training:analysis"))
+        self.assertEqual(default.context["taglio"], analytics_volume.SETTIMANA)
+
+    def test_the_default_cut_has_no_parameter_in_its_link(self):
+        """Un indirizzo solo per la pagina di default, non due.
+
+        È la regola dei filtri del catalogo (#71): il default è l'**assenza**
+        del parametro, o `/analisi/` e `/analisi/?periodo=settimana` finirebbero
+        nei preferiti come due pagine diverse che mostrano la stessa cosa.
+        """
+        response = self.client.get(reverse("training:analysis"))
+
+        tagli = {scelta["chiave"]: scelta for scelta in response.context["tagli"]}
+        self.assertEqual(tagli["settimana"]["url"], reverse("training:analysis"))
+        self.assertEqual(
+            tagli["mese"]["url"], f"{reverse('training:analysis')}?periodo=mese"
+        )
+        self.assertTrue(tagli["settimana"]["attivo"])
+        self.assertFalse(tagli["mese"]["attivo"])
+        self.assertContains(response, 'href="/analisi/?periodo=mese"')
+
+    def test_the_monthly_chart_labels_carry_the_year(self):
+        """Su dodici mesi l'anno cambia in mezzo alla finestra.
+
+        Senza, la figura mostrerebbe due mesi di gennaio indistinguibili — ed è
+        proprio il taglio in cui si guarda una stagione intera.
+        """
+        self.serie(self.settimane[-1])
+
+        response = self.client.get(reverse("training:analysis"), {"periodo": "mese"})
+        payload = self.payload(response, "dati-volume-periodi")
+
+        self.assertEqual(len(payload["valori"]), 12)
+        self.assertEqual(payload["tipo"], "line")
+        # `mar 26` e non `3 mar`: due parole, la seconda di due cifre.
+        self.assertRegex(payload["etichette"][0], r"^\w+ \d{2}$")
+
+    def test_an_empty_window_offers_the_wider_cut_when_there_is_something_there(self):
+        """Il vuoto «fuori finestra» cambia significato col toggle.
+
+        Chi ha allenamenti di sei mesi fa è fuori dalle dodici settimane ma
+        dentro i dodici mesi: mandarlo allo storico sarebbe far uscire dalla
+        pagina qualcuno che la pagina poteva servire. L'alternativa si offre
+        **solo** dopo averla verificata, o sarebbe un link verso un secondo
+        vuoto.
+        """
+        self.serie_il(
+            timezone.localdate() - timedelta(days=180), user=self.dormiente
+        )
+        self.client.login(username="dormiente", password=PASSWORD)
+
+        response = self.client.get(reverse("training:analysis"))
+
+        self.assertFalse(response.context["ha_dati_in_finestra"])
+        self.assertTrue(response.context["altro_taglio_ha_dati"])
+        self.assertContains(response, "Guarda 12 mesi")
+
+    def test_an_empty_window_does_not_offer_a_cut_that_is_empty_too(self):
+        """Un link a un secondo vuoto sarebbe peggio di nessun link.
+
+        Due anni fa è fuori da entrambi i tagli, e sul taglio mensile l'altro è
+        quello settimanale, cioè **più stretto**: non c'è mai niente da
+        suggerire in quella direzione.
+        """
+        self.serie_il(
+            timezone.localdate() - timedelta(days=730), user=self.dormiente
+        )
+        self.client.login(username="dormiente", password=PASSWORD)
+
+        settimanale = self.client.get(reverse("training:analysis"))
+        self.assertFalse(settimanale.context["altro_taglio_ha_dati"])
+        self.assertContains(settimanale, "Vai allo storico")
+
+        mensile = self.client.get(reverse("training:analysis"), {"periodo": "mese"})
+        self.assertFalse(mensile.context["altro_taglio_ha_dati"])
 
 
 class TemplateCommentTests(TestCase):
@@ -2000,6 +2283,415 @@ class ExerciseDetailTests(TestCase):
 # natura diversa: i quattro verbi, la proprietà dell'oggetto (403 come per le
 # schede), e le regole che il database impone con un `IntegrityError` — cioè
 # con un 500 — se il form non le dice prima in italiano.
+
+
+class ExerciseAnalyticsTests(TestCase):
+    """A3, A4 e A5 — i numeri del dettaglio esercizio, provati sui numeri.
+
+    Le tre analisi si provano **sotto** la view, come le classifiche e come A1
+    e A2: ciò che va difeso qui sono un massimo cumulativo, una data e un
+    percentile, e leggerli dall'HTML vorrebbe dire testare il template ogni
+    volta che si vuole testare una divisione.
+
+    Metà di questi test guarda casi in cui il codice sbagliato **non solleva
+    niente**: un join che moltiplica le righe, un `GROUP BY` che spacca un
+    utente in cinque, una data di record presa dall'ultima volta invece che
+    dalla prima. Sono la regola 3 della mappa #96 — un'analisi sbagliata rende
+    comunque una pagina.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        gruppo = MuscleGroup.objects.create(
+            code="chest", label_it="Petto", sort_order=1
+        )
+        muscolo = Muscle.objects.create(
+            code="chestMid", group=gruppo, label_it="Petto medio", sort_order=1
+        )
+        bilanciere = Equipment.objects.create(
+            code="barbell", label_it="Bilanciere", sort_order=1
+        )
+        corpo_libero = Equipment.objects.create(
+            code=CORPO_LIBERO, label_it="Corpo libero", sort_order=2
+        )
+        cls.panca = Exercise.objects.create(
+            name="Panca piana", slug="panca-piana",
+            primary_muscle=muscolo, equipment=bilanciere,
+        )
+        cls.trazioni = Exercise.objects.create(
+            name="Trazioni", slug="trazioni",
+            primary_muscle=muscolo, equipment=corpo_libero,
+        )
+        cls.user = User.objects.create_user(
+            username="lorenzo", password=PASSWORD, body_mass_kg=Decimal("80")
+        )
+        cls.altra = User.objects.create_user(
+            username="martina", password=PASSWORD, body_mass_kg=Decimal("60")
+        )
+        cls.senza_peso = User.objects.create_user(
+            username="anonimo", password=PASSWORD
+        )
+
+    def setUp(self):
+        self.client.force_login(self.user)
+
+    def sessione(self, giorni_fa, carichi, reps=5, user=None, exercise=None):
+        """Un allenamento con una serie per ogni carico di `carichi`.
+
+        Più serie nella stessa sessione non sono un dettaglio del fixture: sono
+        il caso che distingue una query per allenamento da una query per serie.
+        """
+        allenamento = Workout.objects.create(
+            user=user or self.user,
+            title="Spinta",
+            started_at=timezone.now() - timedelta(days=giorni_fa),
+        )
+        for numero, carico in enumerate(carichi, start=1):
+            WorkoutSet.objects.create(
+                workout=allenamento,
+                exercise=exercise or self.panca,
+                set_number=numero,
+                reps=reps,
+                weight=Decimal(str(carico)),
+                set_type=WorkoutSet.SetType.WORKING,
+                is_completed=True,
+            )
+        return allenamento
+
+    def righe(self, exercise=None, user=None):
+        return list(
+            analytics_progressione.progressione(user or self.user, exercise or self.panca)
+        )
+
+    # --- A3: una riga per allenamento -------------------------------------
+
+    def test_three_sets_in_one_session_are_one_row_with_the_best_of_them(self):
+        """La trappola che il prototipo ha quasi pagato, e che non segnala niente.
+
+        Partire dal join a `sets` invece che da `pk__in` moltiplica
+        l'allenamento per il numero di serie: la query gira, il grafico si
+        disegna, e ogni sessione compare tre volte. Qui tre serie fanno **una**
+        riga, e il massimale è il tentativo migliore.
+        """
+        self.sessione(giorni_fa=1, carichi=[80, 100, 90])
+
+        righe = self.righe()
+
+        self.assertEqual(len(righe), 1)
+        self.assertAlmostEqual(righe[0]["massimale"], 100 * (1 + 5 / 30), places=4)
+
+    def test_the_running_max_never_goes_down_after_a_bad_session(self):
+        """Il senso stesso del massimo cumulativo.
+
+        Terza sessione più debole della seconda: il massimale di giornata
+        scende, il record no. Se scendesse, la pagina direbbe che il record si
+        perde stando fermi.
+        """
+        self.sessione(giorni_fa=30, carichi=[100])
+        self.sessione(giorni_fa=20, carichi=[120])
+        self.sessione(giorni_fa=10, carichi=[90])
+
+        record = [riga["record_a_quel_giorno"] for riga in self.righe()]
+
+        atteso = [100, 120, 120]
+        for ottenuto, carico in zip(record, atteso):
+            self.assertAlmostEqual(ottenuto, carico * (1 + 5 / 30), places=4)
+
+    def test_previous_is_the_session_before_and_is_empty_on_the_first(self):
+        """`Lag` — la finestra che dà il salto, e che sulla prima riga tace."""
+        self.sessione(giorni_fa=30, carichi=[100])
+        self.sessione(giorni_fa=20, carichi=[110])
+
+        righe = self.righe()
+
+        self.assertIsNone(righe[0]["precedente"])
+        self.assertAlmostEqual(righe[1]["precedente"], righe[0]["massimale"], places=4)
+
+    def test_sets_above_the_rep_cap_stay_out_of_the_progression(self):
+        """Il tetto a 12: sopra, Epley gonfia.
+
+        La stessa sessione ha una serie da 5 e una da 20 ripetizioni con un
+        carico più alto: il massimale deve uscire dalla prima. Senza il tetto,
+        la serie lunga vincerebbe e il record sarebbe un numero che nessuno ha
+        mai sollevato.
+        """
+        allenamento = self.sessione(giorni_fa=5, carichi=[100], reps=5)
+        WorkoutSet.objects.create(
+            workout=allenamento, exercise=self.panca, set_number=2,
+            reps=MAX_REPS_FOR_1RM + 8, weight=Decimal("110"),
+            set_type=WorkoutSet.SetType.WORKING, is_completed=True,
+        )
+
+        righe = self.righe()
+
+        self.assertEqual(len(righe), 1)
+        self.assertAlmostEqual(righe[0]["massimale"], 100 * (1 + 5 / 30), places=4)
+
+    def test_a_session_made_only_of_long_sets_is_not_in_the_progression(self):
+        self.sessione(giorni_fa=5, carichi=[100], reps=MAX_REPS_FOR_1RM + 3)
+
+        self.assertEqual(self.righe(), [])
+
+    def test_the_progression_is_mine_only(self):
+        self.sessione(giorni_fa=5, carichi=[200], user=self.altra)
+        self.sessione(giorni_fa=4, carichi=[100])
+
+        righe = self.righe()
+
+        self.assertEqual(len(righe), 1)
+        self.assertAlmostEqual(righe[0]["massimale"], 100 * (1 + 5 / 30), places=4)
+
+    def test_the_progression_is_a_single_sql_query(self):
+        """Le due finestre e la subquery stanno in **una** query.
+
+        È la ragione per cui la forma ibrida è stata scelta: la `Subquery`
+        correlata pura dava la stessa risposta e costava 320 volte tanto (#98).
+        """
+        for giorno in range(5):
+            self.sessione(giorni_fa=giorno, carichi=[100 + giorno])
+
+        with CaptureQueriesContext(connection) as query:
+            self.righe()
+
+        self.assertEqual(len(query.captured_queries), 1)
+
+    def test_the_bodyweight_load_includes_the_body_mass(self):
+        """ADR-0006 dentro A3: una trazione a corpo libero non pesa zero."""
+        self.sessione(giorni_fa=1, carichi=[0], exercise=self.trazioni)
+
+        righe = self.righe(exercise=self.trazioni)
+
+        self.assertAlmostEqual(righe[0]["massimale"], 80 * (1 + 5 / 30), places=4)
+
+    # --- A4: il record, e soprattutto la sua data -------------------------
+
+    def test_the_record_date_is_the_first_day_it_was_reached(self):
+        """Due sessioni allo stesso carico: il record è della prima.
+
+        Prendere l'ultima sarebbe un errore invisibile — il numero resterebbe
+        giusto, e la pagina racconterebbe che il record è di ieri quando è di
+        un anno fa. È esattamente il tipo di dato per cui la data è stata messa
+        accanto al numero.
+        """
+        self.sessione(giorni_fa=40, carichi=[120])
+        self.sessione(giorni_fa=20, carichi=[100])
+        self.sessione(giorni_fa=10, carichi=[120])
+
+        record = analytics_progressione.record_personale(self.righe())
+
+        self.assertAlmostEqual(record["massimale"], 120 * (1 + 5 / 30), places=4)
+        self.assertEqual(record["quando"].date(), (timezone.now() - timedelta(days=40)).date())
+        self.assertEqual(record["sessioni"], 3)
+
+    def test_there_is_no_record_without_useful_sets(self):
+        self.assertIsNone(analytics_progressione.record_personale([]))
+
+    def test_the_record_costs_no_extra_query(self):
+        """A4 sul dettaglio è A3 riletta, non una seconda domanda al database."""
+        self.sessione(giorni_fa=3, carichi=[100])
+        righe = self.righe()
+
+        with CaptureQueriesContext(connection) as query:
+            analytics_progressione.record_personale(righe)
+
+        self.assertEqual(len(query.captured_queries), 0)
+
+    # --- I salti: il consumo di `Lag` -------------------------------------
+
+    def test_a_new_record_is_marked_and_a_step_back_is_not(self):
+        self.sessione(giorni_fa=30, carichi=[100])
+        self.sessione(giorni_fa=20, carichi=[110])
+        self.sessione(giorni_fa=10, carichi=[105])
+
+        salti = analytics_progressione.salti(self.righe())
+
+        self.assertEqual([riga["nuovo_record"] for riga in salti], [False, True, False])
+        self.assertLess(salti[0]["salto"], 0)
+        self.assertGreater(salti[1]["salto"], 0)
+        self.assertIsNone(salti[2]["salto"])
+
+    # --- A5: il percentile, e i suoi tre silenzi --------------------------
+
+    def popolazione(self, quanti, exercise=None, con_peso=True, carico=50, prefisso="sintetico"):
+        """`quanti` utenti con una serie a testa sull'esercizio.
+
+        Il prefisso serve ai test che chiamano due volte questo aiutante — con
+        peso e senza — e che altrimenti si scontrerebbero sull'unicità dello
+        username invece di provare quello che vogliono provare.
+        """
+        for indice in range(quanti):
+            utente = User.objects.create_user(
+                username=f"{prefisso}{indice}",
+                password=PASSWORD,
+                body_mass_kg=Decimal("70") if con_peso else None,
+            )
+            self.sessione(giorni_fa=5, carichi=[carico], user=utente, exercise=exercise)
+
+    def test_the_percentile_is_silent_below_the_threshold_and_says_why(self):
+        """«Sei nel 67° percentile» su tre persone è esatto e falso insieme."""
+        self.sessione(giorni_fa=5, carichi=[100])
+        self.popolazione(5)
+
+        risposta = analytics_progressione.percentile_forza(self.user, self.panca)
+
+        self.assertEqual(risposta["stato"], "popolazione_insufficiente")
+        self.assertEqual(risposta["n_utenti"], 6)
+        self.assertEqual(risposta["soglia"], rankings.MIN_USERS_FOR_COMPARISON)
+
+    def test_the_threshold_is_the_same_constant_as_the_strength_ranking(self):
+        """Due soglie diverse sarebbero due numeri da giustificare all'orale.
+
+        E, peggio, un esercizio potrebbe offrire una classifica e negare un
+        percentile — sulla stessa pagina.
+        """
+        self.assertEqual(
+            analytics_progressione.MIN_USERS_FOR_COMPARISON,
+            rankings.MIN_USERS_FOR_COMPARISON,
+        )
+
+    def test_users_without_a_body_mass_are_not_part_of_the_population(self):
+        """ADR-0008: senza denominatore non c'è forza relativa.
+
+        Venti utenti in tutto, ma dieci senza peso dichiarato: la popolazione
+        confrontabile è dieci, e il percentile tace. Senza l'`exclude` la
+        divisione sarebbe per null — la riga che si perde ricopiando la query.
+        """
+        self.sessione(giorni_fa=5, carichi=[100])
+        self.popolazione(9)
+        self.popolazione(10, con_peso=False, prefisso="senzapeso")
+
+        risposta = analytics_progressione.percentile_forza(self.user, self.panca)
+
+        self.assertEqual(risposta["stato"], "popolazione_insufficiente")
+        self.assertEqual(risposta["n_utenti"], 10)
+
+    def test_the_population_counts_users_and_not_sets(self):
+        """La trappola del `GROUP BY`, di nuovo, e qui gonfierebbe il confronto.
+
+        `WorkoutSet.Meta.ordering` vale `["set_number"]`: senza l'`order_by()`
+        vuoto, ogni utente si spaccherebbe in una riga per numero di serie.
+        Venti utenti con quattro serie a testa diventerebbero ottanta righe —
+        soglia superata per finta, e un percentile calcolato su cloni.
+        """
+        self.sessione(giorni_fa=5, carichi=[100, 90, 80, 70])
+        for indice in range(9):
+            utente = User.objects.create_user(
+                username=f"molte{indice}", password=PASSWORD, body_mass_kg=Decimal("70")
+            )
+            self.sessione(giorni_fa=5, carichi=[50, 45, 40, 35], user=utente)
+
+        risposta = analytics_progressione.percentile_forza(self.user, self.panca)
+
+        self.assertEqual(risposta["n_utenti"], 10)
+
+    def test_the_percentile_places_the_strongest_at_the_top(self):
+        self.sessione(giorni_fa=5, carichi=[200])
+        self.popolazione(rankings.MIN_USERS_FOR_COMPARISON - 1, carico=50)
+
+        risposta = analytics_progressione.percentile_forza(self.user, self.panca)
+
+        self.assertEqual(risposta["stato"], "ok")
+        self.assertEqual(risposta["n_utenti"], rankings.MIN_USERS_FOR_COMPARISON)
+        self.assertEqual(risposta["percentile"], 100)
+        self.assertAlmostEqual(risposta["relativa"], 200 * (1 + 5 / 30) / 80, places=2)
+
+    def test_the_percentile_is_the_share_of_people_below(self):
+        """Metà popolazione sotto, metà sopra: il percentile lo dice."""
+        self.sessione(giorni_fa=5, carichi=[100])
+        self.popolazione(10, carico=10)
+        for indice in range(9):
+            utente = User.objects.create_user(
+                username=f"forte{indice}", password=PASSWORD, body_mass_kg=Decimal("70")
+            )
+            self.sessione(giorni_fa=5, carichi=[300], user=utente)
+
+        risposta = analytics_progressione.percentile_forza(self.user, self.panca)
+
+        self.assertEqual(risposta["stato"], "ok")
+        self.assertEqual(risposta["n_utenti"], 20)
+        # Dieci sotto su diciannove altri: `PERCENT_RANK` vale 10/19.
+        self.assertEqual(risposta["percentile"], round(10 / 19 * 100))
+
+    def test_without_a_body_mass_the_page_asks_for_it_instead_of_computing(self):
+        self.sessione(giorni_fa=5, carichi=[100], user=self.senza_peso)
+        self.popolazione(rankings.MIN_USERS_FOR_COMPARISON)
+
+        risposta = analytics_progressione.percentile_forza(self.senza_peso, self.panca)
+
+        self.assertEqual(risposta["stato"], "senza_peso")
+
+    def test_the_population_can_be_there_while_my_own_datum_is_not(self):
+        """Il quarto caso, che non è nessuno degli altri tre."""
+        self.popolazione(rankings.MIN_USERS_FOR_COMPARISON)
+
+        risposta = analytics_progressione.percentile_forza(self.user, self.panca)
+
+        self.assertEqual(risposta["stato"], "senza_serie")
+        self.assertEqual(risposta["n_utenti"], rankings.MIN_USERS_FOR_COMPARISON)
+
+    # --- La pagina --------------------------------------------------------
+
+    def test_the_chart_payload_is_in_the_document(self):
+        """Un grafico vuoto e un grafico non disegnato sono la stessa immagine.
+
+        Il test guarda il `json_script`, che è l'unico punto in cui il dato
+        esiste prima che Chart.js lo tocchi: se i numeri non sono lì, non c'è
+        JavaScript che li inventi.
+        """
+        self.sessione(giorni_fa=20, carichi=[100])
+        self.sessione(giorni_fa=10, carichi=[110])
+
+        risposta = self.client.get(
+            reverse("training:exercise-detail", args=[self.panca.slug])
+        )
+        corpo = risposta.content.decode()
+        payload = json.loads(
+            re.search(
+                r'<script id="dati-progressione" type="application/json">(.*?)</script>',
+                corpo, re.S,
+            ).group(1)
+        )
+
+        self.assertEqual(payload["tipo"], "line")
+        self.assertEqual(len(payload["valori"]), 2)
+        self.assertEqual(payload["unita"], "kg")
+        self.assertLess(payload["valori"][0], payload["valori"][1])
+        self.assertIn("chart.js", corpo)
+
+    def test_the_page_shows_the_record_with_its_date(self):
+        self.sessione(giorni_fa=15, carichi=[120])
+
+        risposta = self.client.get(
+            reverse("training:exercise-detail", args=[self.panca.slug])
+        )
+
+        self.assertEqual(risposta.context["record"]["sessioni"], 1)
+        self.assertContains(risposta, "Il tuo record")
+        self.assertContains(risposta, "140,0 kg")
+
+    def test_a_history_of_long_sets_only_explains_itself(self):
+        """Il vuoto che sembrerebbe un guasto.
+
+        Lo storico in coda alla pagina è pieno, i riquadri sopra sono vuoti, e
+        senza una riga di spiegazione la pagina sembrerebbe aver perso i dati
+        che mostra tre centimetri più sotto.
+        """
+        self.sessione(giorni_fa=5, carichi=[60], reps=MAX_REPS_FOR_1RM + 5)
+
+        risposta = self.client.get(
+            reverse("training:exercise-detail", args=[self.panca.slug])
+        )
+
+        self.assertIsNone(risposta.context["record"])
+        self.assertTrue(risposta.context["ha_storico"])
+        self.assertContains(risposta, "mai sotto le 12")
+
+    def test_chart_js_is_not_downloaded_when_there_is_nothing_to_draw(self):
+        risposta = self.client.get(
+            reverse("training:exercise-detail", args=[self.panca.slug])
+        )
+
+        self.assertNotIn("chart.js", risposta.content.decode())
 
 
 class WorkoutCrudTests(TestCase):

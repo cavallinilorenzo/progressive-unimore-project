@@ -2,7 +2,7 @@
 
 Le due analisi che aprono `/analisi/`. Sono la **stessa somma** guardata da due
 versi: `Sum(VOLUME)` sulle serie di lavoro eseguite dell'utente, nella stessa
-finestra temporale, raggruppata una volta per settimana e una volta per gruppo
+finestra temporale, raggruppata una volta per periodo e una volta per gruppo
 muscolare. Che la finestra sia la stessa non è un dettaglio di comodità: le due
 figure stanno una accanto all'altra, e se rispondessero su periodi diversi la
 seconda spiegherebbe una prima che non è quella disegnata sopra.
@@ -10,20 +10,33 @@ seconda spiegherebbe una prima che non è quella disegnata sopra.
 Il volume arriva da `training/querysets.py` per nome (`VOLUME`), mai riscritto
 qui — vedi il docstring del pacchetto.
 
+## Il taglio, che è il parametro di tutto il modulo
+
+Le stesse due somme si guardano su **dodici settimane** o su **dodici mesi**
+(#106). Non sono due analisi: sono la stessa analisi a due risoluzioni, e il
+modulo la scrive una volta sola parametrizzandola su un `Taglio` — la funzione
+che tronca, quella che genera la finestra, e le etichette. Due coppie di
+funzioni parallele sarebbero due definizioni di volume, che è esattamente
+l'errore che #97 ha appena finito di pagare sulla dashboard.
+
 ## I buchi, che sono il punto
 
-`TruncWeek` restituisce **solo i periodi in cui esiste almeno una serie**. Una
-settimana saltata non compare fra le righe, e un grafico che unisce i punti
-così com'escono disegna due settimane adiacenti che in realtà distano un mese:
-cioè **mente, e mente proprio sulla costanza**, che è la prima cosa che questa
-pagina dovrebbe far vedere.
+`TruncWeek` e `TruncMonth` restituiscono **solo i periodi in cui esiste almeno
+una serie**. Una settimana saltata non compare fra le righe, e un grafico che
+unisce i punti così com'escono disegna due settimane adiacenti che in realtà
+distano un mese: cioè **mente, e mente proprio sulla costanza**, che è la prima
+cosa che questa pagina dovrebbe far vedere.
 
-Gli zeri li aggiunge Python **dopo** la query, in `volume_per_settimana()`. È
+Gli zeri li aggiunge Python **dopo** la query, in `volume_nel_tempo()`. È
 presentazione, non calcolo: il database continua a fare l'aggregazione su
 296.724 righe, e Python tocca dodici valori. La stessa struttura — una riga per
 periodo, anche vuoto — è quella di cui la costanza (W1) avrà bisogno per
-contare i giorni saltati, ed è la ragione per cui `finestra_settimanale()` è
-una funzione a sé e non tre righe dentro la view.
+contare i giorni saltati, ed è la ragione per cui la finestra è una funzione a
+sé e non tre righe dentro la view.
+
+Sul taglio mensile il riempimento non può iterare a passo fisso come fa quello
+settimanale: **i mesi non hanno tutti la stessa lunghezza**, quindi la finestra
+si costruisce contando i mesi in aritmetica di calendario e non i giorni.
 
 ## Perché anche i gruppi a zero
 
@@ -34,30 +47,34 @@ petto a zero è un'informazione — è la stessa che ADR-0006 racconta al contra
 quando la schiena spariva perché il volume del corpo libero valeva zero.
 """
 
+from calendar import monthrange
+from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta
+from typing import Callable
 
 from django.db.models import Sum
-from django.db.models.functions import TruncWeek
+from django.db.models.functions import TruncMonth, TruncWeek
 from django.utils import timezone
 
 from training.models import MuscleGroup, WorkoutSet
 from training.querysets import VOLUME
 
-#: La finestra di default di A1 e A2: **12 settimane**.
+#: Quanti punti disegna la finestra, in **entrambi** i tagli.
 #:
-#: `docs/spec/04-analisi.md` lascia la scelta fra 12 settimane e 12 mesi, con un
-#: toggle che è fog dichiarata sulla mappa #96 e non si costruisce qui. Fra le
-#: due, la settimana: la finestra lunga *nasconde* proprio il buco che questo
-#: modulo si dà la pena di riempire — una settimana saltata dentro un punto
-#: mensile è un punto un po' più basso, non un avvallamento — e su 12 mesi la
-#: figura leviga esattamente la costanza, che è il primo consiglio del coach.
-#:
-#: Vale anche dal verso pratico: lo storico reale di Lorenzo è di 26 giorni, e
-#: su una finestra annuale la propria demo sarebbe undici punti vuoti e uno pieno.
-SETTIMANE_DI_DEFAULT = 12
+#: Dodici e non un numero per taglio: il grafico ha la stessa forma, e sotto
+#: cambia solo quanto sta dentro un punto. Dodici settimane sono un trimestre —
+#: abbastanza perché un buco si veda — e dodici mesi sono l'anno, che è il
+#: taglio su cui una stagione di allenamento si legge come una storia.
+PUNTI_DELLA_FINESTRA = 12
+
+#: Il numero di settimane del taglio di default, il nome con cui #99 l'ha
+#: scritto e con cui `docs/spec/04-analisi.md` lo cita. Resta come alias di
+#: `PUNTI_DELLA_FINESTRA` perché il default non è cambiato: il toggle aggiunge
+#: una scelta, non ne ribalta una.
+SETTIMANE_DI_DEFAULT = PUNTI_DELLA_FINESTRA
 
 
-def finestra_settimanale(settimane=SETTIMANE_DI_DEFAULT, oggi=None):
+def finestra_settimanale(settimane=PUNTI_DELLA_FINESTRA, oggi=None):
     """I **lunedì** della finestra, dal più vecchio al più recente.
 
     L'ultimo è il lunedì della settimana in corso, che è quindi **parziale**:
@@ -78,56 +95,174 @@ def finestra_settimanale(settimane=SETTIMANE_DI_DEFAULT, oggi=None):
     return [lunedi - timedelta(weeks=n) for n in reversed(range(settimane))]
 
 
-def inizio_della_finestra(settimane):
-    """L'istante da cui filtrare, aware, dato l'elenco dei lunedì.
+def finestra_mensile(mesi=PUNTI_DELLA_FINESTRA, oggi=None):
+    """I **primi del mese** della finestra, dal più vecchio al più recente.
+
+    La sorella mensile della precedente, e non si scrive allo stesso modo: un
+    mese non è un numero fisso di giorni, quindi indietreggiare a passo di
+    `timedelta` sbaglierebbe — trenta giorni prima del 31 marzo è il 1° marzo,
+    non febbraio. Si conta in **mesi**, su un indice `anno * 12 + mese`, che è
+    l'unica aritmetica di calendario senza casi limite.
+
+    Come per le settimane l'ultimo punto è il mese **in corso**, e la pagina
+    dichiara quanto ne è trascorso: su un mese il punto parziale può valere un
+    trentesimo del periodo, e accanto a undici mesi pieni sembrerebbe un crollo
+    (#106).
+    """
+    oggi = oggi or timezone.localdate()
+    primo = oggi.replace(day=1)
+    indice = primo.year * 12 + (primo.month - 1)
+    return [
+        date((indice - n) // 12, (indice - n) % 12 + 1, 1)
+        for n in reversed(range(mesi))
+    ]
+
+
+@dataclass(frozen=True)
+class Taglio:
+    """A che risoluzione si guardano A1 e A2: la settimana o il mese.
+
+    Tiene insieme le tre cose che cambiano fra i due tagli e **niente altro**:
+    come il database tronca (`trunc`), quali periodi la finestra deve contenere
+    anche se vuoti (`finestra`), e come si scrive un periodo in pagina. Il
+    calcolo non ne sa nulla — `volume_nel_tempo()` è una funzione sola per
+    entrambi.
+
+    `chiave` è il valore che compare in querystring (`?periodo=mese`), quindi è
+    **testo d'interfaccia stabile**: cambiarlo romperebbe i preferiti di chi ha
+    salvato la pagina, che è tutto il motivo per cui lo stato sta nell'URL.
+    """
+
+    chiave: str
+    singolare: str
+    plurale: str
+    trunc: Callable
+    formato: str
+    finestra: Callable
+    #: Quanti giorni dura un periodo, o `None` se dipende dal periodo stesso.
+    #: È l'unica asimmetria vera fra i due tagli: sette giorni sono sempre
+    #: sette, un mese no, e da lì discende tutto il resto di questo ticket.
+    giorni_fissi: int | None
+
+    def giorni_del_periodo(self, inizio):
+        """Quanto dura il periodo che comincia a `inizio`, in giorni."""
+        return self.giorni_fissi or monthrange(inizio.year, inizio.month)[1]
+
+
+SETTIMANA = Taglio(
+    chiave="settimana",
+    singolare="settimana",
+    plurale="settimane",
+    trunc=TruncWeek,
+    # `3 mar`: su dodici settimane l'anno non serve, e le etichette corte
+    # stanno sull'asse senza ruotare.
+    formato="j M",
+    finestra=finestra_settimanale,
+    giorni_fissi=7,
+)
+
+MESE = Taglio(
+    chiave="mese",
+    singolare="mese",
+    plurale="mesi",
+    trunc=TruncMonth,
+    # `mar 26`: su dodici mesi l'anno cambia in mezzo alla finestra, e senza
+    # ci si troverebbero due mesi di gennaio indistinguibili.
+    formato="M y",
+    finestra=finestra_mensile,
+    giorni_fissi=None,
+)
+
+#: I due tagli in ordine di presentazione, che è anche l'ordine del toggle.
+TAGLI = (SETTIMANA, MESE)
+
+#: **Dodici settimane**, deciso in #99 con la sua ragione: la finestra lunga
+#: *nasconde* proprio il buco che questo modulo si dà la pena di riempire — una
+#: settimana saltata dentro un punto mensile è un punto un po' più basso, non un
+#: avvallamento — e su dodici mesi la figura leviga esattamente la costanza, che
+#: è il primo consiglio del coach.
+#:
+#: Il default è l'**assenza** del parametro, non `?periodo=settimana`: è la
+#: regola già presa per i filtri del catalogo (#71) e per `?esercizio=` sulla
+#: classifica di forza, e tiene `/analisi/` un indirizzo solo invece di due che
+#: mostrano la stessa pagina.
+TAGLIO_DI_DEFAULT = SETTIMANA
+
+
+def taglio_richiesto(chiave):
+    """Il taglio chiesto in querystring, col default per tutto il resto.
+
+    Un `?periodo=` che non esiste **non è un 404**: è la stessa regola dello
+    slug fuori soglia sulla classifica di forza — una domanda malposta ha una
+    risposta legittima, che è la pagina di default, non una porta sbattuta.
+    """
+    for taglio in TAGLI:
+        if taglio.chiave == chiave:
+            return taglio
+    return TAGLIO_DI_DEFAULT
+
+
+def altro_taglio(taglio):
+    """L'altro dei due. Serve al vuoto, che deve saper suggerire l'alternativa."""
+    return MESE if taglio is SETTIMANA else SETTIMANA
+
+
+def inizio_della_finestra(finestra):
+    """L'istante da cui filtrare, aware, dato l'elenco dei periodi.
 
     Un `datetime` e non una `date`: `started_at` è un `DateTimeField`, e
     confrontarlo con una data pura lascerebbe fuori l'allenamento del lunedì
     mattina, perché Django promuoverebbe la data a mezzanotte **UTC** e non a
     mezzanotte di Roma.
     """
-    return timezone.make_aware(datetime.combine(settimane[0], time.min))
+    return timezone.make_aware(datetime.combine(finestra[0], time.min))
 
 
-def volume_per_settimana(user, settimane=None, oggi=None):
-    """A1 — il volume settimanale, **coi buchi riempiti**.
+def volume_nel_tempo(user, taglio=TAGLIO_DI_DEFAULT, finestra=None, oggi=None):
+    """A1 — il volume per periodo, **coi buchi riempiti**.
 
-    Restituisce una riga per ogni settimana della finestra, in ordine
-    cronologico, anche per le settimane senza allenamenti. Il database
-    raggruppa, Python completa.
+    Restituisce una riga per ogni periodo della finestra, in ordine
+    cronologico, anche per i periodi senza allenamenti. Il database raggruppa,
+    Python completa.
+
+    Una funzione sola per i due tagli, e la differenza è tutta in
+    `taglio.trunc`: scriverne due significherebbe scrivere `Sum(VOLUME)` due
+    volte, cioè riaprire la strada alla divergenza che #97 ha appena chiuso.
 
     Le serie a corpo libero di un utente **senza peso corporeo dichiarato**
     hanno un carico effettivo nullo (ADR-0006), quindi la loro `Sum` è nulla e
     non entra: il volume di quell'utente è **incompleto, non zero**, ed è la
     pagina a doverlo dire — la stessa regola che #97 ha scritto sulla dashboard.
     """
-    settimane = settimane or finestra_settimanale(oggi=oggi)
+    finestra = finestra or taglio.finestra(oggi=oggi)
 
     # `.order_by("periodo")` in coda non è cosmesi: `WorkoutSet.Meta.ordering`
     # vale `["set_number"]`, e Django lo trascinerebbe nel `GROUP BY`,
-    # spaccando ogni settimana in una riga per numero di serie. È lo stesso
+    # spaccando ogni periodo in una riga per numero di serie. È lo stesso
     # inciampo silenzioso delle due trappole di `04-analisi.md`: il conto
     # sarebbe sbagliato e la pagina si disegnerebbe lo stesso.
     righe = (
         WorkoutSet.objects.working()
         .filter(
             workout__user=user,
-            workout__started_at__gte=inizio_della_finestra(settimane),
+            workout__started_at__gte=inizio_della_finestra(finestra),
         )
-        .annotate(periodo=TruncWeek("workout__started_at"))
+        .annotate(periodo=taglio.trunc("workout__started_at"))
         .values("periodo")
         .annotate(volume=Sum(VOLUME))
         .order_by("periodo")
     )
 
-    per_lunedi = {data_locale(riga["periodo"]): riga["volume"] or 0.0 for riga in righe}
+    per_periodo = {
+        data_locale(riga["periodo"]): riga["volume"] or 0.0 for riga in righe
+    }
     return [
-        {"settimana": lunedi, "volume": round(per_lunedi.get(lunedi, 0.0), 1)}
-        for lunedi in settimane
+        {"periodo": inizio, "volume": round(per_periodo.get(inizio, 0.0), 1)}
+        for inizio in finestra
     ]
 
 
-def volume_per_gruppo(user, settimane=None, oggi=None):
+def volume_per_gruppo(user, taglio=TAGLIO_DI_DEFAULT, finestra=None, oggi=None):
     """A2 — la distribuzione sui sei gruppi, nella **stessa** finestra di A1.
 
     Ordinata per volume decrescente: la domanda che la figura risponde è «cosa
@@ -136,16 +271,20 @@ def volume_per_gruppo(user, settimane=None, oggi=None):
     coda da soli, e a parità restano nell'ordine del catalogo, o la pagina si
     riordinerebbe a ogni ricarica.
 
+    Il taglio non entra nel raggruppamento — qui non si tronca niente — ma
+    entra nella **finestra**, ed è l'unico modo perché A2 continui a spiegare
+    l'A1 disegnata sopra invece di un'altra.
+
     Raggruppa per **id** del gruppo e non per `label_it`: l'etichetta è testo
     d'interfaccia e libera di cambiare, la chiave no.
     """
-    settimane = settimane or finestra_settimanale(oggi=oggi)
+    finestra = finestra or taglio.finestra(oggi=oggi)
 
     righe = (
         WorkoutSet.objects.working()
         .filter(
             workout__user=user,
-            workout__started_at__gte=inizio_della_finestra(settimane),
+            workout__started_at__gte=inizio_della_finestra(finestra),
         )
         .values("exercise__primary_muscle__group")
         .annotate(volume=Sum(VOLUME))
@@ -173,8 +312,32 @@ def volume_per_gruppo(user, settimane=None, oggi=None):
     return gruppi
 
 
+def quanto_e_trascorso(taglio, finestra, oggi=None):
+    """Quanti giorni dell'**ultimo** periodo sono passati, e quanti ne conta.
+
+    L'ultimo punto della finestra è sempre parziale, e su base mensile lo è
+    molto più che su base settimanale: il 2 del mese quel punto vale un
+    trentesimo del periodo, e disegnato accanto a undici mesi pieni si legge
+    come un crollo dell'allenamento invece che come un mese appena cominciato.
+
+    Restituire i due numeri invece di una frase serve a dichiararlo per quello
+    che è — «9 giorni su 30» — invece di un generico «parziale» che su dodici
+    mesi non basta a distinguere un punto basso da un punto giovane.
+
+    Il taglio della finestra **non** si sposta al periodo chiuso, che pure
+    toglierebbe il problema: farebbe sparire dal grafico l'allenamento di
+    stamattina, cioè l'unico dato che l'utente sta cercando quando apre la
+    pagina — la stessa ragione per cui `finestra_settimanale()` arriva alla
+    settimana in corso.
+    """
+    oggi = oggi or timezone.localdate()
+    inizio = finestra[-1]
+    giorni = taglio.giorni_del_periodo(inizio)
+    return {"trascorsi": min((oggi - inizio).days + 1, giorni), "totali": giorni}
+
+
 def data_locale(periodo):
-    """Il lunedì di `TruncWeek` come `date` locale.
+    """L'inizio del periodo troncato dal database, come `date` locale.
 
     Pubblica e non più `_a_data` da #101: la costanza (W1) raggruppa per
     settimana come A1 e ha bisogno della stessa conversione. Una seconda copia
@@ -184,7 +347,7 @@ def data_locale(periodo):
 
     Con `USE_TZ = True` la troncatura restituisce un `datetime` **aware** a
     mezzanotte di Roma: confrontarlo con una `date` senza passare da
-    `localtime()` sposterebbe di un giorno le settimane d'inverno, e il buco
+    `localtime()` sposterebbe di un giorno i periodi d'inverno, e il buco
     finirebbe nella casella sbagliata.
     """
     if isinstance(periodo, datetime):

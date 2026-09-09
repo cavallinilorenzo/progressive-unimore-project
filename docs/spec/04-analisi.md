@@ -100,16 +100,34 @@ W1 è un **widget**, non una pagina: passa l'asse 1 ma non l'asse 2, quindi non 
      .annotate(volume=Sum(EFFECTIVE_LOAD * F("reps")))
      .order_by("-volume"))
 
-# A3 — progressione: due passaggi, aggregato poi finestra
-per_workout = (WorkoutSet.objects.working()
-    .filter(exercise=ex, workout__user=user, reps__lte=12)
-    .values("workout_id", "workout__started_at")
-    .annotate(best_1rm=Max(EPLEY)))
-progression = per_workout.annotate(
-    running_max=Window(Max("best_1rm"), order_by="workout__started_at",
-                       frame=RowRange(start=None, end=0)),
-    previous=Window(Lag("best_1rm"), order_by="workout__started_at"),
-)
+# A3 — progressione: la Subquery SOTTO le due finestre, righe = allenamenti
+#
+# ATTENZIONE: la forma "aggregato poi finestra" che stava qui NON GIRA.
+# `Window(Max("best_1rm"))` sopra `Max(EPLEY)` solleva un FieldError in
+# COSTRUZIONE — «Cannot compute Max('best_1rm'): 'best_1rm' is an aggregate» —
+# perché Django non impila un aggregato dentro un aggregato. Non è un limite di
+# SQLite, che `MAX ... OVER` ce l'ha. Misurato in #98; questa è la forma
+# verificata (una sola query, 5,9 ms sul caso peggiore del database), scritta
+# in `training/analytics/progressione.py`.
+massimale_sessione = (WorkoutSet.objects.working()
+    .filter(workout=OuterRef("pk"), exercise=ex, reps__lte=12)
+    .values("workout").annotate(m=Max(EPLEY)).values("m"))
+sessioni = (WorkoutSet.objects.working()
+    .filter(exercise=ex, reps__lte=12).values("workout_id"))
+progression = (Workout.objects.filter(user=user, pk__in=sessioni)
+    .annotate(best_1rm=Subquery(massimale_sessione, output_field=FloatField()))
+    .annotate(
+        running_max=Window(Max("best_1rm"), order_by="started_at",
+                           frame=RowRange(start=None, end=0)),
+        previous=Window(Lag("best_1rm"), order_by="started_at"))
+    .order_by("started_at"))
+# Due trappole mute, entrambe pagate dal prototipo:
+# - MAI `Workout.objects.filter(sets__exercise=ex).distinct()`: il join
+#   moltiplica, le finestre vedono i duplicati PRIMA del DISTINCT (281 righe
+#   invece di 146). Si passa da `pk__in=<subquery>`.
+# - MAI tagliare il periodo con `.filter()`: finisce in WHERE, cioè prima
+#   della finestra, e il massimo cumulativo RIPARTE dal taglio. Il taglio
+#   temporale, se serve, si fa in Python dopo la query.
 
 # A4 — PR per esercizio
 best = (WorkoutSet.objects.working()
@@ -128,7 +146,9 @@ Exercise.objects.annotate(pr=Subquery(best, output_field=FloatField()))
     .annotate(pct=Window(PercentRank(), order_by=F("relative").asc())))
 ```
 
-**A3 è l'unica da prototipare per prima**: impila una `Window` sopra un aggregato, che Django supporta ma con vincoli su cosa si può poi filtrare. Se non regge, il ripiego è una `Subquery` correlata — **non** SQL grezzo. Nessuna delle altre cinque ha incognite.
+**A3 era l'unica da prototipare per prima**, e il prototipo (#98) ha risposto: la forma della spec non si costruisce affatto, e il ripiego non è la `Subquery` correlata *pura* — che gira ma costa **320 volte** tanto, perché SQLite la rivaluta riga per riga — bensì la forma **ibrida** qui sopra, con la `Subquery` sotto le finestre. Nessuna delle altre cinque ha incognite.
+
+**A4 vive in due forme, e la differenza è la pagina.** La forma con `OuterRef` annota `Exercise.objects`, cioè è pensata per una **lista**, dove l'alternativa sarebbero cento query. Sul **dettaglio**, che è una riga sola, il record esce già dalle righe di A3 — è l'ultimo `running_max`, e la sua data è il primo giorno in cui il massimale l'ha toccato: zero query in più. `Subquery` + `OuterRef` non spariscono per questo, perché A3 stessa ne è costruita sopra.
 
 > L'`exclude` su `body_mass_kg` in A5 **non era nel ticket #16**: è arrivato da #33 (terza condizione di ammissione) e va allineato anche qui, o il percentile divide per null.
 
@@ -245,11 +265,21 @@ I pari merito sulla forza sono **realistici, non teorici**: 100 kg × 5 a 80 kg 
 
 **Settimana e mese**, con toggle **solo su A1 e A2**. La progressione del carico non è aggregata per periodo — è una serie di allenamenti, uno per punto — quindi lì il toggle non ha senso.
 
-Il default è **12 settimane**, scelto in #99 (`training/analytics/volume.py`, `SETTIMANE_DI_DEFAULT`): la finestra annuale *nasconde* proprio il buco che la vista si dà la pena di riempire — una settimana saltata dentro un punto mensile è un punto un po' più basso, non un avvallamento — e leviga la costanza, che è il primo consiglio del coach. Vale anche dal verso pratico: su 12 mesi lo storico reale di 26 giorni sarebbe undici punti vuoti e uno pieno. Il **toggle** non è ancora costruito.
+Il default è **12 settimane**, scelto in #99 (`training/analytics/volume.py`, `SETTIMANE_DI_DEFAULT`): la finestra annuale *nasconde* proprio il buco che la vista si dà la pena di riempire — una settimana saltata dentro un punto mensile è un punto un po' più basso, non un avvallamento — e leviga la costanza, che è il primo consiglio del coach. Vale anche dal verso pratico: su 12 mesi lo storico reale di 26 giorni sarebbe undici punti vuoti e uno pieno.
 
-**I buchi vanno riempiti nella vista.** `TruncWeek` restituisce solo i periodi in cui esiste almeno una serie: una settimana saltata non compare, e il grafico disegna due punti adiacenti che in realtà distano un mese. Con 15 sessioni in 26 giorni i buchi ci sono davvero.
+Il **toggle** è costruito in #106, e lo stato vive nella **querystring**: `?periodo=mese`, con il default (`settimana`) espresso dall'**assenza** del parametro — `/analisi/` resta un indirizzo solo. Stessa regola di `?esercizio=` sulla classifica e dei tre filtri del catalogo (#71). Un `?periodo=` sconosciuto non è un 404: ricade sul default. Il toggle è **due link**, non JavaScript: scambiare due dataset in memoria sarebbe JavaScript applicativo, escluso da #21.
+
+I due tagli sono lo stesso calcolo a due risoluzioni, non due analisi: `volume_nel_tempo()` è **una** funzione parametrizzata su un `Taglio`, che tiene la funzione di troncamento, quella che genera la finestra, e il formato dell'etichetta. Scriverne due significherebbe scrivere `Sum(VOLUME)` due volte, cioè riaprire la divergenza che #97 ha chiuso.
+
+**I buchi vanno riempiti nella vista.** `TruncWeek` e `TruncMonth` restituiscono solo i periodi in cui esiste almeno una serie: una settimana saltata non compare, e il grafico disegna due punti adiacenti che in realtà distano un mese. Con 15 sessioni in 26 giorni i buchi ci sono davvero.
 
 Gli zeri li aggiunge **Python dopo la query** — è presentazione, non calcolo: il database continua a fare l'aggregazione. È anche la struttura di cui W1 ha bisogno per contare i giorni saltati.
+
+Sul taglio mensile il riempimento non può iterare a passo fisso: **i mesi non hanno tutti la stessa lunghezza**, quindi `finestra_mensile()` conta in mesi su un indice `anno * 12 + mese` invece che in giorni. Un passo di 30 giorni accumulerebbe l'errore fino a mettere due volte lo stesso mese nella finestra, senza segnalare niente.
+
+**L'ultimo punto resta il periodo in corso**, su entrambi i tagli: troncare al periodo chiuso farebbe sparire dal grafico l'allenamento di stamattina, cioè il dato per cui la pagina si apre. Ma su base mensile «parziale» non basta — un mese cominciato da due giorni, accanto a undici mesi pieni, si legge come un crollo — quindi la pagina lo dichiara **contato**: «copre 9 giorni su 30».
+
+**Il vuoto fuori finestra sa suggerire l'altro taglio.** Chi ha storico solo oltre le 12 settimane è dentro i 12 mesi: mandarlo allo storico farebbe uscire dalla pagina qualcuno che la pagina poteva servire. L'alternativa si offre solo dopo averla verificata con una `exists()`, o sarebbe un link verso un secondo vuoto — e mai nel verso opposto, perché il taglio settimanale è il più stretto dei due.
 
 ## I grafici
 

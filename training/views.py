@@ -34,9 +34,10 @@ from django.views import View
 from django.views.generic import DetailView, ListView, TemplateView
 from django.views.generic.edit import CreateView, DeleteView, FormView, UpdateView
 
-from training import rankings
+from training import querysets, rankings
 from training.analytics import costanza as analytics_costanza
 from training.analytics import muscles as analytics_muscles
+from training.analytics import progressione as analytics_progressione
 from training.analytics import volume as analytics_volume
 from training.forms import (
     AbbinamentoFormSet,
@@ -240,24 +241,45 @@ class AnalysisView(LoginRequiredMixin, TemplateView):
     `json_script`, **mai** da un endpoint JSON, che senza HTMX sarebbe una
     seconda superficie di viste da scrivere, testare e proteggere, e
     reintrodurrebbe il `fetch` che #21 ha escluso.
+
+    **Il taglio del periodo sta in querystring** (`?periodo=mese`, #106) e non
+    in sessione né in JavaScript: così si legge, si salva nei preferiti e
+    sopravvive a un ricaricamento — la stessa regola di `?esercizio=` sulla
+    classifica di forza e dei tre filtri del catalogo. Il toggle è quindi due
+    **link** e la pagina si ricarica: scambiare due dataset già in memoria
+    sarebbe JavaScript applicativo, che #21 ha escluso, e costringerebbe a
+    spedire il doppio dei dati a chi ne guarda metà.
     """
 
     template_name = "training/analysis.html"
 
+    #: Il nome del parametro, in italiano come `?gruppo=` e `?esercizio=`: la
+    #: querystring di questo progetto è testo che l'utente legge, non un
+    #: protocollo interno.
+    PARAMETRO_PERIODO = "periodo"
+
     def get_context_data(self, **kwargs):
         contesto = super().get_context_data(**kwargs)
 
-        settimane = analytics_volume.finestra_settimanale()
-        per_settimana = analytics_volume.volume_per_settimana(
-            self.request.user, settimane
+        taglio = analytics_volume.taglio_richiesto(
+            self.request.GET.get(self.PARAMETRO_PERIODO)
         )
-        per_gruppo = analytics_volume.volume_per_gruppo(self.request.user, settimane)
+        finestra = taglio.finestra()
+        per_periodo = analytics_volume.volume_nel_tempo(
+            self.request.user, taglio, finestra
+        )
+        per_gruppo = analytics_volume.volume_per_gruppo(
+            self.request.user, taglio, finestra
+        )
 
-        contesto["settimane"] = analytics_volume.SETTIMANE_DI_DEFAULT
-        contesto["da"] = settimane[0]
-        contesto["per_settimana"] = per_settimana
+        contesto["taglio"] = taglio
+        contesto["tagli"] = self._toggle(taglio)
+        contesto["punti"] = analytics_volume.PUNTI_DELLA_FINESTRA
+        contesto["parziale"] = analytics_volume.quanto_e_trascorso(taglio, finestra)
+        contesto["da"] = finestra[0]
+        contesto["per_periodo"] = per_periodo
         contesto["per_gruppo"] = per_gruppo
-        contesto["volume_totale"] = sum(riga["volume"] for riga in per_settimana)
+        contesto["volume_totale"] = sum(riga["volume"] for riga in per_periodo)
 
         # I due payload dei grafici sono **dichiarativi**: portano il tipo di
         # figura insieme ai dati, e il renderer generico di `static/js/grafici.js`
@@ -265,14 +287,17 @@ class AnalysisView(LoginRequiredMixin, TemplateView):
         # al terzo grafico (A3, la progressione) di nascere senza scrivere una
         # riga di JavaScript in più — che è il punto, visto che di JavaScript
         # applicativo questo progetto non ne vuole.
-        contesto["grafico_settimane"] = {
+        contesto["grafico_periodi"] = {
             "tipo": "line",
+            # Il formato dell'etichetta appartiene al taglio: su dodici mesi
+            # servono gli anni (`mar 26`), su dodici settimane no (`3 mar`), e
+            # metterli comunque riempirebbe l'asse di rumore.
             "etichette": [
-                date_format(riga["settimana"], "j M") for riga in per_settimana
+                date_format(riga["periodo"], taglio.formato) for riga in per_periodo
             ],
-            "valori": [riga["volume"] for riga in per_settimana],
+            "valori": [riga["volume"] for riga in per_periodo],
             "unita": "kg",
-            "serie": "Volume settimanale",
+            "serie": f"Volume per {taglio.singolare}",
         }
         contesto["grafico_gruppi"] = {
             # **Barre e non torta.** Una torta su sei gruppi è leggibile, ma
@@ -294,7 +319,50 @@ class AnalysisView(LoginRequiredMixin, TemplateView):
         contesto["ha_dati_in_assoluto"] = (
             WorkoutSet.objects.working().filter(workout__user=self.request.user).exists()
         )
+        # Col toggle il secondo vuoto cambia significato: «fuori finestra» su
+        # dodici settimane può essere dentro finestra su dodici mesi, e mandare
+        # allo storico chi basterebbe rimandare all'altro taglio sarebbe far
+        # uscire dalla pagina qualcuno che la pagina poteva servire. Si chiede
+        # **solo** quando serve davvero — cioè quando questa finestra è vuota e
+        # l'altra è più larga — e costa una `exists()` in un ramo che di query
+        # ne ha già fatte due.
+        contesto["altro_taglio"] = analytics_volume.altro_taglio(taglio)
+        contesto["altro_taglio_ha_dati"] = (
+            contesto["ha_dati_in_assoluto"]
+            and not contesto["ha_dati_in_finestra"]
+            and contesto["altro_taglio"] is analytics_volume.MESE
+            and WorkoutSet.objects.working()
+            .filter(
+                workout__user=self.request.user,
+                workout__started_at__gte=analytics_volume.inizio_della_finestra(
+                    contesto["altro_taglio"].finestra()
+                ),
+            )
+            .exists()
+        )
         return contesto
+
+    def _toggle(self, scelto):
+        """I due link del toggle, col default **senza** parametro nell'URL.
+
+        `/analisi/` e `/analisi/?periodo=mese`, non `?periodo=settimana` e
+        `?periodo=mese`: due indirizzi per la stessa pagina di default si
+        salverebbero nei preferiti in due forme, e il link canonico dell'header
+        ne mostrerebbe una terza. È la regola già presa per i filtri del
+        catalogo (#71) — il default è l'assenza.
+        """
+        base = reverse("training:analysis")
+        return [
+            {
+                "chiave": taglio.chiave,
+                "etichetta": f"{analytics_volume.PUNTI_DELLA_FINESTRA} {taglio.plurale}",
+                "url": base
+                if taglio is analytics_volume.TAGLIO_DI_DEFAULT
+                else f"{base}?{self.PARAMETRO_PERIODO}={taglio.chiave}",
+                "attivo": taglio is scelto,
+            }
+            for taglio in analytics_volume.TAGLI
+        ]
 
 
 class SignUpView(CreateView):
@@ -562,17 +630,27 @@ class ExerciseListView(LoginRequiredMixin, ListView):
 
 
 class ExerciseDetailView(LoginRequiredMixin, DetailView):
-    """`/esercizi/<slug>/` — in fase 1 un guscio, e per una ragione.
+    """`/esercizi/<slug>/` — la pagina più densa del progetto.
 
-    La spec la chiama «la pagina più densa del progetto», ma quella densità è
-    fase 2 e 3: progressione del massimale, PR, percentile, stato di stallo,
-    consiglio di carico, classifica ridotta. Qui ci sono l'anagrafica e lo
-    **storico grezzo** delle serie dell'utente su questo esercizio — il dato
-    su cui quelle analisi si costruiranno, mostrato senza interpretarlo.
+    Tre delle sei analisi stanno qui, e insieme rispondono a **una** domanda:
+    sto migliorando? A3 la guarda nel tempo, A4 nel proprio passato, A5
+    rispetto agli altri — ed è l'unico punto del progetto in cui un utente si
+    confronta con qualcuno che non è sé stesso di sei mesi fa. I numeri li
+    calcola `training/analytics/progressione.py`; qui si decide **cosa la
+    pagina mostra e cosa dichiara di non poter mostrare**.
+
+    Sotto le analisi resta lo **storico grezzo** delle serie, che non è un
+    residuo di fase 1: è il dato da cui i numeri sopra sono usciti, ed è anche
+    l'unico posto in cui compaiono le serie sopra le 12 ripetizioni — che
+    allenano, quindi entrano nel volume, ma non concorrono a un record.
+
+    Un solo grafico, la progressione: **PR e percentile restano numeri**
+    (`docs/spec/04-analisi.md`, §I grafici). Un percentile disegnato sarebbe
+    una figura da un punto, e un record una linea piatta con sopra un gradino.
 
     L'URL poggia sullo `slug`, generato una volta da `load_catalog` e non a
     runtime (`training.models.Exercise.slug`): gli URL degli esercizi devono
-    restare stabili, perché è da lì che passeranno i link della progressione.
+    restare stabili, perché è da lì che passano i link della progressione.
 
     Niente `UserPassesTestMixin`: l'esercizio è del catalogo globale, non di
     un utente. Ciò che è personale è lo storico, ed è filtrato per
@@ -628,7 +706,63 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
             context["classifica"] = rankings.classifica_forza(self.object)[
                 : self.RIGHE_DI_CLASSIFICA
             ]
+
+        context.update(self._analisi())
         return context
+
+    def _analisi(self):
+        """A3, A4 e A5 per l'utente che guarda, e i due modi in cui sono vuote.
+
+        A3 si materializza **una volta**: A4 legge le stesse righe, e chiedere
+        due volte lo stesso record sarebbe una seconda definizione da tenere
+        allineata alla prima (#75).
+        """
+        righe = list(analytics_progressione.progressione(self.request.user, self.object))
+
+        # Due vuoti diversi, come su `/analisi/`, e qui la differenza è ancora
+        # più facile da confondere: chi non ha mai fatto l'esercizio e chi lo
+        # fa **solo sopra le 12 ripetizioni** vedono entrambi zero righe, ma il
+        # secondo ha uno storico pieno appena sotto nella stessa pagina. Senza
+        # dirglielo, la pagina sembrerebbe rotta.
+        ha_storico = (
+            WorkoutSet.objects.working()
+            .filter(workout__user=self.request.user, exercise=self.object)
+            .exists()
+        )
+
+        analisi = {
+            "progressione": righe,
+            "salti": analytics_progressione.salti(righe),
+            "record": analytics_progressione.record_personale(righe),
+            "percentile": analytics_progressione.percentile_forza(
+                self.request.user, self.object
+            ),
+            "ha_serie_utili": bool(righe),
+            "ha_storico": ha_storico,
+            "tetto_ripetizioni": querysets.MAX_REPS_FOR_1RM,
+        }
+
+        # Il payload del terzo grafico del progetto, nella stessa forma
+        # dichiarativa dei primi due: `static/js/grafici.js` non sa cosa
+        # disegna, quindi qui non c'è una riga di JavaScript da aggiungere.
+        #
+        # Una serie sola, il massimale **di sessione**: il massimo cumulativo
+        # sarebbe una seconda linea che il renderer generico non disegna, e
+        # soprattutto sarebbe una scala monotona, cioè la figura meno
+        # informativa possibile. Il record cumulativo si legge dal numero
+        # sopra il grafico, che è dove la spec lo vuole.
+        if righe:
+            analisi["grafico_progressione"] = {
+                "tipo": "line",
+                "etichette": [
+                    date_format(timezone.localtime(riga["started_at"]), "j M y")
+                    for riga in righe
+                ],
+                "valori": [round(riga["massimale"], 1) for riga in righe],
+                "unita": "kg",
+                "serie": "Massimale stimato",
+            }
+        return analisi
 
 
 
