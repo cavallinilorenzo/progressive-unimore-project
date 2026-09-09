@@ -50,6 +50,8 @@ Non è un esercizio e non allarga il catalogo: è **infrastruttura dell'import**
 
 Anagrafica dei **23 muscoli** raggruppati in **6 gruppi** (petto, schiena, spalle, braccia, gambe, core). Ogni esercizio ha **un solo** muscolo primario: i muscoli secondari sono deliberatamente fuori dal modello, perché attribuire loro una quota di volume richiederebbe un coefficiente inventato e non misurato.
 
+Da qui il **lavoro diretto** — le serie di un esercizio che ha quel muscolo, o quel gruppo, come **primario**. È l'unico lavoro che il progetto sa contare, e la parola serve a dirlo dove il conto viene mostrato: un gruppo a zero è un gruppo senza lavoro diretto, non necessariamente un gruppo trascurato.
+
 La tassonomia è tenuta **identica a `reporting.muscle_taxonomy` di Overload** — stessi muscoli, stessi gruppi, stesse etichette italiane — perché i dati di Progressive devono restare importabili nella dashboard personale di Overload.
 
 ### Equipment — «Attrezzo»
@@ -68,7 +70,7 @@ Il profilo di progressione di un utente sintetico: principiante, intermedio in p
 
 ### Coach — «Coach»
 
-La parte di `Progressive` che **dice cosa fare**, in opposizione al motore analitico che mostra cosa è successo. Non è un modello Django e non persiste nulla: è il servizio `training/analytics/coach.py`, che a ogni richiesta calcola i consigli dalle serie già registrate. Il coach non prescrive fisiologia — non cambia esercizio, non tocca la frequenza — perché ogni sua affermazione deve poggiare su una query e sui dati che il modello possiede davvero. Vedi [ADR-0007](docs/adr/0007-il-coach-dice-una-cosa-sola.md).
+La parte di `Progressive` che **dice cosa fare**, in opposizione al motore analitico che mostra cosa è successo. Non è un modello Django e non persiste nulla: è un **servizio** che a ogni richiesta calcola i consigli dalle serie già registrate. Dove viva nel codice lo dice `docs/spec/05-coach-e-stallo.md`, non questo file: fino a #112 qui c'era scritto un nome di modulo che nel frattempo era diventato falso, ed è la ragione per cui un glossario non porta percorsi. Il coach non prescrive fisiologia — non cambia esercizio, non tocca la frequenza — perché ogni sua affermazione deve poggiare su una query e sui dati che il modello possiede davvero. Vedi [ADR-0007](docs/adr/0007-il-coach-dice-una-cosa-sola.md).
 
 ### Advice — «Consiglio»
 
@@ -81,7 +83,7 @@ Ogni consiglio ha un **tipo**, e il tipo porta con sé una **priorità** costant
 3. **Stallo** — vedi *Stato di progressione*.
 4. **Carico** — la doppia progressione, sotto.
 
-Dove i consigli si mostrano è parte della loro definizione: **uno solo**, quello a priorità più alta, nel riquadro della dashboard; nella pagina di dettaglio esercizio soltanto il consiglio di carico e, se rilevato, lo stallo. Non esiste una pagina che li elenca tutti — un coach che dice cinque cose non dice niente.
+Dove i consigli si mostrano è parte della loro definizione: **uno solo**, quello a priorità più alta, nel riquadro della dashboard; nella pagina di dettaglio esercizio soltanto il consiglio di carico e, se rilevato, lo stallo. Non esiste una pagina che li elenca tutti — un coach che dice cinque cose non dice niente. E quando nessuna condizione è soddisfatta il coach **tace**: l'assenza di consiglio è una risposta, non un errore.
 
 ### Doppia progressione — «Doppia progressione»
 

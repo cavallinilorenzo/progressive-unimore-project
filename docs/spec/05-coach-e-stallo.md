@@ -6,7 +6,9 @@ Sono le **fasi 3 e 4** dell'ordine di costruzione. Il ML è l'ultima cosa che si
 
 ## Il coach
 
-`training/analytics/coach.py`. **Non è un modello Django e non persiste nulla**: a ogni richiesta calcola i consigli dalle serie già registrate.
+`training/analytics/coach/` — un **pacchetto**, non un modulo unico. **Non è un modello Django e non persiste nulla**: a ogni richiesta calcola i consigli dalle serie già registrate.
+
+> **Corretto in [#112](https://github.com/cavallinilorenzo/progetto-django-uni/issues/112).** Questa spec diceva `coach.py`, modulo unico. I quattro tipi di consiglio condividono la **selezione per priorità**, che è il cuore di ADR-0007 e non può esistere in due copie, e con un modulo solo i quattro ticket della fase 3 avrebbero scritto tutti sullo stesso file. La forma è quindi: `__init__.py` è **l'unica superficie pubblica** e tiene la priorità (`consiglio_per_dashboard(user)`, `consigli_per_esercizio(user, exercise)`); un tipo di consiglio guadagna un modulo suo **solo se ha una query propria**.
 
 La regola che governa tutto: **un consiglio è azionabile e ha dietro una query.** Un'osservazione che non diventa azione («stai trascurando le gambe») **non è un consiglio** e resta nel motore analitico. È la distinzione che impedisce al coach di ridiventare un cruscotto. Vedi [ADR-0007](../adr/0007-il-coach-dice-una-cosa-sola.md).
 
@@ -25,11 +27,14 @@ Se non ci si allena, nessun altro consiglio conta: per questo la costanza è pri
 
 Lo squilibrio usa una soglia di **assenza**, non di proporzione: *«non hai allenato le gambe in un mese»* è un fatto; *«le tue spalle sono al 9% invece che al 15%»* richiederebbe una ripartizione ideale inventata.
 
+**E dichiara sempre ciò che non vede.** Il catalogo tagga un solo muscolo primario per esercizio (ADR-0001), quindi «zero serie» significa *zero serie dirette*. Misurato sul database della demo in #112: la regola scatta per **33 utenti su 55** con almeno 8 allenamenti nella finestra, e in **32 casi su 33** il gruppo mancante è **braccia**, cioè proprio quello che riceve più lavoro da secondario. Il consiglio resta vero e resta azionabile, ma senza la parola «direttamente» in pagina direbbe una cosa più grande di quella che sa.
+
 ### Dove si mostrano — è parte della definizione
 
 - **Dashboard: uno solo**, quello a priorità più alta, in un riquadro
 - **Dettaglio esercizio:** solo il consiglio di carico e, se rilevato, lo stallo
 - **Non esiste una pagina che li elenca tutti** — un coach che dice cinque cose non dice niente
+- **E quando nessuna regola scatta, il riquadro non c'è.** Deciso in [#112](https://github.com/cavallinilorenzo/progetto-django-uni/issues/112), provvisoriamente, finché i quattro tipi non ci sono tutti: un riquadro che dicesse «nessun consiglio» suonerebbe come «va tutto bene» mentre metà delle regole non esiste ancora, cioè una diagnosi rassicurante emessa da un coach che non ha guardato. Col consiglio di **carico** — priorità 4, e scatta per chiunque abbia registrato una serie — il silenzio si restringe quasi al solo **utente appena registrato**, che è il vuoto vero e sulla dashboard parla già da #101.
 
 Nessun onboarding, nessuna pagina dedicata: il coach affina `02-pagine-e-template.md` senza spostarlo.
 
@@ -64,7 +69,14 @@ Il deload è **proposto, mai rilevato**: non esiste un campo affidabile per rico
 
 ### Le due query del coach non entrano nel catalogo
 
-Costanza e squilibrio girano in `coach.py`. Il catalogo delle analisi resta a **sei voci**.
+Il catalogo delle analisi resta a **sei voci**: le due condizioni sono un `Count` e un `Max`, e non superano il secondo asse di ammissione di [#16](https://github.com/cavallinilorenzo/progetto-django-uni/issues/16).
+
+Ma **non girano nel coach**, ed è la correzione di [#112](https://github.com/cavallinilorenzo/progetto-django-uni/issues/112): quando la spec è stata scritta né la costanza né la heatmap esistevano, e oggi esistono entrambe. Il coach le **consuma**.
+
+- La **costanza** viene da `training/analytics/costanza.py` (W1, #101), che resta l'unico modulo che sa contare gli allenamenti di un utente. Una seconda misura di costanza sarebbe la divergenza di [#75](https://github.com/cavallinilorenzo/progetto-django-uni/issues/75) un'altra volta, e stavolta con le due misure a un palmo l'una dall'altra sulla stessa pagina.
+- Lo **squilibrio** legge le serie per gruppo di `training/analytics/muscles.py` (la heatmap, #101), che la dashboard calcola comunque per disegnare la figura.
+
+Due finestre restano **diverse e dichiarate**, non riconciliate: il consiglio di costanza guarda **14 giorni mobili**, W1 la **griglia dei lunedì**. Sulla griglia, il lunedì mattina, chi si allena una volta a settimana risulterebbe a 1 allenamento invece che a 2, e il consiglio comparirebbe e sparirebbe da solo ogni settimana senza che l'utente abbia fatto niente di diverso. Le due vivono nello stesso modulo perché non possano divergere; il perché per esteso sta su `GIORNI_DEL_CONSIGLIO`.
 
 ## Il rilevamento dello stallo
 
