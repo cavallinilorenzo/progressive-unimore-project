@@ -88,7 +88,7 @@ Nell'ordine, perché ogni passo dipende dal precedente:
 
 Il custom QuerySet, poi **A3 per prima** (è l'unica con un'incognita: `Window` sopra un aggregato), poi le altre cinque, i tre grafici via `json_script`, la pagina di analisi muscolare, la heatmap.
 
-Alla fine della fase 2 va fatta **una misura vera** dei tempi di query di percentile e classifica su 296.724 serie: è la condizione a cui è subordinata la questione dei valori derivati (vedi *Confini*).
+Alla fine della fase 2 va fatta **una misura vera** dei tempi di query di percentile e classifica su 296.724 serie: è la condizione a cui è subordinata la questione dei valori derivati (vedi *Confini*). **Fatta** in #102: [docs/misure/tempi-query.md](../misure/tempi-query.md).
 
 ### Fase 3 — il coach
 
@@ -152,6 +152,6 @@ Fuori scope per decisione presa, non per dimenticanza:
 - **Corpus pubblico di standard di forza** — i percentili si calcolano sulla popolazione interna
 - **Modifiche a Overload** — è la sorgente dello schema e dei dati, non un bersaglio di lavoro
 
-**Rinviato a dopo la fase 2, con una condizione precisa:** materializzare i valori derivati (volume, massimale, punteggi). Oggi si calcolano nell'ORM a ogni query, per scelta, ed è proprio ciò che il progetto deve dimostrare. La decisione si riapre **solo** se la misura sui 296.724 record al termine della fase 2 mostra query lente — **dopo** averle scritte, non prima.
+**~~Rinviato a dopo la fase 2~~ — deciso, e chiuso:** materializzare i valori derivati (volume, massimale, punteggi). La condizione era che la decisione si riaprisse **solo** se la misura sui 296.724 record al termine della fase 2 avesse mostrato query lente. La misura è stata fatta (#102, con la soglia scritta *prima* dei numeri) e non le ha mostrate: **sette pagine su sette sotto i 300 ms**, la più lenta a 234 ms, il numero di query invariante rispetto allo storico. I valori derivati **restano calcolati nell'ORM** e la questione non si riapre — [ADR-0012](../adr/0012-valori-derivati-non-materializzati.md), numeri e metodologia in [docs/misure/tempi-query.md](../misure/tempi-query.md).
 
 **Rinviato a dopo la build:** la **demo orale** — quali dati caricare, in che ordine mostrare le pagine, cosa dire su ogni requisito. Ha bisogno dell'app che gira per essere provata; deciderla ora significherebbe deciderla al buio. Due vincoli sono però già fissati: lo storico reale è troppo corto per la pagina dello stallo, e l'utente su cui si dimostra è già scelto — **`cavallinilorenzo`, Lorenzo Cavallini**, con storico generato e dichiarato tale.

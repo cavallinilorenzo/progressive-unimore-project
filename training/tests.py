@@ -1935,6 +1935,39 @@ class AnalysisPageTests(TestCase):
         mensile = self.client.get(reverse("training:analysis"), {"periodo": "mese"})
         self.assertFalse(mensile.context["altro_taglio_ha_dati"])
 
+    # --- la guardia di #86, estesa a `/analisi/` da #102 --------------------
+
+    def test_the_number_of_queries_does_not_grow_with_the_history(self):
+        """L'invarianza sulle due analisi di volume, in **entrambi** i tagli.
+
+        La misura di #102 ha trovato sei query su `/analisi/` sull'utente della
+        demo e sei su un utente da 75 serie, ma quella misura è una fotografia
+        di un pomeriggio: è questo test che la tiene vera. Il taglio mensile
+        entra insieme al settimanale perché `finestra_mensile()` conta in mesi
+        su un indice `anno * 12 + mese` (#106), e un ripensamento che tornasse a
+        contare in giorni potrebbe farlo con una query per periodo senza che
+        nessun'altra prova se ne accorga.
+        """
+
+        def rendi(parametri):
+            with CaptureQueriesContext(connection) as contesto:
+                risposta = self.client.get(reverse("training:analysis"), parametri)
+                self.assertEqual(risposta.status_code, 200)
+            return len(contesto.captured_queries)
+
+        for lunedi in self.settimane[:3]:
+            self.serie(lunedi, self.panca)
+        settimanale = rendi({})
+        mensile = rendi({"periodo": "mese"})
+
+        for lunedi in self.settimane:
+            for esercizio in (self.panca, self.trazioni):
+                for _ in range(4):
+                    self.serie(lunedi, esercizio)
+
+        self.assertEqual(settimanale, rendi({}))
+        self.assertEqual(mensile, rendi({"periodo": "mese"}))
+
 
 class TemplateCommentTests(TestCase):
     """I commenti di template non finiscono nella pagina.
@@ -2692,6 +2725,44 @@ class ExerciseAnalyticsTests(TestCase):
         )
 
         self.assertNotIn("chart.js", risposta.content.decode())
+
+    # --- la guardia di #86, estesa al dettaglio da #102 ---------------------
+
+    def test_the_number_of_queries_does_not_grow_with_the_history(self):
+        """L'invarianza sulla pagina che porta A3, A4 e il percentile insieme.
+
+        Le guardie che c'erano difendevano le analisi **una per una** — la
+        progressione in una query sola, il record a costo zero. Nessuna
+        difendeva la pagina, e una pagina è dove le tre analisi si sommano: è lì
+        che un `select_related` tolto per distrazione si paga.
+
+        Cresce lo storico **e** la popolazione, perché il percentile è l'unica
+        delle tre che guarda gli altri utenti: se il suo costo crescesse con
+        loro, la pagina rallenterebbe per un utente che non si è allenato.
+        """
+
+        def rendi():
+            with CaptureQueriesContext(connection) as contesto:
+                risposta = self.client.get(
+                    reverse("training:exercise-detail", args=[self.panca.slug])
+                )
+                self.assertEqual(risposta.status_code, 200)
+            return len(contesto.captured_queries)
+
+        for giorni in range(1, 4):
+            self.sessione(giorni_fa=giorni, carichi=[80, 90, 100])
+        prima = rendi()
+
+        for giorni in range(4, 30):
+            self.sessione(giorni_fa=giorni, carichi=[80, 90, 100, 110])
+        for numero in range(10):
+            altro = User.objects.create_user(
+                username=f"atleta{numero}", password=PASSWORD,
+                body_mass_kg=Decimal("75"),
+            )
+            self.sessione(giorni_fa=2, carichi=[70, 80], user=altro)
+
+        self.assertEqual(prima, rendi())
 
 
 class WorkoutCrudTests(TestCase):
