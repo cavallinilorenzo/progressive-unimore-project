@@ -19,8 +19,13 @@ Per non pagare quella scelta in cerimonia, la regola è stretta: **fuori di qui
 si importano solo le due funzioni in fondo a questo file**, e un tipo di
 consiglio guadagna un modulo suo **solo se ha una query propria**. I due tipi
 di #112 non ce l'hanno — sono due letture di misure che il motore analitico già
-calcola — e stanno qui, in due funzioni corte. Lo stallo e il carico, che di
-query ne hanno, arriveranno coi loro moduli.
+calcola — e stanno qui, in due funzioni corte. Il **carico** invece la query ce
+l'ha, e da #113 vive in `carico.py`: qui ne resta la riga che lo mette in coda
+alla priorità. Lo stallo, quando arriverà, avrà il suo per la stessa ragione.
+
+Il tipo `Consiglio` sta in `consiglio.py` e si riesporta di qui — il perché è
+nel docstring di quel file, ed è l'unica eccezione alla regola dell'unica
+superficie: è un tipo, non una risposta, e serve a entrambi i lati.
 
 ## La priorità è un intero cablato sul tipo
 
@@ -57,47 +62,43 @@ from dataclasses import dataclass
 
 from training.analytics import costanza as analytics_costanza
 from training.analytics import muscles as analytics_muscles
+from training.analytics.coach import carico as coach_carico
+from training.analytics.coach.consiglio import Consiglio
 
 #: Quanti allenamenti deve contenere la finestra perché un gruppo a zero sia
 #: uno **squilibrio** e non un'**assenza** (`05-coach-e-stallo.md`).
 ALLENAMENTI_PER_LO_SQUILIBRIO = 8
 
+#: `Consiglio` vive in `consiglio.py` da #113 e si riesporta di qui: lo
+#: costruiscono sia le regole corte di questo file sia `carico.py`, e un tipo
+#: che serve alla superficie *e* ai suoi moduli non può stare nella superficie
+#: senza che ogni modulo importi il proprio importatore. Fuori dal pacchetto
+#: non cambia niente: `analytics_coach.Consiglio` è ancora questo.
+__all__ = ["Consiglio", "consiglio_per_dashboard", "consigli_per_esercizio"]
+
 
 @dataclass(frozen=True)
-class Consiglio:
-    """Una cosa da fare, con dietro il numero che l'ha prodotta.
+class Contesto:
+    """Ciò che il coach ha già in mano quando chiede a una regola di parlare.
 
-    `azione` è la frase che dice cosa fare al prossimo allenamento, ed è il
-    campo che rende questo dataclass un consiglio invece di un'osservazione: se
-    una regola non riesce a riempirlo, quella regola non appartiene al coach.
+    Le regole di #112 prendevano `(conteggi, heatmap)`, cioè due misure già
+    calcolate. Il carico però ha una **query propria** e gli serve l'utente,
+    e lo stallo — priorità 3 — avrà lo stesso bisogno: passare un argomento in
+    più significherebbe riscrivere la firma di tutte le regole a ogni ticket
+    che ne aggiunge una. Un contesto solo lo evita, e dà un posto dichiarato a
+    ciò che una regola può legittimamente guardare.
 
-    `misura` è il numero che l'ha fatto scattare, mostrato in pagina accanto
-    alla frase. Un consiglio senza il suo numero è indistinguibile da uno
-    inventato — ed è il modo in cui un consiglio *plausibile ma falso* passa
-    inosservato, che è il rischio proprio di questa fase: un'analisi sbagliata
-    dà un numero che si controlla a mente, un consiglio sbagliato rende una
-    pagina perfetta.
-
-    `limite` è ciò che il consiglio **non** sa, quando c'è qualcosa che non sa.
-    Sta nel dato e non nel template perché è una proprietà della regola, non
-    della pagina: chi aggiunge un tipo di consiglio si trova il campo davanti e
-    deve decidere se riempirlo.
+    `conteggi` e `heatmap` restano risposte **già ottenute** dal chiamante:
+    non è una cache — non sopravvive alla richiesta — è il coach che non
+    richiede al database quello che la dashboard ha appena chiesto.
     """
 
-    tipo: str
-    titolo: str
-    azione: str
-    misura: str
-    limite: str = ""
-
-    @property
-    def priorita(self):
-        """L'intero cablato sul tipo, letto da `PRIORITA`. Vedi il docstring
-        del modulo: non è un punteggio e non si calcola."""
-        return PRIORITA[self.tipo]
+    user: object
+    conteggi: dict
+    heatmap: dict
 
 
-def _costanza(conteggi, heatmap):
+def _costanza(contesto):
     """Meno di 2 allenamenti in 14 giorni, e solo per chi ne ha già almeno 4.
 
     Prima di tutti gli altri per la ragione che regge l'intera gerarchia: se
@@ -115,6 +116,7 @@ def _costanza(conteggi, heatmap):
     divergenza di #75 un'altra volta, con l'aggravante che le due sarebbero
     entrambe giuste e discordi, a un palmo l'una dall'altra sulla stessa pagina.
     """
+    conteggi = contesto.conteggi
     if conteggi["totali"] < analytics_costanza.STORICO_MINIMO:
         return None
     if conteggi["recenti"] >= analytics_costanza.ALLENAMENTI_DELLA_SOGLIA:
@@ -135,7 +137,7 @@ def _costanza(conteggi, heatmap):
     )
 
 
-def _squilibrio(conteggi, heatmap):
+def _squilibrio(contesto):
     """Un gruppo muscolare a zero serie di lavoro nella finestra della heatmap.
 
     La soglia è di **assenza**, non di proporzione, ed è la decisione che rende
@@ -165,6 +167,7 @@ def _squilibrio(conteggi, heatmap):
     sono quelli della heatmap, cioè la stessa misura in serie che la pagina
     mostra a mezzo schermo di distanza.
     """
+    conteggi, heatmap = contesto.conteggi, contesto.heatmap
     if conteggi["nella_finestra"] < ALLENAMENTI_PER_LO_SQUILIBRIO:
         return None
 
@@ -204,12 +207,38 @@ def _squilibrio(conteggi, heatmap):
     )
 
 
+def _carico(contesto):
+    """La doppia progressione sull'esercizio allenato per ultimo (#113).
+
+    **È l'unica regola che apre query per conto suo**, e per questo è anche
+    l'unica che le apre *tardi*: la selezione scorre `REGOLE` in ordine e si
+    ferma al primo consiglio, quindi queste tre query non partono affatto
+    quando la costanza o lo squilibrio hanno già parlato. Il costo si paga solo
+    quando serve, che è la ragione per cui una regola con una query dietro può
+    stare in fondo senza appesantire il caso peggiore.
+
+    La scelta dell'esercizio sta in `carico.esercizio_piu_recente` e non qui:
+    sul dettaglio esercizio la pagina lo sa già, e questa funzione è solo il
+    ramo della dashboard, dove nessuno l'ha detto.
+
+    `None` quando l'utente non ha mai registrato una serie di lavoro — cioè
+    l'utente appena registrato, e sostanzialmente nessun altro: è questa regola
+    a restringere il silenzio del riquadro a quel caso solo.
+    """
+    esercizio = coach_carico.esercizio_piu_recente(contesto.user)
+    if esercizio is None:
+        return None
+    return coach_carico.consiglio_di_carico(contesto.user, esercizio)
+
+
 #: Le regole **in ordine di priorità**, ed è questa lista l'ordine: non c'è un
-#: secondo posto in cui sia scritto. Il coach di #112 ne ha due; lo stallo e il
-#: carico si infilano qui, in mezzo e in fondo, senza toccare la selezione.
+#: secondo posto in cui sia scritto. Il coach di #112 ne aveva due; #113 ci ha
+#: infilato il carico in fondo, e lo stallo entrerà in mezzo — fra lo
+#: squilibrio e il carico — senza toccare la selezione.
 REGOLE = [
     ("costanza", _costanza),
     ("squilibrio", _squilibrio),
+    ("carico", _carico),
 ]
 
 #: La priorità come **intero cablato sul tipo**, ricavata dall'ordine di
@@ -245,9 +274,10 @@ def consiglio_per_dashboard(user, heatmap=None, oggi=None):
     """
     heatmap = heatmap or analytics_muscles.serie_per_muscolo(user, oggi=oggi)
     conteggi = analytics_costanza.allenamenti_per_il_coach(user, oggi=oggi)
+    contesto = Contesto(user=user, conteggi=conteggi, heatmap=heatmap)
 
     for _, regola in REGOLE:
-        consiglio = regola(conteggi, heatmap)
+        consiglio = regola(contesto)
         if consiglio is not None:
             return consiglio
     return None
@@ -264,5 +294,19 @@ def consigli_per_esercizio(user, exercise):
     dashboard: sul dettaglio i due tipi ammessi non si escludono — lo stallo
     dice di scaricare, il carico dice da dove ripartire — e sono comunque due e
     non «tutti», che è ciò che ADR-0007 vieta.
+
+    Da #113 ne contiene **uno**, il carico. Resta una lista e non diventa un
+    consiglio solo: lo stallo si aggiunge qui, e una funzione che oggi
+    restituisse un oggetto e domani due sarebbe una firma da cambiare in un
+    ticket che ha già il suo lavoro da fare.
+
+    La lista è vuota quando l'esercizio non è mai stato registrato con una
+    serie di lavoro — un esercizio del catalogo aperto per curiosità — e la
+    pagina in quel caso non disegna il riquadro, come la dashboard.
+
+    **Nessuna selezione per priorità qui.** Sul dettaglio i consigli ammessi
+    non si escludono, quindi l'ordine di `REGOLE` non serve: serve a scegliere
+    *uno*, e qui non si sceglie.
     """
-    return []
+    consiglio = coach_carico.consiglio_di_carico(user, exercise)
+    return [consiglio] if consiglio is not None else []

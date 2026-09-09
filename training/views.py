@@ -740,6 +740,22 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
                 : self.RIGHE_DI_CLASSIFICA
             ]
 
+        # **Il coach, la seconda e ultima superficie su cui parla** (#113).
+        # Qui non c'è selezione per priorità: sul dettaglio i tipi ammessi non
+        # si escludono — il carico dice da dove ripartire, lo stallo dirà di
+        # scaricare — e sono comunque due, non «tutti» (ADR-0007). Oggi la
+        # lista ne contiene uno.
+        #
+        # Costa **due query**, e sono le uniche del progetto che guardano
+        # l'ultima sessione invece di tutta la storia: non crescono con lo
+        # storico, che è la guardia che #102 ha misurato su questa pagina.
+        #
+        # Lista vuota su un esercizio mai registrato — si apre dal catalogo per
+        # curiosità — e allora il riquadro non c'è, come sulla dashboard.
+        context["consigli"] = analytics_coach.consigli_per_esercizio(
+            self.request.user, self.object
+        )
+
         context.update(self._analisi())
         return context
 

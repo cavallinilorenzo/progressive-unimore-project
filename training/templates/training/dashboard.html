@@ -105,29 +105,13 @@ ed è la tesi del progetto, non un risparmio di spazio (ADR-0007): un coach che
 dice cinque cose non dice niente. Il ciclo `for` che scriverebbe qui l'elenco è
 la modifica più naturale del mondo e va rifiutata.
 
-I tre pezzi hanno tre mestieri diversi e non si accorpano:
-- **l'azione** è la frase grossa, l'unica che si legge di sicuro;
-- **la misura** è il numero che l'ha prodotta, e sta lì perché un consiglio
-  senza il suo numero non si distingue da uno inventato;
-- **il limite** compare solo quando la regola sa di non sapere qualcosa — sullo
-  squilibrio è il muscolo secondario, che il catalogo non modella (ADR-0001).
-
-Il colore è il volt del brand sull'occhiello e non un riquadro pieno: acceso
-quanto basta per essere il primo posto in cui cade l'occhio, senza diventare un
-avviso d'errore. Il giallo è già preso dall'avviso del peso corporeo, qui
-sopra, e due allarmi di seguito si annullano.
+Il disegno del riquadro sta in `_consiglio.html` da #113: da lì in poi le
+pagine su cui il coach parla sono due, e due copie dello stesso riquadro
+sarebbero divergite alla prima modifica. Il giallo, qui, è già preso
+dall'avviso del peso corporeo appena sopra, e due allarmi di seguito si
+annullano: il volt del partial resta l'unico acceso.
 {% endcomment %}
-<div class="card-ink p-3 p-lg-4 mb-4" style="border-color:var(--volt)">
-  <div class="rail">
-    <div class="eyebrow mb-2" style="color:var(--volt)">Il coach dice</div>
-    <div class="fw-bold mb-2" style="font-size:1.05rem">{{ consiglio.titolo }}</div>
-    <div style="color:var(--t2)">{{ consiglio.azione }}</div>
-    <div class="mt-2" style="color:var(--t3);font-size:.82rem">{{ consiglio.misura }}</div>
-    {% if consiglio.limite %}
-    <div class="mt-2" style="color:var(--t3);font-size:.78rem;font-style:italic">{{ consiglio.limite }}</div>
-    {% endif %}
-  </div>
-</div>
+{% include "training/_consiglio.html" %}
 {% endif %}
 
 {# La riga di cifre hero: le quattro della variante A, ora accese. #}

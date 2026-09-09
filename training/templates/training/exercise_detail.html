@@ -56,9 +56,31 @@ sotto soglia tace ad alta voce.
 </div>
 
 {% comment %}
-A4 e A5 in cima, i due numeri: il record è il proprio passato, il percentile è
-il confronto con gli altri. Due riquadri affiancati perché sono la stessa
-domanda posta a due popolazioni diverse.
+IL COACH, e sta sopra le analisi (#113).
+
+È l'altra delle due sole superfici su cui parla (ADR-0007), e qui l'ordine
+della pagina cambia di senso: le tre analisi sotto rispondono a «sto
+migliorando?», che è una domanda sul passato; il consiglio risponde a «cosa
+faccio la prossima volta», che è il motivo per cui si apre la pagina di un
+esercizio prima di allenarlo. Come in dashboard, sta in cima.
+
+**Un ciclo, e non un elenco.** Il `for` non è la porta che ADR-0007 chiude —
+sul dettaglio i tipi ammessi sono due e non si escludono, il carico e lo
+stallo — ma è il posto in cui la porta si riaprirebbe: la lista che arriva qui
+viene da `consigli_per_esercizio`, che è l'unica a poterla riempire, e non ci
+si aggiunge un terzo tipo dal template.
+
+Il riquadro è lo stesso della dashboard perché è lo stesso partial. Il link
+all'esercizio no: qui l'esercizio è la pagina.
+{% endcomment %}
+{% for consiglio in consigli %}
+  {% include "training/_consiglio.html" with nascondi_link_esercizio=True %}
+{% endfor %}
+
+{% comment %}
+A4 e A5, i due numeri: il record è il proprio passato, il percentile è il
+confronto con gli altri. Due riquadri affiancati perché sono la stessa domanda
+posta a due popolazioni diverse.
 {% endcomment %}
 <div class="row g-3 mb-4">
 
