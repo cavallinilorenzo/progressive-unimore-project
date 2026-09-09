@@ -34,7 +34,8 @@ from django.views import View
 from django.views.generic import DetailView, ListView, TemplateView
 from django.views.generic.edit import CreateView, DeleteView, FormView, UpdateView
 
-from training import rankings
+from training import querysets, rankings
+from training.analytics import progressione as analytics_progressione
 from training.analytics import volume as analytics_volume
 from training.forms import (
     AbbinamentoFormSet,
@@ -520,17 +521,27 @@ class ExerciseListView(LoginRequiredMixin, ListView):
 
 
 class ExerciseDetailView(LoginRequiredMixin, DetailView):
-    """`/esercizi/<slug>/` — in fase 1 un guscio, e per una ragione.
+    """`/esercizi/<slug>/` — la pagina più densa del progetto.
 
-    La spec la chiama «la pagina più densa del progetto», ma quella densità è
-    fase 2 e 3: progressione del massimale, PR, percentile, stato di stallo,
-    consiglio di carico, classifica ridotta. Qui ci sono l'anagrafica e lo
-    **storico grezzo** delle serie dell'utente su questo esercizio — il dato
-    su cui quelle analisi si costruiranno, mostrato senza interpretarlo.
+    Tre delle sei analisi stanno qui, e insieme rispondono a **una** domanda:
+    sto migliorando? A3 la guarda nel tempo, A4 nel proprio passato, A5
+    rispetto agli altri — ed è l'unico punto del progetto in cui un utente si
+    confronta con qualcuno che non è sé stesso di sei mesi fa. I numeri li
+    calcola `training/analytics/progressione.py`; qui si decide **cosa la
+    pagina mostra e cosa dichiara di non poter mostrare**.
+
+    Sotto le analisi resta lo **storico grezzo** delle serie, che non è un
+    residuo di fase 1: è il dato da cui i numeri sopra sono usciti, ed è anche
+    l'unico posto in cui compaiono le serie sopra le 12 ripetizioni — che
+    allenano, quindi entrano nel volume, ma non concorrono a un record.
+
+    Un solo grafico, la progressione: **PR e percentile restano numeri**
+    (`docs/spec/04-analisi.md`, §I grafici). Un percentile disegnato sarebbe
+    una figura da un punto, e un record una linea piatta con sopra un gradino.
 
     L'URL poggia sullo `slug`, generato una volta da `load_catalog` e non a
     runtime (`training.models.Exercise.slug`): gli URL degli esercizi devono
-    restare stabili, perché è da lì che passeranno i link della progressione.
+    restare stabili, perché è da lì che passano i link della progressione.
 
     Niente `UserPassesTestMixin`: l'esercizio è del catalogo globale, non di
     un utente. Ciò che è personale è lo storico, ed è filtrato per
@@ -586,7 +597,63 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
             context["classifica"] = rankings.classifica_forza(self.object)[
                 : self.RIGHE_DI_CLASSIFICA
             ]
+
+        context.update(self._analisi())
         return context
+
+    def _analisi(self):
+        """A3, A4 e A5 per l'utente che guarda, e i due modi in cui sono vuote.
+
+        A3 si materializza **una volta**: A4 legge le stesse righe, e chiedere
+        due volte lo stesso record sarebbe una seconda definizione da tenere
+        allineata alla prima (#75).
+        """
+        righe = list(analytics_progressione.progressione(self.request.user, self.object))
+
+        # Due vuoti diversi, come su `/analisi/`, e qui la differenza è ancora
+        # più facile da confondere: chi non ha mai fatto l'esercizio e chi lo
+        # fa **solo sopra le 12 ripetizioni** vedono entrambi zero righe, ma il
+        # secondo ha uno storico pieno appena sotto nella stessa pagina. Senza
+        # dirglielo, la pagina sembrerebbe rotta.
+        ha_storico = (
+            WorkoutSet.objects.working()
+            .filter(workout__user=self.request.user, exercise=self.object)
+            .exists()
+        )
+
+        analisi = {
+            "progressione": righe,
+            "salti": analytics_progressione.salti(righe),
+            "record": analytics_progressione.record_personale(righe),
+            "percentile": analytics_progressione.percentile_forza(
+                self.request.user, self.object
+            ),
+            "ha_serie_utili": bool(righe),
+            "ha_storico": ha_storico,
+            "tetto_ripetizioni": querysets.MAX_REPS_FOR_1RM,
+        }
+
+        # Il payload del terzo grafico del progetto, nella stessa forma
+        # dichiarativa dei primi due: `static/js/grafici.js` non sa cosa
+        # disegna, quindi qui non c'è una riga di JavaScript da aggiungere.
+        #
+        # Una serie sola, il massimale **di sessione**: il massimo cumulativo
+        # sarebbe una seconda linea che il renderer generico non disegna, e
+        # soprattutto sarebbe una scala monotona, cioè la figura meno
+        # informativa possibile. Il record cumulativo si legge dal numero
+        # sopra il grafico, che è dove la spec lo vuole.
+        if righe:
+            analisi["grafico_progressione"] = {
+                "tipo": "line",
+                "etichette": [
+                    date_format(timezone.localtime(riga["started_at"]), "j M y")
+                    for riga in righe
+                ],
+                "valori": [round(riga["massimale"], 1) for riga in righe],
+                "unita": "kg",
+                "serie": "Massimale stimato",
+            }
+        return analisi
 
 
 
