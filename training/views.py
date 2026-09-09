@@ -198,24 +198,45 @@ class AnalysisView(LoginRequiredMixin, TemplateView):
     `json_script`, **mai** da un endpoint JSON, che senza HTMX sarebbe una
     seconda superficie di viste da scrivere, testare e proteggere, e
     reintrodurrebbe il `fetch` che #21 ha escluso.
+
+    **Il taglio del periodo sta in querystring** (`?periodo=mese`, #106) e non
+    in sessione né in JavaScript: così si legge, si salva nei preferiti e
+    sopravvive a un ricaricamento — la stessa regola di `?esercizio=` sulla
+    classifica di forza e dei tre filtri del catalogo. Il toggle è quindi due
+    **link** e la pagina si ricarica: scambiare due dataset già in memoria
+    sarebbe JavaScript applicativo, che #21 ha escluso, e costringerebbe a
+    spedire il doppio dei dati a chi ne guarda metà.
     """
 
     template_name = "training/analysis.html"
 
+    #: Il nome del parametro, in italiano come `?gruppo=` e `?esercizio=`: la
+    #: querystring di questo progetto è testo che l'utente legge, non un
+    #: protocollo interno.
+    PARAMETRO_PERIODO = "periodo"
+
     def get_context_data(self, **kwargs):
         contesto = super().get_context_data(**kwargs)
 
-        settimane = analytics_volume.finestra_settimanale()
-        per_settimana = analytics_volume.volume_per_settimana(
-            self.request.user, settimane
+        taglio = analytics_volume.taglio_richiesto(
+            self.request.GET.get(self.PARAMETRO_PERIODO)
         )
-        per_gruppo = analytics_volume.volume_per_gruppo(self.request.user, settimane)
+        finestra = taglio.finestra()
+        per_periodo = analytics_volume.volume_nel_tempo(
+            self.request.user, taglio, finestra
+        )
+        per_gruppo = analytics_volume.volume_per_gruppo(
+            self.request.user, taglio, finestra
+        )
 
-        contesto["settimane"] = analytics_volume.SETTIMANE_DI_DEFAULT
-        contesto["da"] = settimane[0]
-        contesto["per_settimana"] = per_settimana
+        contesto["taglio"] = taglio
+        contesto["tagli"] = self._toggle(taglio)
+        contesto["punti"] = analytics_volume.PUNTI_DELLA_FINESTRA
+        contesto["parziale"] = analytics_volume.quanto_e_trascorso(taglio, finestra)
+        contesto["da"] = finestra[0]
+        contesto["per_periodo"] = per_periodo
         contesto["per_gruppo"] = per_gruppo
-        contesto["volume_totale"] = sum(riga["volume"] for riga in per_settimana)
+        contesto["volume_totale"] = sum(riga["volume"] for riga in per_periodo)
 
         # I due payload dei grafici sono **dichiarativi**: portano il tipo di
         # figura insieme ai dati, e il renderer generico di `static/js/grafici.js`
@@ -223,14 +244,17 @@ class AnalysisView(LoginRequiredMixin, TemplateView):
         # al terzo grafico (A3, la progressione) di nascere senza scrivere una
         # riga di JavaScript in più — che è il punto, visto che di JavaScript
         # applicativo questo progetto non ne vuole.
-        contesto["grafico_settimane"] = {
+        contesto["grafico_periodi"] = {
             "tipo": "line",
+            # Il formato dell'etichetta appartiene al taglio: su dodici mesi
+            # servono gli anni (`mar 26`), su dodici settimane no (`3 mar`), e
+            # metterli comunque riempirebbe l'asse di rumore.
             "etichette": [
-                date_format(riga["settimana"], "j M") for riga in per_settimana
+                date_format(riga["periodo"], taglio.formato) for riga in per_periodo
             ],
-            "valori": [riga["volume"] for riga in per_settimana],
+            "valori": [riga["volume"] for riga in per_periodo],
             "unita": "kg",
-            "serie": "Volume settimanale",
+            "serie": f"Volume per {taglio.singolare}",
         }
         contesto["grafico_gruppi"] = {
             # **Barre e non torta.** Una torta su sei gruppi è leggibile, ma
@@ -252,7 +276,50 @@ class AnalysisView(LoginRequiredMixin, TemplateView):
         contesto["ha_dati_in_assoluto"] = (
             WorkoutSet.objects.working().filter(workout__user=self.request.user).exists()
         )
+        # Col toggle il secondo vuoto cambia significato: «fuori finestra» su
+        # dodici settimane può essere dentro finestra su dodici mesi, e mandare
+        # allo storico chi basterebbe rimandare all'altro taglio sarebbe far
+        # uscire dalla pagina qualcuno che la pagina poteva servire. Si chiede
+        # **solo** quando serve davvero — cioè quando questa finestra è vuota e
+        # l'altra è più larga — e costa una `exists()` in un ramo che di query
+        # ne ha già fatte due.
+        contesto["altro_taglio"] = analytics_volume.altro_taglio(taglio)
+        contesto["altro_taglio_ha_dati"] = (
+            contesto["ha_dati_in_assoluto"]
+            and not contesto["ha_dati_in_finestra"]
+            and contesto["altro_taglio"] is analytics_volume.MESE
+            and WorkoutSet.objects.working()
+            .filter(
+                workout__user=self.request.user,
+                workout__started_at__gte=analytics_volume.inizio_della_finestra(
+                    contesto["altro_taglio"].finestra()
+                ),
+            )
+            .exists()
+        )
         return contesto
+
+    def _toggle(self, scelto):
+        """I due link del toggle, col default **senza** parametro nell'URL.
+
+        `/analisi/` e `/analisi/?periodo=mese`, non `?periodo=settimana` e
+        `?periodo=mese`: due indirizzi per la stessa pagina di default si
+        salverebbero nei preferiti in due forme, e il link canonico dell'header
+        ne mostrerebbe una terza. È la regola già presa per i filtri del
+        catalogo (#71) — il default è l'assenza.
+        """
+        base = reverse("training:analysis")
+        return [
+            {
+                "chiave": taglio.chiave,
+                "etichetta": f"{analytics_volume.PUNTI_DELLA_FINESTRA} {taglio.plurale}",
+                "url": base
+                if taglio is analytics_volume.TAGLIO_DI_DEFAULT
+                else f"{base}?{self.PARAMETRO_PERIODO}={taglio.chiave}",
+                "attivo": taglio is scelto,
+            }
+            for taglio in analytics_volume.TAGLI
+        ]
 
 
 class SignUpView(CreateView):
