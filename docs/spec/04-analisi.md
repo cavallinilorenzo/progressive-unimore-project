@@ -263,11 +263,21 @@ I pari merito sulla forza sono **realistici, non teorici**: 100 kg × 5 a 80 kg 
 
 **Settimana e mese**, con toggle **solo su A1 e A2**. La progressione del carico non è aggregata per periodo — è una serie di allenamenti, uno per punto — quindi lì il toggle non ha senso.
 
-Il default è **12 settimane**, scelto in #99 (`training/analytics/volume.py`, `SETTIMANE_DI_DEFAULT`): la finestra annuale *nasconde* proprio il buco che la vista si dà la pena di riempire — una settimana saltata dentro un punto mensile è un punto un po' più basso, non un avvallamento — e leviga la costanza, che è il primo consiglio del coach. Vale anche dal verso pratico: su 12 mesi lo storico reale di 26 giorni sarebbe undici punti vuoti e uno pieno. Il **toggle** non è ancora costruito.
+Il default è **12 settimane**, scelto in #99 (`training/analytics/volume.py`, `SETTIMANE_DI_DEFAULT`): la finestra annuale *nasconde* proprio il buco che la vista si dà la pena di riempire — una settimana saltata dentro un punto mensile è un punto un po' più basso, non un avvallamento — e leviga la costanza, che è il primo consiglio del coach. Vale anche dal verso pratico: su 12 mesi lo storico reale di 26 giorni sarebbe undici punti vuoti e uno pieno.
 
-**I buchi vanno riempiti nella vista.** `TruncWeek` restituisce solo i periodi in cui esiste almeno una serie: una settimana saltata non compare, e il grafico disegna due punti adiacenti che in realtà distano un mese. Con 15 sessioni in 26 giorni i buchi ci sono davvero.
+Il **toggle** è costruito in #106, e lo stato vive nella **querystring**: `?periodo=mese`, con il default (`settimana`) espresso dall'**assenza** del parametro — `/analisi/` resta un indirizzo solo. Stessa regola di `?esercizio=` sulla classifica e dei tre filtri del catalogo (#71). Un `?periodo=` sconosciuto non è un 404: ricade sul default. Il toggle è **due link**, non JavaScript: scambiare due dataset in memoria sarebbe JavaScript applicativo, escluso da #21.
+
+I due tagli sono lo stesso calcolo a due risoluzioni, non due analisi: `volume_nel_tempo()` è **una** funzione parametrizzata su un `Taglio`, che tiene la funzione di troncamento, quella che genera la finestra, e il formato dell'etichetta. Scriverne due significherebbe scrivere `Sum(VOLUME)` due volte, cioè riaprire la divergenza che #97 ha chiuso.
+
+**I buchi vanno riempiti nella vista.** `TruncWeek` e `TruncMonth` restituiscono solo i periodi in cui esiste almeno una serie: una settimana saltata non compare, e il grafico disegna due punti adiacenti che in realtà distano un mese. Con 15 sessioni in 26 giorni i buchi ci sono davvero.
 
 Gli zeri li aggiunge **Python dopo la query** — è presentazione, non calcolo: il database continua a fare l'aggregazione. È anche la struttura di cui W1 ha bisogno per contare i giorni saltati.
+
+Sul taglio mensile il riempimento non può iterare a passo fisso: **i mesi non hanno tutti la stessa lunghezza**, quindi `finestra_mensile()` conta in mesi su un indice `anno * 12 + mese` invece che in giorni. Un passo di 30 giorni accumulerebbe l'errore fino a mettere due volte lo stesso mese nella finestra, senza segnalare niente.
+
+**L'ultimo punto resta il periodo in corso**, su entrambi i tagli: troncare al periodo chiuso farebbe sparire dal grafico l'allenamento di stamattina, cioè il dato per cui la pagina si apre. Ma su base mensile «parziale» non basta — un mese cominciato da due giorni, accanto a undici mesi pieni, si legge come un crollo — quindi la pagina lo dichiara **contato**: «copre 9 giorni su 30».
+
+**Il vuoto fuori finestra sa suggerire l'altro taglio.** Chi ha storico solo oltre le 12 settimane è dentro i 12 mesi: mandarlo allo storico farebbe uscire dalla pagina qualcuno che la pagina poteva servire. L'alternativa si offre solo dopo averla verificata con una `exists()`, o sarebbe un link verso un secondo vuoto — e mai nel verso opposto, perché il taglio settimanale è il più stretto dei due.
 
 ## I grafici
 

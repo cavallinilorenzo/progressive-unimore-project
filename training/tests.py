@@ -15,7 +15,7 @@ import shutil
 import statistics
 import tempfile
 from collections import Counter
-from datetime import timedelta
+from datetime import date, timedelta
 from decimal import Decimal
 from io import BytesIO, StringIO
 from pathlib import Path
@@ -1366,10 +1366,12 @@ class AnalysisPageTests(TestCase):
         """
         self.serie(self.settimane[-1])
 
-        righe = analytics_volume.volume_per_settimana(self.user, self.settimane)
+        righe = analytics_volume.volume_nel_tempo(
+            self.user, analytics_volume.SETTIMANA, self.settimane
+        )
 
         self.assertEqual(len(righe), analytics_volume.SETTIMANE_DI_DEFAULT)
-        self.assertEqual([riga["settimana"] for riga in righe], self.settimane)
+        self.assertEqual([riga["periodo"] for riga in righe], self.settimane)
 
     def test_a_skipped_week_is_a_zero_and_not_a_missing_row(self):
         """Il cuore del ticket.
@@ -1382,7 +1384,9 @@ class AnalysisPageTests(TestCase):
         self.serie(self.settimane[-4], weight="100", reps=10)
         self.serie(self.settimane[-1], weight="100", reps=10)
 
-        righe = analytics_volume.volume_per_settimana(self.user, self.settimane)
+        righe = analytics_volume.volume_nel_tempo(
+            self.user, analytics_volume.SETTIMANA, self.settimane
+        )
         volumi = [riga["volume"] for riga in righe]
 
         self.assertEqual(volumi[-4], 1000.0)
@@ -1417,7 +1421,9 @@ class AnalysisPageTests(TestCase):
                 set_type=WorkoutSet.SetType.WORKING, is_completed=True,
             )
 
-        righe = analytics_volume.volume_per_settimana(self.user, self.settimane)
+        righe = analytics_volume.volume_nel_tempo(
+            self.user, analytics_volume.SETTIMANA, self.settimane
+        )
 
         self.assertEqual(righe[-1]["volume"], 3000.0)
 
@@ -1425,7 +1431,9 @@ class AnalysisPageTests(TestCase):
         """Tredici settimane fa è fuori, e non deve rientrare dalla porta di servizio."""
         self.serie(self.settimane[0] - timedelta(weeks=1))
 
-        righe = analytics_volume.volume_per_settimana(self.user, self.settimane)
+        righe = analytics_volume.volume_nel_tempo(
+            self.user, analytics_volume.SETTIMANA, self.settimane
+        )
 
         self.assertEqual([riga["volume"] for riga in righe], [0.0] * 12)
 
@@ -1441,7 +1449,9 @@ class AnalysisPageTests(TestCase):
         """
         self.serie(self.settimane[-1], exercise=self.trazioni, reps=8, weight="0")
 
-        righe = analytics_volume.volume_per_settimana(self.user, self.settimane)
+        righe = analytics_volume.volume_nel_tempo(
+            self.user, analytics_volume.SETTIMANA, self.settimane
+        )
 
         self.assertEqual(righe[-1]["volume"], 640.0)
         self.assertEqual(
@@ -1460,7 +1470,9 @@ class AnalysisPageTests(TestCase):
         )
         self.serie(self.settimane[-1], reps=10, weight="900", is_completed=False)
 
-        righe = analytics_volume.volume_per_settimana(self.user, self.settimane)
+        righe = analytics_volume.volume_nel_tempo(
+            self.user, analytics_volume.SETTIMANA, self.settimane
+        )
 
         self.assertEqual(righe[-1]["volume"], 1000.0)
 
@@ -1468,7 +1480,9 @@ class AnalysisPageTests(TestCase):
         """Una pagina personale che sommasse tutti sarebbe una fuga di dati muta."""
         self.serie(self.settimane[-1], user=self.dormiente, reps=10, weight="100")
 
-        righe = analytics_volume.volume_per_settimana(self.user, self.settimane)
+        righe = analytics_volume.volume_nel_tempo(
+            self.user, analytics_volume.SETTIMANA, self.settimane
+        )
 
         self.assertEqual([riga["volume"] for riga in righe], [0.0] * 12)
 
@@ -1484,7 +1498,9 @@ class AnalysisPageTests(TestCase):
         """
         self.serie(self.settimane[-1], exercise=self.panca, reps=10, weight="100")
 
-        righe = analytics_volume.volume_per_gruppo(self.user, self.settimane)
+        righe = analytics_volume.volume_per_gruppo(
+            self.user, analytics_volume.SETTIMANA, self.settimane
+        )
 
         self.assertEqual(len(righe), 6)
         self.assertEqual(righe[0], {"gruppo": "Petto", "codice": "chest", "volume": 1000.0, "ordine": 1})
@@ -1499,7 +1515,9 @@ class AnalysisPageTests(TestCase):
         self.serie(self.settimane[-1], exercise=self.panca, reps=10, weight="50")
         self.serie(self.settimane[-1], exercise=self.trazioni, reps=10, weight="20")
 
-        righe = analytics_volume.volume_per_gruppo(self.user, self.settimane)
+        righe = analytics_volume.volume_per_gruppo(
+            self.user, analytics_volume.SETTIMANA, self.settimane
+        )
 
         self.assertEqual([riga["gruppo"] for riga in righe[:2]], ["Schiena", "Petto"])
         self.assertEqual(
@@ -1519,11 +1537,15 @@ class AnalysisPageTests(TestCase):
 
         totale_a1 = sum(
             riga["volume"]
-            for riga in analytics_volume.volume_per_settimana(self.user, self.settimane)
+            for riga in analytics_volume.volume_nel_tempo(
+            self.user, analytics_volume.SETTIMANA, self.settimane
+        )
         )
         totale_a2 = sum(
             riga["volume"]
-            for riga in analytics_volume.volume_per_gruppo(self.user, self.settimane)
+            for riga in analytics_volume.volume_per_gruppo(
+            self.user, analytics_volume.SETTIMANA, self.settimane
+        )
         )
 
         self.assertEqual(totale_a1, 1000.0)
@@ -1559,12 +1581,12 @@ class AnalysisPageTests(TestCase):
         response = self.client.get(reverse("training:analysis"))
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, 'id="dati-volume-settimane"')
+        self.assertContains(response, 'id="dati-volume-periodi"')
         self.assertContains(response, 'id="dati-volume-gruppi"')
-        self.assertContains(response, 'data-grafico="dati-volume-settimane"')
+        self.assertContains(response, 'data-grafico="dati-volume-periodi"')
         self.assertContains(response, 'data-grafico="dati-volume-gruppi"')
 
-        payload = self.payload(response, "dati-volume-settimane")
+        payload = self.payload(response, "dati-volume-periodi")
         self.assertEqual(payload["tipo"], "line")
         self.assertEqual(len(payload["valori"]), 12)
         self.assertEqual(payload["valori"][-1], 1000.0)
@@ -1624,7 +1646,7 @@ class AnalysisPageTests(TestCase):
 
         self.assertTrue(response.context["ha_dati_in_assoluto"])
         self.assertFalse(response.context["ha_dati_in_finestra"])
-        self.assertContains(response, "Niente in queste")
+        self.assertContains(response, "Niente in 12 settimane")
         self.assertNotContains(response, "Non c'è ancora niente da analizzare")
 
     def test_the_page_declares_that_a_missing_body_mass_makes_the_volume_partial(self):
@@ -1650,6 +1672,266 @@ class AnalysisPageTests(TestCase):
         self.assertContains(
             response, f'{reverse("training:exercise-list")}?gruppo=chest'
         )
+
+    # --- Il toggle settimana/mese, e i buchi sui mesi (#106) --------------
+    #
+    # Il taglio mensile ha **un** difetto in più di quello settimanale, ed è
+    # tutto il ticket: i mesi non hanno la stessa lunghezza, quindi la finestra
+    # non si costruisce a passo fisso e il riempimento dei buchi non può
+    # scivolare di un giorno senza che nessuno se ne accorga — un volume nel
+    # mese sbagliato si disegna esattamente come un volume nel mese giusto.
+    #
+    # Il resto sono i due modi in cui il toggle può rompere quello che c'era:
+    # A2 che smette di rispondere sulla finestra di A1, e il vuoto che manda
+    # allo storico chi bastava rimandare all'altro taglio.
+
+    def serie_il(self, giorno, exercise=None, reps=10, weight="100", user=None):
+        """Una serie di lavoro a mezzogiorno di una data **assoluta**.
+
+        La sorella di `serie()` per i test mensili, che ragionano su date di
+        calendario e non su offset dalla finestra. Mezzogiorno e non mezzanotte
+        per la stessa ragione di là: un istante lontano dai bordi rende il test
+        una prova sull'aggregazione, non sul fuso orario.
+        """
+        istante = timezone.make_aware(
+            timezone.datetime.combine(giorno, timezone.datetime.min.time())
+        ) + timedelta(hours=12)
+        allenamento = Workout.objects.create(
+            user=user or self.user, title="Sessione", started_at=istante
+        )
+        return WorkoutSet.objects.create(
+            workout=allenamento,
+            exercise=exercise or self.panca,
+            set_number=1,
+            reps=reps,
+            weight=Decimal(weight),
+            set_type=WorkoutSet.SetType.WORKING,
+            is_completed=True,
+        )
+
+    def test_the_monthly_window_counts_months_and_not_days(self):
+        """Dodici primi-del-mese, e il capodanno attraversato correttamente.
+
+        Il modo sbagliato di scrivere questa funzione è indietreggiare di 30
+        giorni per volta: su un anno l'errore si accumula in un paio di mesi, e
+        la finestra finirebbe per contenere due volte lo stesso mese senza mai
+        segnalare niente.
+        """
+        finestra = analytics_volume.finestra_mensile(oggi=date(2026, 3, 15))
+
+        self.assertEqual(len(finestra), 12)
+        self.assertEqual(finestra[-1], date(2026, 3, 1))
+        self.assertEqual(finestra[0], date(2025, 4, 1))
+        self.assertEqual({giorno.day for giorno in finestra}, {1})
+
+    def test_a_skipped_month_is_a_zero_and_not_a_missing_row(self):
+        """Il cuore del ticket, sul taglio che il ticket aggiunge.
+
+        `TruncMonth` ha lo stesso difetto di `TruncWeek` — restituisce solo i
+        mesi in cui esiste una serie — e su base mensile il buco pesa di più:
+        due punti adiacenti che in realtà distano un trimestre sono un anno di
+        allenamento raccontato come continuo.
+        """
+        finestra = analytics_volume.finestra_mensile(oggi=date(2026, 3, 15))
+        self.serie_il(date(2025, 12, 10))
+        self.serie_il(date(2026, 3, 10))
+
+        righe = analytics_volume.volume_nel_tempo(
+            self.user, analytics_volume.MESE, finestra
+        )
+        volumi = [riga["volume"] for riga in righe]
+
+        self.assertEqual(len(righe), 12)
+        self.assertEqual([riga["periodo"] for riga in righe], finestra)
+        self.assertEqual(volumi[-4], 1000.0)
+        self.assertEqual(volumi[-3:-1], [0.0, 0.0])
+        self.assertEqual(volumi[-1], 1000.0)
+
+    def test_months_of_different_lengths_do_not_shift_the_holes(self):
+        """Febbraio non sposta marzo, che è ciò che un passo fisso farebbe.
+
+        Tre mesi consecutivi di lunghezza diversa (31, 28, 31), con una serie
+        ciascuno e volumi distinti: se il riempimento allineasse per offset
+        invece che per data, i valori finirebbero nei punti sbagliati e i
+        totali resterebbero giusti — il guasto invisibile di questa famiglia.
+        """
+        finestra = analytics_volume.finestra_mensile(oggi=date(2026, 3, 20))
+        self.serie_il(date(2026, 1, 15), weight="10")
+        self.serie_il(date(2026, 2, 15), weight="20")
+        self.serie_il(date(2026, 3, 15), weight="30")
+
+        righe = analytics_volume.volume_nel_tempo(
+            self.user, analytics_volume.MESE, finestra
+        )
+
+        per_mese = {riga["periodo"]: riga["volume"] for riga in righe}
+        self.assertEqual(per_mese[date(2026, 1, 1)], 100.0)
+        self.assertEqual(per_mese[date(2026, 2, 1)], 200.0)
+        self.assertEqual(per_mese[date(2026, 3, 1)], 300.0)
+
+    def test_the_monthly_window_reaches_further_back_than_the_weekly_one(self):
+        """Il toggle deve *aggiungere* storia, o non varrebbe la pena.
+
+        Una serie di otto mesi fa è fuori dalle dodici settimane e dentro i
+        dodici mesi: se non lo fosse, i due tagli mostrerebbero la stessa cosa
+        con etichette diverse.
+        """
+        otto_mesi_fa = timezone.localdate() - timedelta(days=240)
+        self.serie_il(otto_mesi_fa)
+
+        settimanale = analytics_volume.volume_nel_tempo(
+            self.user, analytics_volume.SETTIMANA
+        )
+        mensile = analytics_volume.volume_nel_tempo(self.user, analytics_volume.MESE)
+
+        self.assertEqual(sum(riga["volume"] for riga in settimanale), 0.0)
+        self.assertEqual(sum(riga["volume"] for riga in mensile), 1000.0)
+
+    def test_the_two_analyses_share_the_window_on_the_monthly_cut_too(self):
+        """Il vincolo di #99 non è per il taglio settimanale, è per la pagina.
+
+        A2 spiega A1: se il toggle spostasse solo il grafico sopra, la
+        distribuzione sui gruppi resterebbe quella di dodici settimane e
+        starebbe sotto un grafico che parla di dodici mesi.
+        """
+        self.serie_il(timezone.localdate() - timedelta(days=200), weight="100")
+        self.serie_il(timezone.localdate(), exercise=self.trazioni, reps=8, weight="0")
+
+        totale_a1 = sum(
+            riga["volume"]
+            for riga in analytics_volume.volume_nel_tempo(
+                self.user, analytics_volume.MESE
+            )
+        )
+        totale_a2 = sum(
+            riga["volume"]
+            for riga in analytics_volume.volume_per_gruppo(
+                self.user, analytics_volume.MESE
+            )
+        )
+
+        self.assertEqual(totale_a1, 1000.0 + 640.0)
+        self.assertEqual(totale_a1, totale_a2)
+
+    def test_the_partial_point_is_declared_in_days_of_that_month(self):
+        """«Parziale» non basta su dodici mesi: si dice quanti giorni su quanti.
+
+        Il 2 del mese l'ultimo punto vale un trentesimo del periodo, e accanto
+        a undici mesi pieni si legge come un crollo dell'allenamento invece che
+        come un mese appena cominciato. E il denominatore è quello del mese
+        vero: febbraio ne ha 28, non 30.
+        """
+        febbraio = analytics_volume.finestra_mensile(oggi=date(2026, 2, 3))
+        parziale = analytics_volume.quanto_e_trascorso(
+            analytics_volume.MESE, febbraio, oggi=date(2026, 2, 3)
+        )
+
+        self.assertEqual(parziale, {"trascorsi": 3, "totali": 28})
+
+        # Sullo stesso giorno la settimana conta diversamente, ed è il punto:
+        # il 3 febbraio 2026 è un **martedì**, quindi il mese è al terzo giorno
+        # e la settimana al secondo. Due griglie diverse, due denominatori.
+        settimana = analytics_volume.finestra_settimanale(oggi=date(2026, 2, 3))
+        self.assertEqual(
+            analytics_volume.quanto_e_trascorso(
+                analytics_volume.SETTIMANA, settimana, oggi=date(2026, 2, 3)
+            ),
+            {"trascorsi": 2, "totali": 7},
+        )
+
+    def test_the_querystring_chooses_the_cut_and_a_bad_value_falls_back(self):
+        """Lo stato vive nell'URL, e un valore sconosciuto non è un 404.
+
+        La stessa regola dello slug fuori soglia sulla classifica di forza: una
+        domanda malposta ha una risposta legittima, che è la pagina di default.
+        """
+        self.serie(self.settimane[-1])
+
+        mese = self.client.get(reverse("training:analysis"), {"periodo": "mese"})
+        self.assertEqual(mese.context["taglio"], analytics_volume.MESE)
+        self.assertEqual(mese.context["taglio"].plurale, "mesi")
+
+        assurdo = self.client.get(
+            reverse("training:analysis"), {"periodo": "trimestre"}
+        )
+        self.assertEqual(assurdo.status_code, 200)
+        self.assertEqual(assurdo.context["taglio"], analytics_volume.SETTIMANA)
+
+        default = self.client.get(reverse("training:analysis"))
+        self.assertEqual(default.context["taglio"], analytics_volume.SETTIMANA)
+
+    def test_the_default_cut_has_no_parameter_in_its_link(self):
+        """Un indirizzo solo per la pagina di default, non due.
+
+        È la regola dei filtri del catalogo (#71): il default è l'**assenza**
+        del parametro, o `/analisi/` e `/analisi/?periodo=settimana` finirebbero
+        nei preferiti come due pagine diverse che mostrano la stessa cosa.
+        """
+        response = self.client.get(reverse("training:analysis"))
+
+        tagli = {scelta["chiave"]: scelta for scelta in response.context["tagli"]}
+        self.assertEqual(tagli["settimana"]["url"], reverse("training:analysis"))
+        self.assertEqual(
+            tagli["mese"]["url"], f"{reverse('training:analysis')}?periodo=mese"
+        )
+        self.assertTrue(tagli["settimana"]["attivo"])
+        self.assertFalse(tagli["mese"]["attivo"])
+        self.assertContains(response, 'href="/analisi/?periodo=mese"')
+
+    def test_the_monthly_chart_labels_carry_the_year(self):
+        """Su dodici mesi l'anno cambia in mezzo alla finestra.
+
+        Senza, la figura mostrerebbe due mesi di gennaio indistinguibili — ed è
+        proprio il taglio in cui si guarda una stagione intera.
+        """
+        self.serie(self.settimane[-1])
+
+        response = self.client.get(reverse("training:analysis"), {"periodo": "mese"})
+        payload = self.payload(response, "dati-volume-periodi")
+
+        self.assertEqual(len(payload["valori"]), 12)
+        self.assertEqual(payload["tipo"], "line")
+        # `mar 26` e non `3 mar`: due parole, la seconda di due cifre.
+        self.assertRegex(payload["etichette"][0], r"^\w+ \d{2}$")
+
+    def test_an_empty_window_offers_the_wider_cut_when_there_is_something_there(self):
+        """Il vuoto «fuori finestra» cambia significato col toggle.
+
+        Chi ha allenamenti di sei mesi fa è fuori dalle dodici settimane ma
+        dentro i dodici mesi: mandarlo allo storico sarebbe far uscire dalla
+        pagina qualcuno che la pagina poteva servire. L'alternativa si offre
+        **solo** dopo averla verificata, o sarebbe un link verso un secondo
+        vuoto.
+        """
+        self.serie_il(
+            timezone.localdate() - timedelta(days=180), user=self.dormiente
+        )
+        self.client.login(username="dormiente", password=PASSWORD)
+
+        response = self.client.get(reverse("training:analysis"))
+
+        self.assertFalse(response.context["ha_dati_in_finestra"])
+        self.assertTrue(response.context["altro_taglio_ha_dati"])
+        self.assertContains(response, "Guarda 12 mesi")
+
+    def test_an_empty_window_does_not_offer_a_cut_that_is_empty_too(self):
+        """Un link a un secondo vuoto sarebbe peggio di nessun link.
+
+        Due anni fa è fuori da entrambi i tagli, e sul taglio mensile l'altro è
+        quello settimanale, cioè **più stretto**: non c'è mai niente da
+        suggerire in quella direzione.
+        """
+        self.serie_il(
+            timezone.localdate() - timedelta(days=730), user=self.dormiente
+        )
+        self.client.login(username="dormiente", password=PASSWORD)
+
+        settimanale = self.client.get(reverse("training:analysis"))
+        self.assertFalse(settimanale.context["altro_taglio_ha_dati"])
+        self.assertContains(settimanale, "Vai allo storico")
+
+        mensile = self.client.get(reverse("training:analysis"), {"periodo": "mese"})
+        self.assertFalse(mensile.context["altro_taglio_ha_dati"])
 
 
 class TemplateCommentTests(TestCase):

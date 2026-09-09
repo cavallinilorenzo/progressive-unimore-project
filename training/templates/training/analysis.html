@@ -21,7 +21,26 @@ la seconda sta spiegando la prima.
     <div class="eyebrow">Analisi</div>
     <h1 class="h4 fw-bold mb-0">Volume e distribuzione</h1>
   </div>
-  <div class="eyebrow">ultime {{ settimane }} settimane &middot; dal {{ da|date:"j F Y" }}</div>
+  <div class="eyebrow">{{ punti }} {{ taglio.plurale }} &middot; dal {{ da|date:"j F Y" }}</div>
+</div>
+
+{% comment %}
+Il toggle del periodo: due **link**, non un controllo JavaScript. Lo stato vive
+nella querystring (`?periodo=mese`), quindi si legge, si salva nei preferiti e
+sopravvive a un ricaricamento — la stessa regola di `?esercizio=` sulla
+classifica di forza. Il taglio di default non porta parametro: `/analisi/` resta
+un indirizzo solo.
+
+Stessa forma delle due pillole di `_classifiche_schede.html`, perché è la stessa
+domanda — «quale delle due viste sto guardando» — e due modi diversi di
+rispondere alla stessa domanda si imparano due volte.
+{% endcomment %}
+<div class="btn-group mb-4" role="group" aria-label="Periodo dell'analisi">
+  {% for scelta in tagli %}
+  <a href="{{ scelta.url }}"
+     {% if scelta.attivo %}aria-current="page"{% endif %}
+     class="btn btn-sm {% if scelta.attivo %}btn-volt{% else %}btn-outline-secondary{% endif %}">{{ scelta.etichetta }}</a>
+  {% endfor %}
 </div>
 
 {% if not user.has_body_mass %}
@@ -50,15 +69,25 @@ dirlo è l'unico modo perché non si legga come un dato.
 <div class="card-ink p-3 mb-4">
   <div class="d-flex align-items-baseline justify-content-between mb-3">
     <div class="eyebrow">Volume nel tempo</div>
-    <div class="eyebrow" style="color:var(--t2)">{{ volume_totale|floatformat:"0g" }} kg in {{ settimane }} settimane</div>
+    <div class="eyebrow" style="color:var(--t2)">{{ volume_totale|floatformat:"0g" }} kg in {{ punti }} {{ taglio.plurale }}</div>
   </div>
-  {% include "training/_grafico.html" with dati=grafico_settimane id="dati-volume-settimane" altezza=300 %}
+  {% include "training/_grafico.html" with dati=grafico_periodi id="dati-volume-periodi" altezza=300 %}
   <div class="mt-3 eyebrow" style="color:var(--t3);line-height:1.7">
-    Una settimana senza allenamenti vale <span style="color:var(--t2)">zero</span>,
+    Un periodo senza allenamenti vale <span style="color:var(--t2)">zero</span>,
     non sparisce: il database restituisce solo i periodi in cui esiste una
-    serie, e unire quei punti disegnerebbe due settimane adiacenti che in
-    realtà distano un mese. L'ultimo punto è la settimana in corso, quindi
-    ancora parziale.
+    serie, e unire quei punti disegnerebbe due {{ taglio.plurale }} adiacenti
+    che in realtà distano molto di più.
+    {% comment %}
+    Il punto parziale si dichiara **contato**, non a parole: su dodici settimane
+    «parziale» bastava, su dodici mesi no — un mese cominciato da due giorni,
+    disegnato accanto a undici mesi pieni, si legge come un crollo
+    dell'allenamento. Dire «2 giorni su 31» toglie l'ambiguità senza togliere
+    dal grafico l'allenamento di stamattina, che è il dato per cui la pagina si
+    apre.
+    {% endcomment %}
+    L'ultimo punto — {{ taglio.singolare }} in corso — copre
+    <span style="color:var(--t2)">{{ parziale.trascorsi }} giorn{{ parziale.trascorsi|pluralize:"o,i" }} su {{ parziale.totali }}</span>,
+    quindi è più basso perché è ancora aperto.
   </div>
 </div>
 
@@ -116,13 +145,29 @@ percentile sotto soglia: non si mostra il vuoto, si dice il motivo.
 {% endcomment %}
 <div class="card-ink p-4 text-center">
   {% if ha_dati_in_assoluto %}
-  <div class="eyebrow mb-2">Niente in queste {{ settimane }} settimane</div>
+  <div class="eyebrow mb-2">Niente in {{ punti }} {{ taglio.plurale }}</div>
   <p style="color:var(--t2);max-width:38rem;margin:0 auto">
     Lo storico c'è, ma nessuna serie di lavoro cade nella finestra che questa
     pagina guarda — dal {{ da|date:"j F Y" }} a oggi. I grafici resterebbero due
     linee piatte, che è meno di quanto lo storico sa già dire.
   </p>
+  {% comment %}
+  Col toggle questo vuoto ha due uscite, e mandare allo storico chi bastava
+  rimandare all'altro taglio significherebbe far uscire dalla pagina qualcuno
+  che la pagina poteva servire. L'alternativa si offre solo quando l'abbiamo
+  verificata: l'utente ha davvero allenamenti nella finestra più larga, e non gli
+  si promette un grafico che poi sarebbe vuoto come questo.
+  {% endcomment %}
+  {% if altro_taglio_ha_dati %}
+  <p class="eyebrow mt-3 mb-0" style="color:var(--t3)">
+    Su {{ punti }} {{ altro_taglio.plurale }}, però, qualcosa c'è.
+  </p>
+  <a href="{% url 'training:analysis' %}?periodo={{ altro_taglio.chiave }}"
+     class="btn btn-volt px-4 mt-2">Guarda {{ punti }} {{ altro_taglio.plurale }}</a>
+  <a href="{% url 'training:workout-list' %}" class="btn btn-outline-secondary px-4 mt-2 ms-2">Vai allo storico</a>
+  {% else %}
   <a href="{% url 'training:workout-list' %}" class="btn btn-volt px-4 mt-3">Vai allo storico</a>
+  {% endif %}
   {% else %}
   <div class="eyebrow mb-2">Non c'è ancora niente da analizzare</div>
   <p style="color:var(--t2);max-width:38rem;margin:0 auto">
