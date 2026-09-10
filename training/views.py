@@ -1114,6 +1114,29 @@ class WorkoutCreateView(LoginRequiredMixin, CreateView):
         return reverse("training:workoutset-manage", args=[self.object.pk])
 
 
+def raggruppa_serie_del_formset(formset):
+    """`blocchi`/`extra_forms` per un `WorkoutSetFormSet`, in un posto solo.
+
+    La usano sia `WorkoutUpdateView` sia `WorkoutSetsView`: stessa regola di
+    `WorkoutDetailView` applicata a un formset invece che a un queryset — le
+    righe con un `pk` si raggruppano per esercizio e dentro il gruppo tornano
+    ordinate per `set_number`, le righe nuove (senza `pk`, quelle in coda per
+    l'esercizio fuori programma) restano a parte. Scritta due volte questa
+    regola diverge al primo ripensamento (#75), e le due pagine smetterebbero
+    di concordare su cosa vuol dire «raggruppato».
+    """
+    blocchi = {}
+    extra_forms = []
+    for riga in formset.forms:
+        if riga.instance.pk:
+            blocchi.setdefault(riga.instance.exercise, []).append(riga)
+        else:
+            extra_forms.append(riga)
+    for righe in blocchi.values():
+        righe.sort(key=lambda riga: riga.instance.set_number)
+    return list(blocchi.items()), extra_forms
+
+
 class WorkoutUpdateView(OwnerRequiredMixin, SingleObjectMixin, View):
     """`/allenamenti/<pk>/modifica/` — titolo *e* serie, sulla stessa pagina.
 
@@ -1161,21 +1184,13 @@ class WorkoutUpdateView(OwnerRequiredMixin, SingleObjectMixin, View):
         return self.render_to_response(form, formset)
 
     def render_to_response(self, form, formset):
-        blocchi = {}
-        extra_forms = []
-        for riga in formset.forms:
-            if riga.instance.pk:
-                blocchi.setdefault(riga.instance.exercise, []).append(riga)
-            else:
-                extra_forms.append(riga)
-        for righe in blocchi.values():
-            righe.sort(key=lambda riga: riga.instance.set_number)
+        blocchi, extra_forms = raggruppa_serie_del_formset(formset)
 
         context = {
             "allenamento": self.object,
             "form": form,
             "formset": formset,
-            "blocchi": list(blocchi.items()),
+            "blocchi": blocchi,
             "extra_forms": extra_forms,
         }
         return render(self.request, self.template_name, context)
@@ -1213,6 +1228,13 @@ class WorkoutSetsView(OwnerRequiredMixin, UpdateView):
     pagina di **correzione**: chi è partito da una scheda le trova già scritte
     (`WorkoutCreateView`), tocca i numeri che non tornano e toglie la spunta a
     ciò che ha saltato.
+
+    Il raggruppamento in `blocchi` è lo stesso di `WorkoutUpdateView`
+    (`raggruppa_serie_del_formset`): la scheda precompila le serie un
+    esercizio alla volta, tutte le sue ripetizioni di fila, e l'ordinamento di
+    default del modello (`set_number`) le rimescolerebbe — prima tutte le
+    serie 1 di ogni esercizio, poi tutte le serie 2. `order_by("pk")` qui sotto
+    tiene l'ordine di creazione, che è l'ordine della scheda.
     """
 
     model = Workout
@@ -1220,11 +1242,20 @@ class WorkoutSetsView(OwnerRequiredMixin, UpdateView):
     context_object_name = "allenamento"
     template_name = "training/workout_sets.html"
 
+    def get_formset_queryset(self):
+        return self.object.sets.select_related("exercise__equipment").order_by("pk")
+
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
         # Se il POST è fallito il formset in contesto è quello con gli errori e
         # i dati dell'utente: ricostruirlo li perderebbe.
-        context.setdefault("formset", WorkoutSetFormSet(instance=self.object))
+        formset = context.get("formset") or WorkoutSetFormSet(
+            instance=self.object, queryset=self.get_formset_queryset()
+        )
+        context["formset"] = formset
+        context["blocchi"], context["extra_forms"] = raggruppa_serie_del_formset(
+            formset
+        )
         return context
 
     def post(self, request, *args, **kwargs):
