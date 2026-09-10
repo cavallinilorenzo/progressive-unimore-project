@@ -3,24 +3,32 @@
 `/allenamenti/<pk>/serie/` — il registro delle serie, e il formset più denso
 del progetto.
 
-Il raggruppamento in `blocchi` (`training.views.raggruppa_serie_del_formset`)
-è lo stesso di `workout_form.html`: una card per esercizio, le sue serie di
-fila e ordinate per `set_number`. Prima di questo raggruppamento la pagina
-mostrava le righe nell'ordine di default del modello — `set_number` — che
-mette in fila tutte le prime serie di ogni esercizio, poi tutte le seconde:
-leggibile per un totale, illeggibile per una correzione, dove le serie dello
-stesso esercizio vanno lette una dietro l'altra.
+Il raggruppamento in `blocchi` (`training.views.raggruppa_serie_del_formset`,
+poi `WorkoutSetsView._assegna_extra_ai_blocchi`) è imparentato con quello di
+`workout_form.html`: una card per esercizio, le sue serie di fila e ordinate
+per `set_number`. L'ordinamento di default del modello (`set_number`) le
+rimescolerebbe — prima tutte le prime serie di ogni esercizio, poi tutte le
+seconde: leggibile per un totale, illeggibile per una correzione.
 
-Nessun bottone «aggiungi riga» dentro un blocco, per la stessa ragione di
-`routine_exercises.html`: clonare una riga al volo e riscrivere `TOTAL_FORMS`
-è JavaScript applicativo, che il progetto non ha. Le cinque righe vuote in
-coda (`extra_forms`) restano il solo modo di aggiungere una serie non
-prevista dalla scheda — anche per un esercizio già in un blocco sopra.
+NIENTE «EESGUITA». A differenza di `workout_form.html`, qui una serie o si
+registra (con le sue ripetizioni) o si toglie col cestino: il terzo stato
+«pianificata ma saltata» che altrove passa dalla spunta «Eseguita» non è un
+caso che questa pagina debba distinguere — chi ha appena iniziato
+l'allenamento sta scrivendo cosa ha fatto, non correggendo un piano vecchio.
+Il campo resta nel modello e nel form (`is_completed.as_hidden`): le righe
+già salvate mantengono il loro valore vero, quelle nuove nascono a `True`.
 
-«Eseguita» è la casella che dà senso a tutto il resto: toglierla trasforma la
-riga in una serie saltata, e allora le ripetizioni non si pretendono più. È il
-vincolo `workout_set_completed_has_reps`, e il form lo dice in italiano prima
-che lo dica SQLite.
+IL CESTINO è lo stesso `riga.DELETE` di sempre, solo senza l'etichetta
+«Togli»: per una riga già salvata significa cancellarla al prossimo «Salva le
+serie», per una riga appena aggiunta col «+» significa lasciarla da parte
+senza scriverla.
+
+IL «+» di un blocco è un secondo bottone `submit` sulla stessa `<form>`
+(`WorkoutSetsView.PARAMETRO_AGGIUNGI`): senza JavaScript un «aggiungi riga»
+dinamico non esiste, ma un giro di pagina che aggiunge una riga ai dati del
+POST e ridisegna il formset — senza salvarlo — sì. Le cinque righe vuote in
+coda (`extra_forms`) restano il modo di registrare un esercizio fuori
+programma, cioè uno che non ha ancora un blocco.
 {% endcomment %}
 
 {% block title %}Serie di «{{ allenamento.title }}» — Progressive{% endblock %}
@@ -50,7 +58,7 @@ che lo dica SQLite.
   {% csrf_token %}
   {{ formset.management_form }}
 
-  {% if formset.non_form_errors %}
+  {% if mostra_errori and formset.non_form_errors %}
   <div class="card-ink p-3 mb-3">
     <div class="rail" style="border-color:var(--red)">
       <div class="eyebrow mb-1" style="color:var(--red)">Il formset non è valido</div>
@@ -74,46 +82,49 @@ che lo dica SQLite.
       {% comment %}
       `riga.id` è il campo nascosto su cui il formset distingue una riga
       esistente da una nuova: senza, il salvataggio duplica invece di
-      aggiornare. `exercise` è nascosto qui perché lo dice già l'intestazione
-      del blocco, non serve un secondo `<select>` per riga.
+      aggiornare. `exercise` è nascosto perché lo dice già l'intestazione del
+      blocco, e `is_completed` perché questa pagina non la mostra (vedi il
+      commento in cima al file) ma il valore vero va comunque trasportato.
       {% endcomment %}
       {% for nascosto in riga.hidden_fields %}{{ nascosto }}{% endfor %}
       {{ riga.exercise.as_hidden }}
+      {{ riga.is_completed.as_hidden }}
 
-      <div class="col-6 col-sm-3 col-md-2">
+      <div class="col-4 col-sm-2">
         <label class="eyebrow d-block mb-1">N&deg;</label>
         {{ riga.set_number }}
       </div>
-      <div class="col-6 col-sm-3 col-md-2">
+      <div class="col-4 col-sm-3">
         <label class="eyebrow d-block mb-1">Carico kg</label>
         {{ riga.weight }}
       </div>
-      <div class="col-6 col-sm-3 col-md-2">
+      <div class="col-4 col-sm-3">
         <label class="eyebrow d-block mb-1">Rip.</label>
         {{ riga.reps }}
       </div>
-      <div class="col-6 col-sm-3 col-md-2">
-        <label class="eyebrow d-block mb-1">Tipo</label>
-        {{ riga.set_type }}
-      </div>
-      <div class="col-12 col-md-4 d-flex align-items-center gap-4 mt-2 mt-md-0">
-        <div class="form-check mb-0">
-          {{ riga.is_completed }}
-          <label class="form-check-label eyebrow">Eseguita</label>
-        </div>
+      <div class="col-8 col-sm-3 d-none">{{ riga.set_type }}</div>
+      <div class="col-4 col-sm-1 d-flex align-items-center justify-content-end">
         <div class="form-check mb-0">
           {{ riga.DELETE }}
-          <label class="form-check-label eyebrow" style="color:var(--red)">Togli</label>
+          <label class="form-check-label" for="{{ riga.DELETE.id_for_label }}"
+                 title="Togli questa serie" style="color:var(--red);font-size:1.1rem">🗑</label>
         </div>
       </div>
 
+      {% if mostra_errori %}
       {% for campo in riga.visible_fields %}
       {% for errore in campo.errors %}
       <div class="col-12" style="color:var(--red);font-size:.8rem">{{ campo.label }}: {{ errore }}</div>
       {% endfor %}
       {% endfor %}
+      {% endif %}
     </div>
     {% endfor %}
+
+    <button type="submit" name="aggiungi_serie" value="{{ esercizio.pk }}"
+            class="btn btn-sm mt-1" style="color:var(--volt);border:1px solid var(--volt);background:transparent">
+      + Serie
+    </button>
   </div>
   {% endfor %}
 
@@ -122,8 +133,9 @@ che lo dica SQLite.
   {% for riga in extra_forms %}
   <div class="card-ink p-3 mb-3">
     {% for nascosto in riga.hidden_fields %}{{ nascosto }}{% endfor %}
+    {{ riga.is_completed.as_hidden }}
 
-    {% if riga.non_field_errors %}
+    {% if mostra_errori and riga.non_field_errors %}
     {% for errore in riga.non_field_errors %}
     <div class="mb-2" style="color:var(--red);font-size:.82rem">{{ errore }}</div>
     {% endfor %}
@@ -142,27 +154,20 @@ che lo dica SQLite.
         <label for="{{ riga.weight.id_for_label }}" class="eyebrow d-block mb-1">Carico kg</label>
         {{ riga.weight }}
       </div>
-      <div class="col-4 col-lg-1">
+      <div class="col-4 col-lg-2">
         <label for="{{ riga.reps.id_for_label }}" class="eyebrow d-block mb-1">Rip.</label>
         {{ riga.reps }}
       </div>
-      <div class="col-8 col-lg-2">
-        <label for="{{ riga.set_type.id_for_label }}" class="eyebrow d-block mb-1">Tipo</label>
-        {{ riga.set_type }}
-      </div>
-      <div class="col-4 col-lg-1">
-        <div class="form-check mb-2">
-          {{ riga.is_completed }}
-          <label for="{{ riga.is_completed.id_for_label }}" class="form-check-label eyebrow">Eseguita</label>
-        </div>
-      </div>
+      <div class="col-8 col-lg-2 d-none">{{ riga.set_type }}</div>
     </div>
 
+    {% if mostra_errori %}
     {% for campo in riga.visible_fields %}
     {% for errore in campo.errors %}
     <div class="mt-1" style="color:var(--red);font-size:.82rem">{{ campo.label }}: {{ errore }}</div>
     {% endfor %}
     {% endfor %}
+    {% endif %}
   </div>
   {% endfor %}
   {% endif %}
@@ -174,12 +179,11 @@ che lo dica SQLite.
         Il <strong>carico</strong> è sempre quello totale, bilanciere compreso:
         è il numero che si legge sulla barra, non il carico aggiunto. Lo zero è
         legittimo ed è la risposta giusta a corpo libero.
-        Una serie <strong>saltata</strong> si registra togliendo la spunta a
-        «Eseguita», e allora ripetizioni e carico possono restare vuoti: è la
-        differenza fra «non l'ho fatta» e «non l'avevo prevista», e le analisi
-        contano solo le eseguite. Per un esercizio fuori programma, o una serie
-        extra oltre quelle già scritte, si usano le righe vuote in coda; per
-        aggiungerne altre, salva e torna qui.
+        Una serie <strong>saltata</strong> si toglie col cestino, non si
+        spunta: qui si scrive cosa hai fatto, non cosa avevi pianificato.
+        «<strong>+ Serie</strong>» aggiunge una riga in più a quell'esercizio,
+        per una serie extra fatta oltre il programma; per un esercizio che
+        non è nemmeno in elenco si usano le righe vuote in coda.
       </div>
     </div>
   </div>
