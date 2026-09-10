@@ -32,9 +32,15 @@ Lo squilibrio usa una soglia di **assenza**, non di proporzione: *«non hai alle
 ### Dove si mostrano — è parte della definizione
 
 - **Dashboard: uno solo**, quello a priorità più alta, in un riquadro
-- **Dettaglio esercizio:** solo il consiglio di carico e, se rilevato, lo stallo
+- **Dettaglio esercizio: lo stato di progressione, e il carico che ne discende** — **un** consiglio, mai due
 
-  **Lo stato di progressione non è un consiglio, ed è la distinzione che [#114](https://github.com/cavallinilorenzo/progetto-django-uni/issues/114) ha dovuto fare.** Il riquadro «Stato di progressione» sul dettaglio esercizio c'è **sempre**, anche a zero sessioni, perché risponde alla domanda per cui si è aperta la pagina — *sto migliorando su questo esercizio?* — e perché è l'unico posto in cui la soglia è scritta: a chi apre un esercizio mai provato dice quanto manca invece di tacere. Un consiglio invece compare solo quando ha qualcosa da far fare, e ADR-0007 vale su quelli. Il **consiglio** di stallo — il deload al 90% — è un'altra cosa e arriva con #115.
+  > **Corretto in [#115](https://github.com/cavallinilorenzo/progetto-django-uni/issues/115), costruendolo.** Questa riga diceva «solo il consiglio di carico e, se rilevato, lo stallo». Ma il **deload è esso stesso una prescrizione di carico**: su un esercizio in stallo la pagina avrebbe detto *«scarica a 107,5 kg»* e due centimetri sotto *«stesso carico, una ripetizione in più»* — due numeri diversi per la stessa domanda, entrambi calcolati correttamente. È il modo di fallire che ADR-0007 chiama **«dire troppo»**, dentro la pagina che dovrebbe dimostrare il contrario.
+  >
+  > Quei due non sono due consigli: sono **due risposte alla stessa domanda**, *che carico metto la prossima volta*. Quindi: **un solo carico in pagina, sempre.** Se c'è stallo il carico proposto **è** il deload; altrimenti è la doppia progressione. Lo stallo si mostra come **stato di progressione**, non come secondo consiglio.
+  >
+  > La firma lo dice invece di prometterlo: `consigli_per_esercizio` (lista) è diventata `consiglio_per_esercizio` (uno, o `None`), e **nessuna delle due funzioni pubbliche del coach può restituire più di un consiglio**.
+
+  **Lo stato di progressione non è un consiglio, ed è la distinzione che [#114](https://github.com/cavallinilorenzo/progetto-django-uni/issues/114) ha dovuto fare.** Il riquadro «Stato di progressione» sul dettaglio esercizio c'è **sempre**, anche a zero sessioni, perché risponde alla domanda per cui si è aperta la pagina — *sto migliorando su questo esercizio?* — e perché è l'unico posto in cui la soglia è scritta: a chi apre un esercizio mai provato dice quanto manca invece di tacere. Un consiglio invece compare solo quando ha qualcosa da far fare, e ADR-0007 vale su quelli. Il **consiglio** di stallo — il deload al 90% — è un'altra cosa, arriva con #115, e da lì **occupa lo stesso posto** del consiglio di carico invece di aggiungersene uno.
 - **Non esiste una pagina che li elenca tutti** — un coach che dice cinque cose non dice niente
 - **E quando nessuna regola scatta, il riquadro non c'è.** Deciso in [#112](https://github.com/cavallinilorenzo/progetto-django-uni/issues/112) in via provvisoria: un riquadro che dicesse «nessun consiglio» suonerebbe come «va tutto bene» mentre metà delle regole non esiste ancora, cioè una diagnosi rassicurante emessa da un coach che non ha guardato.
 
@@ -70,6 +76,20 @@ Per un allenamento **libero**, senza scheda e quindi senza target: il carico sal
 In risposta a uno stallo: **una singola sessione al 90% del massimo di finestra**, arrotondato all'incremento dell'attrezzo; poi si torna alla doppia progressione da quel carico.
 
 La base è il **massimo di finestra** e non l'ultimo carico, che potrebbe essere già una giornata storta.
+
+> **Precisato in [#115](https://github.com/cavallinilorenzo/progetto-django-uni/issues/115): «massimo di finestra» qui è il carico più pesante, non il massimale stimato.** #114 si aspettava che il deload leggesse `Finestra.massimo`, che è il massimo **1RM stimato** — la metrica su cui gira tutto il rilevamento. Non può esserlo, e la ragione è aritmetica prima che empirica: Epley è `carico × (1 + reps/30)`, quindi il 90% di un massimale **supera** il carico che l'ha prodotto per ogni serie da **4 ripetizioni in su**. Un deload calcolato così sarebbe un aumento, proprio sull'esercizio in cui l'utente è bloccato.
+>
+> Misurato sul database della demo: sugli **11 esercizi in stallo** di `cavallinilorenzo` (pk 64), il 90% del massimo Epley sta sopra il carico più pesante della finestra **in tutti e 11**. Sulla panca piana il massimo Epley di finestra è 143,3 e il carico più pesante 120 kg: il «deload» direbbe **129 kg**, nove chili sopra il massimo mai sollevato in quella finestra.
+>
+> La base è quindi il **carico di lavoro più pesante della finestra**, in `WorkoutSet.weight` come tutto ciò che il coach propone, e le due letture di «massimo di finestra» restano **diverse e dichiarate**, non riconciliate — come le due finestre della costanza: il rilevamento chiede se la finestra è piatta e guarda i massimali, il deload chiede da quale bilanciere ripartire e guarda i carichi.
+
+> **L'arrotondamento scende di incrementi interi da un carico davvero sollevato (#115).** Il 90% quasi mai cade sulla griglia dell'attrezzo, e la lettura ingenua — «il multiplo di `load_increment_kg` più vicino sotto il 90%» — produce carichi che non esistono: i multipli di 2,5 partendo da zero includono 2,5 e 5 kg, che su un bilanciere da 20 non si possono caricare. Si scende quindi **dal massimo di finestra** di un numero intero di incrementi, il più piccolo che porti a 90% o sotto: è la costruzione della doppia progressione percorsa all'indietro, e garantisce che il carico proposto sia caricabile esattamente come lo era quello da cui parte.
+>
+> Il prezzo si vede quando il massimo di finestra non sta sulla griglia dell'attrezzo, e su `pk 64` capita: 17,5 kg di massimo sul crunch alla macchina, che ha incremento 5, danno un deload di 12,5 — il 71% invece dell'86%. Va bene, e la direzione conta: uno scarico più profondo del necessario è prudente, un carico non caricabile è un consiglio che non si può eseguire.
+
+> **Il deload non si ricorda: si rilegge dal log (#115).** Non si persiste niente (ADR-0012), quindi «l'ha già fatto?» non ha una memoria a cui rivolgersi — e senza risposta il coach direbbe «scarica» a ogni ricarica finché lo stallo dura, cioè per settimane, mentre qui sopra c'è scritto *una singola sessione*. La risposta non serve ricordarla perché è **già nel log**: se l'ultima seduta della finestra sta a quel carico o sotto, il deload è fatto, e il consiglio **tace** lasciando la parola alla doppia progressione — che è il «poi si torna alla doppia progressione da quel carico» detto in codice. Degli 11 esercizi in stallo di `pk 64`, **4** sono già in questo stato.
+
+> **Attrezzo a incremento zero: nessun numero, e si dice (#115).** Su `bodyweight` e `band` il carico non ha un passo con cui **scendere**, quindi il deload non ha un numero — è il confine della doppia progressione (#113) visto dall'altra parte. Il consiglio c'è lo stesso e resta azionabile — una sessione più leggera: meno ripetizioni per serie, o una variante più facile — e il limite dichiara che quel passo il coach non lo misura. Qui il consiglio **non tace mai** finché lo stallo dura: senza un numero non c'è modo di leggere dal log se la sessione più leggera sia stata fatta, e l'alternativa sarebbe cedere la parola alla doppia progressione, cioè dire «aggiungi una ripetizione» a chi è bloccato.
 
 Le altre tre risposte possibili sono state scartate per ragioni misurabili:
 

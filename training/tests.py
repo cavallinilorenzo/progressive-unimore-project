@@ -39,6 +39,7 @@ from django.utils import timezone
 from training import rankings, views
 from training.analytics import coach as analytics_coach
 from training.analytics.coach import carico as coach_carico
+from training.analytics.coach import stallo as coach_stallo
 from training.analytics import costanza as analytics_costanza
 from training.analytics import muscles as analytics_muscles
 from training.analytics import plateau as analytics_plateau
@@ -2742,6 +2743,18 @@ class ExerciseAnalyticsTests(TestCase):
         Cresce lo storico **e** la popolazione, perché il percentile è l'unica
         delle tre che guarda gli altri utenti: se il suo costo crescesse con
         loro, la pagina rallenterebbe per un utente che non si è allenato.
+
+        **Da #115 il conto è un tetto e non un'uguaglianza, ed è una scelta.**
+        Il coach su questa pagina sceglie fra due regole: se c'è stallo e il
+        deload non è ancora stato fatto risponde lui, con **una** query; se non
+        c'è stallo risponde il carico, con **due**; e se c'è stallo ma il
+        deload è già stato fatto il primo tace e paga comunque la sua query
+        prima di cedere la parola al secondo — **tre**. Allungare lo storico
+        può quindi far cambiare *ramo*, e il conto si sposta di uno.
+        Quell'uno è un ramo, non una crescita: dipende da **quante regole** ci
+        sono, non da quante sedute, ed è per questo che il test qui sotto
+        allunga la storia **due volte** e pretende che la seconda non muova più
+        niente.
         """
 
         def rendi():
@@ -2765,7 +2778,15 @@ class ExerciseAnalyticsTests(TestCase):
             )
             self.sessione(giorni_fa=2, carichi=[70, 80], user=altro)
 
-        self.assertEqual(prima, rendi())
+        dopo = rendi()
+        self.assertLessEqual(dopo, prima + 1)
+
+        # E ancora storia, il triplo: se il conto crescesse con le sedute,
+        # crescerebbe qui. Non si muove.
+        for giorni in range(30, 120):
+            self.sessione(giorni_fa=giorni, carichi=[80, 90, 100, 110])
+
+        self.assertEqual(dopo, rendi())
 
 
 class WorkoutCrudTests(TestCase):
@@ -6427,8 +6448,16 @@ class CoachAdviceTests(TestCase):
             analytics_muscles.SETTIMANE_HEATMAP
         )
 
-    def allenamento(self, giorno, gruppo="chest", user=None, quante=1):
-        """Un allenamento con `quante` serie di lavoro, alle 18 di `giorno`."""
+    def allenamento(self, giorno, gruppo="chest", user=None, quante=1, peso="60"):
+        """Un allenamento con `quante` serie di lavoro, alle 18 di `giorno`.
+
+        `peso` esiste da #115: tutte le sessioni a 60 kg × 10 hanno lo stesso
+        massimale stimato, quindi appena la storia è abbastanza lunga da
+        formare una finestra il **record** resta la primissima seduta e ogni
+        test di questa classe finisce in stallo. Un carico diverso nell'ultima
+        seduta è il modo più corto di dire «qui parla il carico, non lo
+        stallo».
+        """
         istante = timezone.make_aware(
             timezone.datetime.combine(giorno, timezone.datetime.min.time())
         ) + timedelta(hours=18)
@@ -6441,7 +6470,7 @@ class CoachAdviceTests(TestCase):
                 exercise=self.esercizi[gruppo],
                 set_number=numero,
                 reps=10,
-                weight=Decimal("60"),
+                weight=Decimal(peso),
                 set_type=WorkoutSet.SetType.WORKING,
                 is_completed=True,
             )
@@ -6710,25 +6739,37 @@ class CoachAdviceTests(TestCase):
         self.assertEqual(consiglio.tipo, "squilibrio")
 
     def test_the_load_rule_costs_three_queries_and_not_one_per_session(self):
-        """Il carico è **l'unica regola con query proprie**, e sono tre:
-        l'esercizio più recente, gli ultimi due allenamenti che lo contengono,
-        e le loro serie. Quattro in tutto con l'aggregato dei conteggi, che la
-        selezione fa comunque — la dashboard passa da 13 query a 16 quando è il
-        carico a parlare, e resta a 13 quando parla una regola più prioritaria.
+        """Il costo cresce **scendendo** la priorità, e si ferma dove si ferma
+        la selezione.
 
-        Il numero conta meno dell'**invarianza**: le tre query non crescono con
-        lo storico, che è la guardia di #86 sulla pagina che il prof apre per
-        prima. Una regola che leggesse una sessione per query renderebbe
+        Con l'aggregato dei conteggi, che la selezione fa comunque: **una**
+        query quando parla la costanza o lo squilibrio; **quattro** quando parla
+        lo stallo — l'esercizio più recente, A3, i carichi della finestra;
+        **cinque** quando la parola arriva fino al carico, che aggiunge le
+        ultime due sessioni e le loro serie. La dashboard passa quindi da 13
+        query a 16 o 17, e resta a 13 quando parla una regola più prioritaria.
+
+        Le due query in più rispetto a #113 sono di #115 e si pagano anche
+        quando il deload tace: lo stallo sta **sopra** il carico e per sapere di
+        non avere niente da dire deve guardare. L'esercizio più recente invece
+        non si paga due volte — le due regole se lo passano dal `Contesto`.
+
+        Il numero conta meno dell'**invarianza**: nessuna di queste query cresce
+        con lo storico, che è la guardia di #86 sulla pagina che il prof apre
+        per prima. Una regola che leggesse una sessione per query renderebbe
         benissimo su tre allenamenti e morirebbe sui 443 dell'utente della demo.
         """
         # Due allenamenti negli ultimi 14 giorni: quanti bastano perché la
         # costanza resti zitta anche quando lo storico, sotto, si allunga —
-        # senza, la seconda metà del test misurerebbe un'altra regola.
+        # senza, la seconda metà del test misurerebbe un'altra regola. E
+        # l'ultimo a un carico più alto, perché faccia **record**: senza, la
+        # storia lunga della seconda metà formerebbe una finestra piatta e a
+        # rispondere sarebbe lo stallo, che è la regola di sopra.
         self.allenamento(self.settimane[-1], quante=3)
-        self.allenamento(self.settimane[-1] + timedelta(days=1), quante=3)
+        self.allenamento(self.settimane[-1] + timedelta(days=1), quante=3, peso="70")
         heatmap = analytics_muscles.serie_per_muscolo(self.user, self.settimane)
 
-        with self.assertNumQueries(4):
+        with self.assertNumQueries(5):
             consiglio = analytics_coach.consiglio_per_dashboard(
                 self.user, heatmap=heatmap
             )
@@ -6741,34 +6782,39 @@ class CoachAdviceTests(TestCase):
                 self.settimane[0] - timedelta(weeks=indietro), quante=4
             )
 
-        with self.assertNumQueries(4):
-            analytics_coach.consiglio_per_dashboard(self.user, heatmap=heatmap)
+        with self.assertNumQueries(5):
+            consiglio = analytics_coach.consiglio_per_dashboard(
+                self.user, heatmap=heatmap
+            )
+        self.assertEqual(consiglio.tipo, "carico")
 
-    def test_the_advice_for_the_exercise_page_is_a_list_and_not_the_dashboard_one(self):
-        """L'altra metà della superficie pubblica di ADR-0007, vuota in #112 e
-        riempita da #113 con **un** consiglio, il carico.
+    def test_the_advice_for_the_exercise_page_is_one_and_not_the_dashboard_one(self):
+        """L'altra metà della superficie pubblica di ADR-0007, vuota in #112,
+        riempita da #113 con il carico e **chiusa a uno** da #115.
 
-        Resta una lista: lo stallo si aggiungerà qui, e una firma che oggi
-        restituisse un oggetto solo andrebbe cambiata in un ticket che ha già
-        il suo lavoro da fare. E resta vuota su un esercizio mai registrato,
-        che è il modo in cui la pagina di un esercizio aperto per curiosità dal
-        catalogo non inventa un carico di partenza.
+        Fino a #113 tornava una lista, perché la spec diceva «il carico e, se
+        rilevato, lo stallo». Costruendoli entrambi si è visto che quei due non
+        sono due consigli ma due risposte alla stessa domanda, e la firma lo
+        dice: `None` oppure **un** `Consiglio`. Non è una scorciatoia, è la
+        garanzia di ADR-0007 spostata dalla promessa al tipo.
+
+        `None` su un esercizio mai registrato, che è il modo in cui la pagina
+        di un esercizio aperto per curiosità dal catalogo non inventa un carico
+        di partenza.
         """
-        self.assertEqual(
-            analytics_coach.consigli_per_esercizio(self.user, self.esercizi["chest"]),
-            [],
+        self.assertIsNone(
+            analytics_coach.consiglio_per_esercizio(self.user, self.esercizi["chest"])
         )
 
         self.allenamento(self.settimane[-1], gruppo="chest")
-        consigli = analytics_coach.consigli_per_esercizio(
+        consiglio = analytics_coach.consiglio_per_esercizio(
             self.user, self.esercizi["chest"]
         )
 
-        self.assertEqual([c.tipo for c in consigli], ["carico"])
+        self.assertEqual(consiglio.tipo, "carico")
         # E su un altro esercizio, che quell'utente non ha mai toccato, tace.
-        self.assertEqual(
-            analytics_coach.consigli_per_esercizio(self.user, self.esercizi["legs"]),
-            [],
+        self.assertIsNone(
+            analytics_coach.consiglio_per_esercizio(self.user, self.esercizi["legs"])
         )
 
     # --- il riquadro in pagina --------------------------------------------
@@ -7219,8 +7265,8 @@ class DoubleProgressionTests(TestCase):
         """`None`, e non un carico di partenza inventato: è l'unico modo in cui
         questo consiglio può essere *falso* invece che prudente."""
         self.assertIsNone(self.consiglio())
-        self.assertEqual(
-            analytics_coach.consigli_per_esercizio(self.user, self.panca), []
+        self.assertIsNone(
+            analytics_coach.consiglio_per_esercizio(self.user, self.panca)
         )
 
     # --- quale esercizio parla in dashboard --------------------------------
@@ -7365,7 +7411,7 @@ class DoubleProgressionTests(TestCase):
         )
         pagina = response.content.decode()
 
-        self.assertEqual([c.tipo for c in response.context["consigli"]], ["carico"])
+        self.assertEqual(response.context["consiglio"].tipo, "carico")
         self.assertContains(response, "Il coach dice", count=1)
         self.assertIn("Passa a 62,5 kg", pagina)
         self.assertLess(pagina.index("Il coach dice"), pagina.index("Il tuo record"))
@@ -7379,7 +7425,7 @@ class DoubleProgressionTests(TestCase):
             reverse("training:exercise-detail", args=[self.panca.slug])
         )
 
-        self.assertEqual(response.context["consigli"], [])
+        self.assertIsNone(response.context["consiglio"])
         self.assertNotContains(response, "Il coach dice")
 
     def test_the_dashboard_links_the_exercise_the_advice_talks_about(self):
@@ -7401,7 +7447,15 @@ class DoubleProgressionTests(TestCase):
     def test_the_page_cost_does_not_grow_with_the_history(self):
         """La guardia di #86 sul dettaglio esercizio, che #102 aveva misurato
         in banda verde: le due query del carico leggono **l'ultima sessione**,
-        non la storia, e il conto non deve accorgersi di quanta ce n'è."""
+        non la storia, e il conto non deve accorgersi di quanta ce n'è.
+
+        **Un tetto e non un'uguaglianza da #115**, per la ragione scritta per
+        esteso in `ExerciseAnalyticsTests`: il coach sceglie fra il deload e la
+        doppia progressione, e allungare la storia può far cambiare ramo. Lo
+        scarto è di **una** query e non si somma: dipende da quante regole ci
+        sono, non da quante sedute. Il secondo allungamento è lì per
+        dimostrarlo.
+        """
 
         def rendi():
             with CaptureQueriesContext(connection) as contesto:
@@ -7418,7 +7472,13 @@ class DoubleProgressionTests(TestCase):
         for indietro in range(4, 40):
             self.sessione(indietro * 7, serie=[(8, "60", True), (8, "60", True)])
 
-        self.assertEqual(prima, rendi())
+        dopo = rendi()
+        self.assertLessEqual(dopo, prima + 1)
+
+        for indietro in range(40, 160):
+            self.sessione(indietro * 7, serie=[(8, "60", True), (8, "60", True)])
+
+        self.assertEqual(dopo, rendi())
 
 
 
@@ -7801,6 +7861,379 @@ class ProgressionWindowTests(TestCase):
         with CaptureQueriesContext(connection) as ctx:
             self.client.get(url)
         self.assertEqual(len(ctx.captured_queries), prima)
+
+
+class DeloadAdviceTests(TestCase):
+    """Il consiglio di stallo e il deload al 90% (#115) — l'ultimo dei quattro.
+
+    La regola 2 della mappa #111 vale qui come in #114: un consiglio plausibile
+    ma falso rende una pagina perfetta. Il test portante ricostruisce quindi lo
+    stesso storico vero di `cavallinilorenzo` (pk 64) che #114 ha inchiodato —
+    otto sedute di panca piana, serie per serie — e ci aggiunge la colonna che
+    a #114 non serviva: il **carico**.
+
+    | Sessione | Serie di punta | Carico di punta | Massimale |
+    |---|---|---|---|
+    | 9 ago  | 8 × 110    | 110   | 139,333 |
+    | 12 ago | 12 × 100   | 100   | 140,000 |
+    | 15 ago | 5 × 120    | **120** | 140,000 |
+    | 18 ago | 6 × 115    | 115   | 138,000 |
+    | 21 ago | 10 × 107,5 | 107,5 | 143,333 |
+    | 27 ago | 6 × 110    | 110   | 132,000 |
+    | 31 ago | 5 × 117,5  | 117,5 | 137,083 |
+    | 5 set  | 6 × 117,5  | 117,5 | 141,000 |
+
+    La finestra è **15 ago → 5 set** (sei sedute, ventuno giorni), il record è
+    del 21 agosto e da allora sono passate tre sessioni: con `N = 3` è stallo.
+
+    E il deload, calcolato a mano prima di guardare cosa risponde il codice: il
+    carico più pesante della finestra è **120 kg** (15 agosto), il 90% è
+    **108 kg**, che sul bilanciere non esiste; si scende da 120 di incrementi
+    interi da 2,5 — 117,5, 115, 112,5, 110, **107,5** — e cinque passi dopo si
+    è sotto 108. Il consiglio dice **107,5 kg**.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        cls.user = User.objects.create_user(
+            username="atleta", password=PASSWORD, body_mass_kg=Decimal("96")
+        )
+        gruppo = MuscleGroup.objects.create(
+            code="chest", label_it="Petto", sort_order=1
+        )
+        muscolo = Muscle.objects.create(
+            code="chestMain", group=gruppo, label_it="Petto", sort_order=1
+        )
+        bilanciere = Equipment.objects.create(
+            code="barbell",
+            label_it="Bilanciere",
+            default_bar_weight_kg=Decimal("20"),
+            load_increment_kg=Decimal("2.5"),
+            sort_order=1,
+        )
+        cls.corpo_libero = Equipment.objects.create(
+            code=CORPO_LIBERO,
+            label_it="Corpo libero",
+            load_increment_kg=Decimal("0"),
+            sort_order=2,
+        )
+        cls.panca = Exercise.objects.create(
+            name="Panca piana con bilanciere",
+            slug="panca-piana",
+            primary_muscle=muscolo,
+            equipment=bilanciere,
+        )
+        cls.piegamenti = Exercise.objects.create(
+            name="Piegamenti",
+            slug="piegamenti",
+            primary_muscle=muscolo,
+            equipment=cls.corpo_libero,
+        )
+
+    # --- la fixture --------------------------------------------------------
+
+    def sessione(self, quando, serie, esercizio=None):
+        """Una sessione a un istante esatto: la finestra si misura in giorni di
+        calendario, e «giorni fa» non saprebbe riprodurla."""
+        allenamento = Workout.objects.create(
+            user=self.user,
+            title="Sessione",
+            started_at=timezone.make_aware(quando),
+        )
+        for numero, (reps, carico) in enumerate(serie, start=1):
+            WorkoutSet.objects.create(
+                workout=allenamento,
+                exercise=esercizio or self.panca,
+                set_number=numero,
+                reps=reps,
+                weight=Decimal(carico),
+                set_type=WorkoutSet.SetType.WORKING,
+                is_completed=True,
+            )
+        return allenamento
+
+    def storico_della_demo(self):
+        """Le otto sedute vere di `pk 64` sulla panca piana, con le loro ore."""
+        for quando, serie in [
+            (datetime(2026, 8, 9, 14, 30), [(8, "110"), (8, "110"), (6, "110")]),
+            (datetime(2026, 8, 12, 12, 45), [(12, "100"), (12, "100"), (10, "100")]),
+            (datetime(2026, 8, 15, 16, 45), [(5, "120"), (4, "120"), (4, "120")]),
+            (datetime(2026, 8, 18, 13, 0), [(6, "115"), (4, "115"), (6, "115")]),
+            (datetime(2026, 8, 21, 15, 15), [(10, "107.5"), (9, "107.5")]),
+            (datetime(2026, 8, 27, 19, 15), [(6, "110"), (6, "110"), (5, "110")]),
+            (datetime(2026, 8, 31, 14, 30), [(5, "117.5"), (3, "117.5")]),
+            (datetime(2026, 9, 5, 12, 15), [(6, "117.5"), (6, "117.5")]),
+        ]:
+            self.sessione(quando, serie)
+
+    def consiglio(self, esercizio=None):
+        return coach_stallo.consiglio_di_stallo(self.user, esercizio or self.panca)
+
+    # --- la base del deload ------------------------------------------------
+
+    def test_the_deload_starts_from_the_heaviest_load_and_never_from_the_epley_max(self):
+        """**La scoperta di questo ticket**, e il numero che la dimostra.
+
+        La spec dice «90% del massimo di finestra» e #114 si aspettava che
+        fosse `Finestra.massimo`, che è il massimo **massimale stimato**. Ma
+        Epley è `carico × (1 + reps/30)`, quindi il 90% di un massimale supera
+        il carico che l'ha prodotto per ogni serie da 4 ripetizioni in su: un
+        deload così sarebbe un **aumento**, proprio sull'esercizio in cui
+        l'utente è bloccato.
+
+        Sulla panca piana della demo si vede in un numero: il massimo Epley
+        della finestra è 143,33, il suo 90% è **129 kg**, e nella finestra il
+        carico più pesante mai sollevato è **120**. Nove chili sopra.
+
+        Misurato il 2026-09-10 su tutti gli 11 esercizi in stallo di `pk 64`: il
+        90% del massimo Epley sta sopra il carico più pesante della finestra in
+        **tutti e 11**. Non è un caso limite, è la regola.
+        """
+        self.storico_della_demo()
+        stato = analytics_plateau.stato_progressione(self.user, self.panca)
+
+        self.assertAlmostEqual(stato.finestra.massimo, 143.333, places=2)
+        self.assertGreater(stato.finestra.massimo * 0.9, 120)
+
+        carichi = coach_stallo.carichi_della_finestra(
+            self.user, self.panca, stato.finestra
+        )
+        self.assertEqual(
+            [carico for _, carico in carichi],
+            [Decimal(n) for n in ("120", "115", "107.5", "110", "117.5", "117.5")],
+        )
+
+        consiglio = self.consiglio()
+        self.assertIn("107,5 kg", consiglio.azione)
+        self.assertNotIn("129", consiglio.azione)
+
+    def test_the_deload_walks_down_whole_increments_from_a_load_really_lifted(self):
+        """L'arrotondamento, e perché non è «il multiplo dell'incremento».
+
+        I multipli di 2,5 partendo da zero includono 2,5 e 5 kg, che su un
+        bilanciere da 20 kg non esistono: l'unica griglia che il progetto può
+        giustificare è quella ancorata a un carico davvero sollevato, cioè la
+        costruzione di `carico.py` percorsa all'indietro.
+
+        L'ultimo caso è il prezzo, misurato su `pk 64`: sul crunch alla
+        macchina il massimo di finestra è 17,5 kg su un attrezzo da 5, e il
+        deload scende a 12,5 — il 71% invece dell'86% che darebbe il multiplo
+        di 5 più vicino. Uno scarico più profondo del necessario è prudente; un
+        carico non caricabile è un consiglio che non si può eseguire.
+        """
+        self.assertEqual(
+            coach_stallo.deload(Decimal("120"), Decimal("2.5")), (Decimal("107.5"), 5)
+        )
+        self.assertEqual(
+            coach_stallo.deload(Decimal("60"), Decimal("2.5")), (Decimal("52.5"), 3)
+        )
+        # Il 90% esatto sta sulla griglia: ci si ferma lì, e non un passo sotto.
+        self.assertEqual(
+            coach_stallo.deload(Decimal("100"), Decimal("5")), (Decimal("90"), 2)
+        )
+        self.assertEqual(
+            coach_stallo.deload(Decimal("17.5"), Decimal("5")), (Decimal("12.5"), 1)
+        )
+        # Nessuna griglia, nessun numero — e i due casi coincidono sul corpo
+        # libero senza zavorra.
+        self.assertIsNone(coach_stallo.deload(Decimal("80"), Decimal("0")))
+        self.assertIsNone(coach_stallo.deload(Decimal("0"), Decimal("2.5")))
+
+    def test_the_advice_carries_the_numbers_that_produced_it(self):
+        """Un consiglio senza il suo numero non si distingue da uno inventato,
+        ed è il guasto proprio di questa fase."""
+        self.storico_della_demo()
+
+        consiglio = self.consiglio()
+
+        self.assertEqual(consiglio.tipo, "stallo")
+        self.assertEqual(consiglio.titolo, "Scarica una sessione")
+        self.assertIn("una sola sessione", consiglio.azione)
+        self.assertIn("il 90% dei 120 kg", consiglio.azione)
+        self.assertIn("5 incrementi da 2,5 kg", consiglio.azione)
+        self.assertIn("Nessun record personale da 3 sessioni", consiglio.misura)
+        self.assertIn("il carico più pesante è 120 kg", consiglio.misura)
+        self.assertIn("l'ultima seduta 117,5 kg", consiglio.misura)
+        # L'euristica si dichiara: il 90% non esce da nessuna misura di questo
+        # progetto, e niente qui dentro può validarlo.
+        self.assertIn("euristica", consiglio.limite)
+        self.assertEqual(consiglio.esercizio, self.panca)
+
+    # --- il deload non si ricorda: si rilegge dal log -----------------------
+
+    def test_the_deload_is_not_repeated_because_the_log_already_says_it_was_done(self):
+        """La domanda che il ticket ha lasciato aperta: **va ricordato?**
+
+        No, e non perché non serva: perché non c'è dove ricordarlo (ADR-0012,
+        nessuna persistenza) e perché non serve ricordarlo — la risposta è già
+        scritta nel log. Se l'ultima seduta della finestra sta a quel carico o
+        sotto, il deload è fatto, e il consiglio tace lasciando la parola alla
+        doppia progressione: che è esattamente il «poi si torna alla doppia
+        progressione da quel carico» della spec.
+
+        Senza questa riga il coach direbbe «scarica» a ogni ricarica finché lo
+        stallo dura, cioè per settimane, mentre la spec dice **una singola
+        sessione**.
+
+        Misurato il 2026-09-10: degli 11 esercizi in stallo di `pk 64`, **4**
+        hanno già l'ultima seduta a quel livello o sotto — squat, military
+        press, calf raise in piedi, torsioni russe — e ricevono la doppia
+        progressione invece di un secondo «scarica».
+        """
+        self.storico_della_demo()
+        self.assertIsNotNone(self.consiglio())
+
+        # La sessione di scarico, fatta: 105 kg, sotto i 107,5 proposti. Non
+        # fa record, quindi lo **stallo resta** — ed è il punto: è il consiglio
+        # a cambiare, non il verdetto.
+        self.sessione(datetime(2026, 9, 8, 12, 0), [(8, "105"), (8, "105")])
+
+        self.assertTrue(
+            analytics_plateau.stato_progressione(self.user, self.panca).e_stallo
+        )
+        self.assertIsNone(self.consiglio())
+
+        consiglio = analytics_coach.consiglio_per_esercizio(self.user, self.panca)
+        self.assertEqual(consiglio.tipo, "carico")
+
+    # --- l'attrezzo a incremento zero --------------------------------------
+
+    def test_zero_increment_equipment_gets_the_advice_without_a_number(self):
+        """Lo stesso confine di #113, visto dall'altra parte.
+
+        Su `bodyweight` e `band` il carico non ha un passo con cui **scendere**,
+        quindi il deload non ha un numero. Il consiglio c'è lo stesso e resta
+        azionabile — una sessione più leggera — e il limite dichiara che quel
+        passo il coach non lo misura.
+
+        Tacere qui sarebbe peggio che dire poco: la parola passerebbe alla
+        doppia progressione, cioè «aggiungi una ripetizione» detto a chi è
+        bloccato — «per sempre corretto e per sempre inutile». Due dei 28
+        esercizi di `pk 64` sono qui, e sono entrambi in stallo.
+        """
+        for quando in [
+            datetime(2026, 8, 15, 10, 0),
+            datetime(2026, 8, 18, 10, 0),
+            datetime(2026, 8, 21, 10, 0),
+            datetime(2026, 8, 27, 10, 0),
+            datetime(2026, 8, 31, 10, 0),
+            datetime(2026, 9, 5, 10, 0),
+        ]:
+            self.sessione(quando, [(10, "0"), (10, "0")], esercizio=self.piegamenti)
+
+        consiglio = self.consiglio(self.piegamenti)
+
+        self.assertEqual(consiglio.tipo, "stallo")
+        self.assertEqual(consiglio.titolo, "Fai una sessione più leggera")
+        self.assertNotIn("90%", consiglio.azione)
+        self.assertNotIn("kg", consiglio.azione)
+        self.assertIn("Corpo libero", consiglio.limite)
+        self.assertIn("il 90% è un numero che qui non esiste", consiglio.limite)
+
+    def test_without_a_plateau_there_is_no_deload(self):
+        """Il primo dei tre silenzi: non c'è stallo, quindi non c'è niente da
+        far fare. Lo **stato** di progressione è un'altra cosa e resta in
+        pagina anche qui — è la distinzione di #114."""
+        self.storico_della_demo()
+        # Un record nell'ultima seduta: il verdetto si ribalta.
+        self.sessione(datetime(2026, 9, 8, 12, 0), [(10, "120")])
+
+        self.assertIsNone(self.consiglio())
+        self.assertEqual(
+            analytics_coach.consiglio_per_esercizio(self.user, self.panca).tipo,
+            "carico",
+        )
+
+    # --- la mappa intera in un'asserzione ----------------------------------
+
+    def test_only_one_load_advice_ever_reaches_the_page(self):
+        """**Il test che questo ticket esiste per scrivere.**
+
+        Con lo stallo rilevato, il coach ha due risposte pronte e corrette alla
+        stessa domanda: il deload dice *107,5 kg*, la doppia progressione dice
+        *stesso carico, una ripetizione in più*. In pagina ne esce **una**, e
+        la frase dell'altra non compare da nessuna parte.
+
+        È il modo di fallire che ADR-0007 chiama «dire troppo», e il posto in
+        cui si sarebbe materializzato è la pagina che dovrebbe dimostrare il
+        contrario.
+        """
+        self.storico_della_demo()
+
+        # Le due regole, chieste una per una, hanno entrambe qualcosa da dire.
+        self.assertIsNotNone(coach_stallo.consiglio_di_stallo(self.user, self.panca))
+        self.assertIsNotNone(coach_carico.consiglio_di_carico(self.user, self.panca))
+
+        consiglio = analytics_coach.consiglio_per_esercizio(self.user, self.panca)
+        self.assertEqual(consiglio.tipo, "stallo")
+
+        self.client.login(username="atleta", password=PASSWORD)
+        html = self.client.get(
+            reverse("training:exercise-detail", args=[self.panca.slug])
+        ).content.decode()
+
+        self.assertEqual(html.count("Il coach dice"), 1)
+        self.assertIn("Scarica una sessione", html)
+        self.assertNotIn("una ripetizione in più", html)
+        # E lo stato di progressione, che non è un consiglio, c'è comunque.
+        self.assertIn("In stallo", html)
+
+    def test_the_priority_is_the_spec_table_and_lives_in_one_place(self):
+        """I quattro tipi nell'ordine della tabella di `05-coach-e-stallo.md`,
+        e lo stallo **in mezzo** fra lo squilibrio e il carico.
+
+        Il numero si ricava da `REGOLE` e non è scritto a mano: due elenchi da
+        tenere allineati sono due elenchi che prima o poi non lo sono più, e un
+        consiglio dato nell'ordine sbagliato è invisibile — la pagina mostra
+        *un* consiglio plausibile, semplicemente non quello giusto.
+        """
+        self.assertEqual(
+            analytics_coach.PRIORITA,
+            {"costanza": 1, "squilibrio": 2, "stallo": 3, "carico": 4},
+        )
+        # I tipi ammessi sulla seconda superficie sono un sottoinsieme di
+        # `REGOLE`, non un secondo elenco con un ordine proprio.
+        self.assertLess(
+            [t for t, _ in analytics_coach.REGOLE].index("stallo"),
+            [t for t, _ in analytics_coach.REGOLE].index("carico"),
+        )
+        for tipo in analytics_coach.TIPI_DI_ESERCIZIO:
+            self.assertIn(tipo, dict(analytics_coach.REGOLE))
+
+    def test_the_dashboard_prefers_the_deload_over_the_double_progression(self):
+        """La stessa gerarchia sull'altra superficie, e con lei la prova che
+        inserire un tipo **in mezzo** non ha toccato niente: `REGOLE` ha una
+        riga in più, e la selezione è la stessa di #112.
+        """
+        self.storico_della_demo()
+        oggi = timezone.make_aware(datetime(2026, 9, 6, 12, 0))
+
+        consiglio = analytics_coach.consiglio_per_dashboard(self.user, oggi=oggi)
+        self.assertEqual(consiglio.tipo, "stallo")
+        self.assertEqual(consiglio.esercizio, self.panca)
+
+        # Rotto lo stallo, la parola scende di un gradino — e non di due.
+        self.sessione(datetime(2026, 9, 6, 9, 0), [(10, "120")])
+        consiglio = analytics_coach.consiglio_per_dashboard(self.user, oggi=oggi)
+        self.assertEqual(consiglio.tipo, "carico")
+
+    def test_the_deload_costs_one_query_when_the_page_hands_over_the_state(self):
+        """Il patto di #112 e #114 un'altra volta: il dettaglio esercizio ha già
+        calcolato lo stato per il proprio riquadro, e passarlo al coach gli
+        risparmia A3. Il conto non cresce con lo storico, che è la guardia di
+        #102 sulla pagina più cara del progetto."""
+        self.storico_della_demo()
+        stato = analytics_plateau.stato_progressione(self.user, self.panca)
+
+        with self.assertNumQueries(1):
+            coach_stallo.consiglio_di_stallo(self.user, self.panca, stato=stato)
+
+        for i in range(40):
+            self.sessione(datetime(2026, 5, 1, 18, 0) + timedelta(days=i), [(8, "80")])
+
+        stato = analytics_plateau.stato_progressione(self.user, self.panca)
+        with self.assertNumQueries(1):
+            coach_stallo.consiglio_di_stallo(self.user, self.panca, stato=stato)
 
 
 class ProvenanceTests(TestCase):

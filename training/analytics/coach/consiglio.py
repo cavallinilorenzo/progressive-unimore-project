@@ -13,6 +13,7 @@ riesporta, e fuori dal pacchetto si continua a scrivere
 """
 
 from dataclasses import dataclass
+from decimal import Decimal
 
 
 @dataclass(frozen=True)
@@ -56,3 +57,26 @@ class Consiglio:
 # numero — e per sopravvivere a questo spostamento avrebbe richiesto un import
 # dentro il metodo, cioè la stessa circolarità che il file esiste per evitare.
 # `PRIORITA` resta dov'era e continua a dare il numero a chi lo chiede.
+
+
+def kg(valore):
+    """`Decimal("57.50")` → `«57,5»`.
+
+    Un carico scritto `57.50 kg` dentro una frase italiana si legge come un
+    prezzo, e i decimali finti sono rumore in un numero che va riscritto a mano
+    sul telefono in palestra.
+
+    Nato in `carico.py` (#113) e salito qui in #115, quando il deload è
+    diventato il secondo consumatore: due copie della stessa formattazione
+    sono due copie che divergono al primo ripensamento sulla virgola, e il
+    numero è precisamente ciò che distingue un consiglio vero da uno
+    inventato.
+    """
+    return f"{Decimal(valore).normalize():f}".replace(".", ",")
+
+
+def carico_in_frase(carico):
+    """Zero non è un carico mancante, è il corpo libero (#13): scriverlo
+    «0 kg» sarebbe l'unico posto della pagina in cui un dato vero sembra un
+    buco."""
+    return "a corpo libero" if Decimal(carico) == 0 else f"{kg(carico)} kg"

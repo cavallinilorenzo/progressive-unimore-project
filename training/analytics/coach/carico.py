@@ -75,7 +75,7 @@ from decimal import Decimal
 
 from django.db.models import OuterRef, Subquery
 
-from training.analytics.coach.consiglio import Consiglio
+from training.analytics.coach.consiglio import Consiglio, carico_in_frase, kg
 from training.models import RoutineExercise, Workout, WorkoutSet
 
 #: Quante sessioni servono: la scorsa e quella prima. La seconda la usa solo il
@@ -116,23 +116,6 @@ class Sessione:
     nessuna_completata: bool = False
     #: Quante serie di lavoro c'erano in tutto, completate o no.
     serie_totali: int = 0
-
-
-def _kg(valore):
-    """`Decimal("57.50")` → `«57,5»`.
-
-    Un carico scritto `57.50 kg` dentro una frase italiana si legge come un
-    prezzo, e i decimali finti sono rumore in un numero che va riscritto a mano
-    sul telefono in palestra.
-    """
-    return f"{Decimal(valore).normalize():f}".replace(".", ",")
-
-
-def _carico_in_frase(carico):
-    """Zero non è un carico mancante, è il corpo libero (#13): scriverlo
-    «0 kg» sarebbe l'unico posto della pagina in cui un dato vero sembra un
-    buco."""
-    return "a corpo libero" if Decimal(carico) == 0 else f"{_kg(carico)} kg"
 
 
 def sessioni_recenti(user, exercise, quante=SESSIONI_LETTE):
@@ -281,7 +264,7 @@ def consiglio_di_carico(user, exercise):
             tipo="carico",
             titolo="Riprova lo stesso carico",
             azione=(
-                f"Ripeti {_carico_in_frase(ultima.carico)} su {exercise.name}: "
+                f"Ripeti {carico_in_frase(ultima.carico)} su {exercise.name}: "
                 "la scorsa volta nessuna serie di lavoro è arrivata in fondo, "
                 "e il carico non sale su una sessione che non ha retto."
             ),
@@ -296,7 +279,7 @@ def consiglio_di_carico(user, exercise):
             tipo="carico",
             titolo="Aggiungi una ripetizione",
             azione=(
-                f"Continua {_carico_in_frase(ultima.carico)} su "
+                f"Continua {carico_in_frase(ultima.carico)} su "
                 f"{exercise.name} e aggiungi una ripetizione: su "
                 f"{exercise.equipment.label_it} il carico non ha un passo con "
                 "cui salire."
@@ -317,8 +300,8 @@ def consiglio_di_carico(user, exercise):
             tipo="carico",
             titolo="Sali di carico",
             azione=(
-                f"Passa a {_kg(ultima.carico + incremento)} kg su "
-                f"{exercise.name} ({_kg(ultima.carico)} + {_kg(incremento)}, "
+                f"Passa a {kg(ultima.carico + incremento)} kg su "
+                f"{exercise.name} ({kg(ultima.carico)} + {kg(incremento)}, "
                 f"l'incremento di {exercise.equipment.label_it}){riparti}"
             ),
             misura=misura,
@@ -330,7 +313,7 @@ def consiglio_di_carico(user, exercise):
         tipo="carico",
         titolo="Stesso carico, una ripetizione in più",
         azione=(
-            f"Ripeti {_carico_in_frase(ultima.carico)} su {exercise.name} e "
+            f"Ripeti {carico_in_frase(ultima.carico)} su {exercise.name} e "
             f"punta a {_traguardo(ultima, precedente)} ripetizioni su tutte le "
             "serie di lavoro: il carico sale quando ci arrivi."
         ),
@@ -376,7 +359,7 @@ def _valuta(ultima, precedente, quando):
 
     if ultima.target_reps_max:
         misura = (
-            f"{_kg(ultima.carico)} kg × {conteggio} ripetizioni, "
+            f"{kg(ultima.carico)} kg × {conteggio} ripetizioni, "
             f"target {ultima.target_reps_max}, {quando}"
         )
         return all(n >= ultima.target_reps_max for n in ripetizioni), misura, ""
@@ -389,7 +372,7 @@ def _valuta(ultima, precedente, quando):
 
     if precedente is None:
         misura = (
-            f"{_kg(ultima.carico)} kg × {conteggio} ripetizioni, {quando} — "
+            f"{kg(ultima.carico)} kg × {conteggio} ripetizioni, {quando} — "
             "prima sessione registrata su questo esercizio"
         )
         return False, misura, limite
@@ -401,21 +384,21 @@ def _valuta(ultima, precedente, quando):
         # «primo» sarebbe un consiglio giusto con sotto un numero sbagliato,
         # cioè il guasto contro cui esiste il campo `misura`.
         misura = (
-            f"{_kg(ultima.carico)} kg × {conteggio} ripetizioni {quando}, "
-            f"ma la sessione prima era {_carico_in_frase(precedente.carico)}: "
+            f"{kg(ultima.carico)} kg × {conteggio} ripetizioni {quando}, "
+            f"ma la sessione prima era {carico_in_frase(precedente.carico)}: "
             "lo stesso carico non è ancora stato ripetuto due volte di fila"
         )
         return False, misura, limite
 
     if not precedente.ripetizioni:
         misura = (
-            f"{_kg(ultima.carico)} kg × {conteggio} ripetizioni, {quando} — "
+            f"{kg(ultima.carico)} kg × {conteggio} ripetizioni, {quando} — "
             "la sessione prima non ha completato nessuna serie"
         )
         return False, misura, limite
 
     misura = (
-        f"{_kg(ultima.carico)} kg due volte di fila: "
+        f"{kg(ultima.carico)} kg due volte di fila: "
         f"{'/'.join(str(n) for n in precedente.ripetizioni)} ripetizioni il "
         f"{precedente.quando:%d/%m/%Y}, {conteggio} {quando}"
     )
