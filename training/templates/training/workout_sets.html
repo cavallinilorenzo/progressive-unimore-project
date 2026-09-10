@@ -3,20 +3,19 @@
 `/allenamenti/<pk>/serie/` — il registro delle serie, e il formset più denso
 del progetto.
 
-EREDITA LE DUE SCELTE DI `routine_exercises.html`, e per le stesse ragioni:
-una card per riga invece di una riga di tabella, perché sei campi in una
-`<table>` a larghezza fissa comprimono i `<select>` da cento opzioni; e nessun
-bottone «aggiungi riga», perché clonare una riga al volo e riscrivere
-`TOTAL_FORMS` è JavaScript applicativo, che il progetto non ha.
+Il raggruppamento in `blocchi` (`training.views.raggruppa_serie_del_formset`)
+è lo stesso di `workout_form.html`: una card per esercizio, le sue serie di
+fila e ordinate per `set_number`. Prima di questo raggruppamento la pagina
+mostrava le righe nell'ordine di default del modello — `set_number` — che
+mette in fila tutte le prime serie di ogni esercizio, poi tutte le seconde:
+leggibile per un totale, illeggibile per una correzione, dove le serie dello
+stesso esercizio vanno lette una dietro l'altra.
 
-DOVE INVECE DIVERGE. Qui le righe sono dieci o quindici, non tre, e #69 aveva
-già misurato che «salva e torna» ci passa peggio. La risposta non è alzare
-`extra` fino a coprire una sessione intera — venti righe vuote sono un modulo,
-non un registro — ma «Avvia allenamento da scheda», che le righe le porta già
-scritte. Questa pagina è quindi soprattutto una pagina di CORREZIONE: i numeri
-ci sono, si aggiustano quelli che non tornano, si toglie la spunta a ciò che è
-stato saltato. Le cinque righe vuote in coda servono all'esercizio aggiunto
-fuori programma.
+Nessun bottone «aggiungi riga» dentro un blocco, per la stessa ragione di
+`routine_exercises.html`: clonare una riga al volo e riscrivere `TOTAL_FORMS`
+è JavaScript applicativo, che il progetto non ha. Le cinque righe vuote in
+coda (`extra_forms`) restano il solo modo di aggiungere una serie non
+prevista dalla scheda — anche per un esercizio già in un blocco sopra.
 
 «Eseguita» è la casella che dà senso a tutto il resto: toglierla trasforma la
 riga in una serie saltata, e allora le ripetizioni non si pretendono più. È il
@@ -62,71 +61,111 @@ che lo dica SQLite.
   </div>
   {% endif %}
 
-  {% for form in formset %}
+  {% for esercizio, righe in blocchi %}
   <div class="card-ink p-3 mb-3">
-    {% comment %}
-    `form.id` è il campo nascosto su cui il formset distingue una riga
-    esistente da una nuova: senza, il salvataggio duplica invece di aggiornare.
-    Va reso sempre, anche nelle righe vuote.
-    {% endcomment %}
-    {% for nascosto in form.hidden_fields %}{{ nascosto }}{% endfor %}
-
-    <div class="d-flex justify-content-between align-items-baseline mb-2">
-      <div class="eyebrow">
-        {% if form.instance.pk %}Serie {{ forloop.counter }}{% else %}Nuova serie{% endif %}
-      </div>
-      {% if form.instance.pk %}
-      <div class="form-check mb-0">
-        {{ form.DELETE }}
-        <label for="{{ form.DELETE.id_for_label }}" class="form-check-label eyebrow" style="color:var(--red)">
-          Togli
-        </label>
-      </div>
-      {% endif %}
+    <div class="d-flex align-items-baseline justify-content-between mb-3">
+      <span class="h6 fw-bold mb-0" style="color:var(--t1)">{{ esercizio.name }}</span>
+      <span class="eyebrow" style="color:var(--t3)">{{ esercizio.equipment }}</span>
     </div>
 
-    {% if form.non_field_errors %}
-    {% for errore in form.non_field_errors %}
+    {% for riga in righe %}
+    <div class="row g-2 align-items-end mb-2 pb-2"
+         {% if not forloop.last %}style="border-bottom:1px solid var(--line)"{% endif %}>
+      {% comment %}
+      `riga.id` è il campo nascosto su cui il formset distingue una riga
+      esistente da una nuova: senza, il salvataggio duplica invece di
+      aggiornare. `exercise` è nascosto qui perché lo dice già l'intestazione
+      del blocco, non serve un secondo `<select>` per riga.
+      {% endcomment %}
+      {% for nascosto in riga.hidden_fields %}{{ nascosto }}{% endfor %}
+      {{ riga.exercise.as_hidden }}
+
+      <div class="col-6 col-sm-3 col-md-2">
+        <label class="eyebrow d-block mb-1">N&deg;</label>
+        {{ riga.set_number }}
+      </div>
+      <div class="col-6 col-sm-3 col-md-2">
+        <label class="eyebrow d-block mb-1">Carico kg</label>
+        {{ riga.weight }}
+      </div>
+      <div class="col-6 col-sm-3 col-md-2">
+        <label class="eyebrow d-block mb-1">Rip.</label>
+        {{ riga.reps }}
+      </div>
+      <div class="col-6 col-sm-3 col-md-2">
+        <label class="eyebrow d-block mb-1">Tipo</label>
+        {{ riga.set_type }}
+      </div>
+      <div class="col-12 col-md-4 d-flex align-items-center gap-4 mt-2 mt-md-0">
+        <div class="form-check mb-0">
+          {{ riga.is_completed }}
+          <label class="form-check-label eyebrow">Eseguita</label>
+        </div>
+        <div class="form-check mb-0">
+          {{ riga.DELETE }}
+          <label class="form-check-label eyebrow" style="color:var(--red)">Togli</label>
+        </div>
+      </div>
+
+      {% for campo in riga.visible_fields %}
+      {% for errore in campo.errors %}
+      <div class="col-12" style="color:var(--red);font-size:.8rem">{{ campo.label }}: {{ errore }}</div>
+      {% endfor %}
+      {% endfor %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endfor %}
+
+  {% if extra_forms %}
+  <div class="eyebrow mb-2">Nuova serie, esercizio fuori programma</div>
+  {% for riga in extra_forms %}
+  <div class="card-ink p-3 mb-3">
+    {% for nascosto in riga.hidden_fields %}{{ nascosto }}{% endfor %}
+
+    {% if riga.non_field_errors %}
+    {% for errore in riga.non_field_errors %}
     <div class="mb-2" style="color:var(--red);font-size:.82rem">{{ errore }}</div>
     {% endfor %}
     {% endif %}
 
     <div class="row g-2 align-items-end">
       <div class="col-12 col-lg-4">
-        <label for="{{ form.exercise.id_for_label }}" class="eyebrow d-block mb-1">Esercizio</label>
-        {{ form.exercise }}
+        <label for="{{ riga.exercise.id_for_label }}" class="eyebrow d-block mb-1">Esercizio</label>
+        {{ riga.exercise }}
       </div>
       <div class="col-4 col-lg-1">
-        <label for="{{ form.set_number.id_for_label }}" class="eyebrow d-block mb-1">N&deg;</label>
-        {{ form.set_number }}
+        <label for="{{ riga.set_number.id_for_label }}" class="eyebrow d-block mb-1">N&deg;</label>
+        {{ riga.set_number }}
       </div>
       <div class="col-4 col-lg-2">
-        <label for="{{ form.weight.id_for_label }}" class="eyebrow d-block mb-1">Carico kg</label>
-        {{ form.weight }}
+        <label for="{{ riga.weight.id_for_label }}" class="eyebrow d-block mb-1">Carico kg</label>
+        {{ riga.weight }}
       </div>
       <div class="col-4 col-lg-1">
-        <label for="{{ form.reps.id_for_label }}" class="eyebrow d-block mb-1">Rip.</label>
-        {{ form.reps }}
+        <label for="{{ riga.reps.id_for_label }}" class="eyebrow d-block mb-1">Rip.</label>
+        {{ riga.reps }}
       </div>
       <div class="col-8 col-lg-2">
-        <label for="{{ form.set_type.id_for_label }}" class="eyebrow d-block mb-1">Tipo</label>
-        {{ form.set_type }}
+        <label for="{{ riga.set_type.id_for_label }}" class="eyebrow d-block mb-1">Tipo</label>
+        {{ riga.set_type }}
       </div>
       <div class="col-4 col-lg-1">
         <div class="form-check mb-2">
-          {{ form.is_completed }}
-          <label for="{{ form.is_completed.id_for_label }}" class="form-check-label eyebrow">Eseguita</label>
+          {{ riga.is_completed }}
+          <label for="{{ riga.is_completed.id_for_label }}" class="form-check-label eyebrow">Eseguita</label>
         </div>
       </div>
     </div>
 
-    {% for campo in form.visible_fields %}
+    {% for campo in riga.visible_fields %}
     {% for errore in campo.errors %}
     <div class="mt-1" style="color:var(--red);font-size:.82rem">{{ campo.label }}: {{ errore }}</div>
     {% endfor %}
     {% endfor %}
   </div>
   {% endfor %}
+  {% endif %}
 
   <div class="card-ink p-3 mb-3">
     <div class="rail">
@@ -138,7 +177,8 @@ che lo dica SQLite.
         Una serie <strong>saltata</strong> si registra togliendo la spunta a
         «Eseguita», e allora ripetizioni e carico possono restare vuoti: è la
         differenza fra «non l'ho fatta» e «non l'avevo prevista», e le analisi
-        contano solo le eseguite. Le righe vuote in coda si ignorano; per
+        contano solo le eseguite. Per un esercizio fuori programma, o una serie
+        extra oltre quelle già scritte, si usano le righe vuote in coda; per
         aggiungerne altre, salva e torna qui.
       </div>
     </div>
