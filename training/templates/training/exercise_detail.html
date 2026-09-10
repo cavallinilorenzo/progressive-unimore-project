@@ -64,18 +64,25 @@ migliorando?», che è una domanda sul passato; il consiglio risponde a «cosa
 faccio la prossima volta», che è il motivo per cui si apre la pagina di un
 esercizio prima di allenarlo. Come in dashboard, sta in cima.
 
-**Un ciclo, e non un elenco.** Il `for` non è la porta che ADR-0007 chiude —
-sul dettaglio i tipi ammessi sono due e non si escludono, il carico e lo
-stallo — ma è il posto in cui la porta si riaprirebbe: la lista che arriva qui
-viene da `consigli_per_esercizio`, che è l'unica a poterla riempire, e non ci
-si aggiunge un terzo tipo dal template.
+**Uno, come in dashboard.** Fino a #113 qui c'era un ciclo, perché la spec
+diceva «il consiglio di carico e, se rilevato, lo stallo». #115 ha scoperto
+costruendoli che quei due non sono due consigli: sono due risposte alla stessa
+domanda — che carico metto la prossima volta — e in pagina avrebbero detto
+«scarica a 52,5 kg» e subito sotto «stesso carico, una ripetizione in più».
+Il ciclo è sparito con la lista, e con lui il posto da cui un terzo tipo
+sarebbe potuto entrare senza passare da `consiglio_per_esercizio`.
+
+Lo **stato di progressione** più in basso non è un consiglio e non c'entra con
+questo riquadro: quello risponde a «sto migliorando», questo a «cosa faccio».
+Il primo c'è sempre, anche a zero sessioni; il secondo solo quando ha qualcosa
+da far fare.
 
 Il riquadro è lo stesso della dashboard perché è lo stesso partial. Il link
 all'esercizio no: qui l'esercizio è la pagina.
 {% endcomment %}
-{% for consiglio in consigli %}
+{% if consiglio %}
   {% include "training/_consiglio.html" with nascondi_link_esercizio=True %}
-{% endfor %}
+{% endif %}
 
 {% comment %}
 A4 e A5, i due numeri: il record è il proprio passato, il percentile è il

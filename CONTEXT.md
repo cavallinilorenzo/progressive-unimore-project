@@ -89,7 +89,7 @@ Ogni consiglio ha un **tipo**, e il tipo porta con sé una **priorità** costant
 3. **Stallo** — vedi *Stato di progressione*.
 4. **Carico** — la doppia progressione, sotto.
 
-Dove i consigli si mostrano è parte della loro definizione: **uno solo**, quello a priorità più alta, nel riquadro della dashboard; nella pagina di dettaglio esercizio soltanto il consiglio di carico e, se rilevato, lo stallo. Non esiste una pagina che li elenca tutti — un coach che dice cinque cose non dice niente. E quando nessuna condizione è soddisfatta il coach **tace**: l'assenza di consiglio è una risposta, non un errore.
+Dove i consigli si mostrano è parte della loro definizione: **uno solo**, quello a priorità più alta, nel riquadro della dashboard; e **uno solo** anche nella pagina di dettaglio esercizio, dove è lo *stato di progressione* a decidere quale — se c'è stallo il carico proposto è il **deload**, altrimenti è la doppia progressione. Mai i due insieme: sarebbero due numeri diversi per la stessa domanda (#115). Non esiste una pagina che li elenca tutti — un coach che dice cinque cose non dice niente. E quando nessuna condizione è soddisfatta il coach **tace**: l'assenza di consiglio è una risposta, non un errore.
 
 ### Doppia progressione — «Doppia progressione»
 
@@ -105,7 +105,11 @@ Il target viene dalla scheda dell'**ultimo allenamento** che ha registrato quell
 
 ### Deload — «Scarico»
 
-L'unica azione che il coach propone in risposta a uno **stallo**: una singola sessione al **90% del massimo di finestra**, arrotondato all'incremento dell'attrezzo, dopo la quale si torna alla doppia progressione da quel carico. La base è il massimo di finestra e non l'ultimo carico, che potrebbe essere già una giornata storta.
+L'unica azione che il coach propone in risposta a uno **stallo**: una singola sessione al **90% del massimo di finestra**, dopo la quale si torna alla doppia progressione da quel carico. La base è il massimo di finestra e non l'ultimo carico, che potrebbe essere già una giornata storta.
+
+**«Massimo di finestra» qui è il carico di lavoro più pesante, non il massimale stimato** — le due letture convivono nel progetto e non si riconciliano. Il 90% di un 1RM stimato supera il carico che l'ha prodotto per ogni serie da quattro ripetizioni in su, quindi un deload calcolato su quello sarebbe un *aumento* (#115). Si arrotonda **scendendo di incrementi interi dal massimo di finestra**, il più piccolo numero che porti a 90% o sotto: un multiplo assoluto dell'incremento darebbe carichi che sul bilanciere non si possono caricare. Su un **attrezzo a incremento zero** il deload non ha un numero, e il consiglio lo dichiara.
+
+Il deload **non si ricorda**: se l'ultima seduta della finestra sta già a quel carico o sotto, è stato fatto, e il consiglio tace lasciando la parola alla doppia progressione. È il modo in cui «una singola sessione» resta vero senza persistere niente.
 
 Il deload è **proposto, mai rilevato**: [ADR-0004](docs/adr/0004-ground-truth-dello-stallo-dal-futuro-della-finestra.md) ha escluso di riconoscere un deload dai dati, perché recupero e durata delle sessioni sono inaffidabili. Nel modello non esiste nulla che rappresenti un ciclo di scarico di più settimane: sarebbe un piano di allenamento, e non abbiamo né il modello per descriverlo né i dati per validarlo.
 

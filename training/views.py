@@ -741,23 +741,33 @@ class ExerciseDetailView(LoginRequiredMixin, DetailView):
                 : self.RIGHE_DI_CLASSIFICA
             ]
 
-        # **Il coach, la seconda e ultima superficie su cui parla** (#113).
-        # Qui non c'è selezione per priorità: sul dettaglio i tipi ammessi non
-        # si escludono — il carico dice da dove ripartire, lo stallo dirà di
-        # scaricare — e sono comunque due, non «tutti» (ADR-0007). Oggi la
-        # lista ne contiene uno.
-        #
-        # Costa **due query**, e sono le uniche del progetto che guardano
-        # l'ultima sessione invece di tutta la storia: non crescono con lo
-        # storico, che è la guardia che #102 ha misurato su questa pagina.
-        #
-        # Lista vuota su un esercizio mai registrato — si apre dal catalogo per
-        # curiosità — e allora il riquadro non c'è, come sulla dashboard.
-        context["consigli"] = analytics_coach.consigli_per_esercizio(
-            self.request.user, self.object
-        )
+        analisi = self._analisi()
+        context.update(analisi)
 
-        context.update(self._analisi())
+        # **Il coach, la seconda e ultima superficie su cui parla** (#113), e
+        # da #115 **un** consiglio soltanto: se c'è stallo il carico proposto
+        # *è* il deload, altrimenti è la doppia progressione. Due riquadri con
+        # due carichi diversi per la stessa domanda sarebbero «dire troppo»
+        # (ADR-0007) proprio nella pagina che dovrebbe dimostrare il contrario.
+        #
+        # Sta **dopo** `_analisi()` di proposito: lo stato di progressione è
+        # già stato calcolato lì per il proprio riquadro, e passarlo al coach
+        # gli risparmia A3 — è lo stesso patto con cui la dashboard passa la
+        # heatmap (#112). Invertire le due righe costerebbe una query e non
+        # darebbe niente in cambio.
+        #
+        # Costa **una** query quando c'è stallo (i carichi della finestra) e
+        # **due** altrimenti (le ultime due sessioni): nessuna delle tre cresce
+        # con lo storico, che è la guardia che #102 ha misurato su questa
+        # pagina.
+        #
+        # `None` su un esercizio mai registrato — si apre dal catalogo per
+        # curiosità — e allora il riquadro non c'è, come sulla dashboard. Lo
+        # **stato di progressione**, che è un'altra cosa, resta comunque: dice
+        # quanto manca alla soglia invece di tacere (#114).
+        context["consiglio"] = analytics_coach.consiglio_per_esercizio(
+            self.request.user, self.object, stato=analisi["stato_progressione"]
+        )
         return context
 
     def _analisi(self):

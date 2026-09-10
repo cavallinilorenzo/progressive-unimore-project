@@ -392,7 +392,12 @@ class StatoProgressione:
 
     `finestra` è nulla esattamente quando lo stato è `DATI_INSUFFICIENTI`: non
     c'è verdetto perché non c'è la finestra su cui darlo. È anche il campo che
-    #115 leggerà per il deload, che parte dal **massimo di finestra**.
+    #115 legge per il deload — ma **non** attraverso `Finestra.massimo`, come
+    questa riga si aspettava: quello è il massimo *massimale stimato*, e il 90%
+    di un massimale supera il carico che l'ha prodotto per ogni serie da quattro
+    ripetizioni in su. Il deload legge i **giorni** della finestra e ci chiede
+    sopra i carichi di lavoro. Le due letture di «massimo di finestra» restano
+    diverse e dichiarate.
 
     `in_regressione` è un'etichetta descrittiva e vive accanto allo stato, mai
     dentro: si può essere in stallo e in regressione, in regressione senza
