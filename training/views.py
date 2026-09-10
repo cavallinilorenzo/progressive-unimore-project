@@ -1247,7 +1247,13 @@ class WorkoutSetsView(OwnerRequiredMixin, UpdateView):
     Il bottone «+» di un blocco è un secondo submit sulla stessa `<form>`,
     gestito da `_dati_con_riga_extra`: senza JavaScript un «aggiungi riga»
     dinamico non esiste, ma un giro di pagina che aggiunge una riga ai dati
-    del POST e ricostruisce il formset — senza salvarlo — sì.
+    del POST e ricostruisce il formset — senza salvarlo — sì. Il cestino di
+    ogni riga è un terzo submit costruito allo stesso modo
+    (`_dati_con_riga_da_togliere`): non è una casella «Togli» da spuntare e
+    salvare dopo, è un bottone che segna subito quella riga come da togliere
+    — la riga sparisce dalla pagina immediatamente — e resta comunque solo
+    marcata (`DELETE`), non cancellata dal database, finché non arriva un
+    «Salva le serie» vero.
     """
 
     model = Workout
@@ -1255,9 +1261,14 @@ class WorkoutSetsView(OwnerRequiredMixin, UpdateView):
     context_object_name = "allenamento"
     template_name = "training/workout_sets.html"
 
-    #: Il nome del bottone «+ Aggiungi serie» di un blocco: il valore è il pk
+    #: Il nome del bottone «+ Serie» di un blocco: il valore è il pk
     #: dell'esercizio a cui la riga nuova appartiene.
     PARAMETRO_AGGIUNGI = "aggiungi_serie"
+
+    #: Il nome del bottone «cestino» di una riga: il valore è il `prefix` di
+    #: quella riga nel formset (`sets-3`), non il suo `pk` — serve anche per
+    #: una riga appena aggiunta dal «+» e mai salvata.
+    PARAMETRO_RIMUOVI = "rimuovi_serie"
 
     def get_formset_queryset(self):
         return self.object.sets.select_related("exercise__equipment").order_by("pk")
@@ -1272,9 +1283,13 @@ class WorkoutSetsView(OwnerRequiredMixin, UpdateView):
         context["formset"] = formset
         context.setdefault("mostra_errori", True)
         blocchi, extra_forms = raggruppa_serie_del_formset(formset)
-        context["blocchi"], context["extra_forms"] = self._assegna_extra_ai_blocchi(
+        blocchi, extra_forms = self._assegna_extra_ai_blocchi(blocchi, extra_forms)
+        blocchi, extra_forms, righe_nascoste = self._togli_le_marcate(
             blocchi, extra_forms
         )
+        context["blocchi"] = blocchi
+        context["extra_forms"] = extra_forms
+        context["righe_nascoste"] = righe_nascoste
         return context
 
     @staticmethod
@@ -1298,6 +1313,30 @@ class WorkoutSetsView(OwnerRequiredMixin, UpdateView):
                 rimaste.append(riga)
         return list(per_esercizio.values()), rimaste
 
+    @staticmethod
+    def _togli_le_marcate(blocchi, extra_forms):
+        """Le righe col cestino già premuto spariscono dalla pagina.
+
+        Restano nel formset — `DELETE` è ancora `True` nei loro dati, ed è
+        quello che alla fine il «Salva le serie» leggerà — ma non fra le
+        righe che si vedono: `righe_nascoste` le porta avanti come soli campi
+        `hidden`, così un altro giro di pagina (un secondo «+», un altro
+        cestino) non le fa riapparire né le perde.
+        """
+        nascoste = []
+
+        blocchi_visibili = []
+        for esercizio, righe in blocchi:
+            visibili = [riga for riga in righe if not riga["DELETE"].value()]
+            nascoste.extend(riga for riga in righe if riga["DELETE"].value())
+            if visibili:
+                blocchi_visibili.append((esercizio, visibili))
+
+        extra_visibili = [riga for riga in extra_forms if not riga["DELETE"].value()]
+        nascoste.extend(riga for riga in extra_forms if riga["DELETE"].value())
+
+        return blocchi_visibili, extra_visibili, nascoste
+
     def post(self, request, *args, **kwargs):
         self.object = self.get_object()
 
@@ -1313,6 +1352,14 @@ class WorkoutSetsView(OwnerRequiredMixin, UpdateView):
                 self.get_context_data(formset=formset, mostra_errori=False)
             )
 
+        if self.PARAMETRO_RIMUOVI in request.POST:
+            formset = WorkoutSetFormSet(
+                self._dati_con_riga_da_togliere(request.POST), instance=self.object
+            )
+            return self.render_to_response(
+                self.get_context_data(formset=formset, mostra_errori=False)
+            )
+
         formset = WorkoutSetFormSet(request.POST, instance=self.object)
 
         if not formset.is_valid():
@@ -1321,6 +1368,20 @@ class WorkoutSetsView(OwnerRequiredMixin, UpdateView):
         formset.save()
         messages.success(request, "Le serie dell'allenamento sono aggiornate.")
         return redirect("training:workout-detail", pk=self.object.pk)
+
+    def _dati_con_riga_da_togliere(self, post):
+        """I dati del POST con `DELETE` marcato sulla riga del cestino premuto.
+
+        Stessa idea di `_dati_con_riga_extra`, alla rovescia: non aggiunge
+        niente, marca una riga sola. Il valore del bottone è il `prefix`
+        della riga (`sets-3`), scritto dal template con `riga.prefix`, non il
+        suo `pk` — funziona identico per una riga già salvata e per una
+        appena nata dal «+», che un `pk` non ce l'ha ancora.
+        """
+        dati = post.copy()
+        prefisso_riga = post[self.PARAMETRO_RIMUOVI]
+        dati[f"{prefisso_riga}-DELETE"] = "on"
+        return dati
 
     def _dati_con_riga_extra(self, post):
         """I dati del POST con una riga vuota in più per l'esercizio del «+».
