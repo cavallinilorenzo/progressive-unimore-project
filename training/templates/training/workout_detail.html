@@ -2,9 +2,9 @@
 {% comment %}
 `/allenamenti/<pk>/` — l'allenamento letto, a blocchi per esercizio.
 
-Il `regroup` è la ragione per cui la view ordina le serie per
-`(esercizio, numero)`: raggruppa una lista già ordinata, e su una lista
-ordinata solo per `set_number` spezzerebbe lo stesso esercizio in più blocchi.
+`blocchi` arriva già raggruppato e ordinato da `WorkoutDetailView`: i blocchi
+seguono l'ordine in cui gli esercizi sono stati davvero affrontati, non
+l'alfabeto.
 
 Una serie **saltata** si mostra, non si nasconde: è l'informazione che
 distingue «non l'ho fatta» da «non l'avevo prevista», ed è tutto il senso di
@@ -25,9 +25,8 @@ distingue «non l'ho fatta» da «non l'avevo prevista», ed è tutto il senso d
     </div>
   </div>
   <div class="d-flex gap-3 align-items-center">
-    <a href="{% url 'training:workout-update' allenamento.pk %}" style="color:var(--t2);font-size:.9rem">Modifica</a>
+    <a href="{% url 'training:workout-update' allenamento.pk %}" style="color:var(--t2);font-size:.9rem">&#9998; Modifica</a>
     <a href="{% url 'training:workout-delete' allenamento.pk %}" style="color:var(--t2);font-size:.9rem">Elimina</a>
-    <a href="{% url 'training:workoutset-manage' allenamento.pk %}" class="btn btn-volt btn-sm px-3">Gestisci serie</a>
   </div>
 </div>
 
@@ -78,23 +77,22 @@ distingue «non l'ho fatta» da «non l'avevo prevista», ed è tutto il senso d
 </div>
 {% endif %}
 
-{% if allenamento.serie_in_ordine %}
-{% regroup allenamento.serie_in_ordine by exercise as blocchi %}
+{% if blocchi %}
 <div class="row g-3">
-  {% for blocco in blocchi %}
+  {% for esercizio, serie_lista in blocchi %}
   <div class="col-12 col-lg-6">
     <div class="card-ink p-3 h-100">
       <div class="d-flex align-items-baseline justify-content-between mb-2">
-        <a href="{% url 'training:exercise-detail' blocco.grouper.slug %}"
+        <a href="{% url 'training:exercise-detail' esercizio.slug %}"
            class="h6 fw-bold mb-0 text-decoration-none" style="color:var(--t1)">
-          {{ blocco.grouper.name }}
+          {{ esercizio.name }}
         </a>
-        <span class="eyebrow" style="color:var(--t3)">{{ blocco.grouper.equipment }}</span>
+        <span class="eyebrow" style="color:var(--t3)">{{ esercizio.equipment }}</span>
       </div>
 
       <table class="table table-dark table-borderless table-sm mb-0 align-middle" style="background:transparent">
         <tbody>
-          {% for serie in blocco.list %}
+          {% for serie in serie_lista %}
           <tr>
             <td style="width:3rem;color:var(--t3)">{{ serie.set_number }}</td>
             <td {% if not serie.is_completed %}style="color:var(--t3)"{% endif %}>
@@ -124,7 +122,7 @@ distingue «non l'ho fatta» da «non l'avevo prevista», ed è tutto il senso d
     ripetizioni a farne un dato. Se questo allenamento nasce da una scheda le
     righe sono già pronte, altrimenti si aggiungono qui.
   </p>
-  <a href="{% url 'training:workoutset-manage' allenamento.pk %}" class="btn btn-volt px-4 mt-3">Aggiungi le serie</a>
+  <a href="{% url 'training:workout-update' allenamento.pk %}" class="btn btn-volt px-4 mt-3">Aggiungi le serie</a>
 </div>
 {% endif %}
 

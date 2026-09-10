@@ -2880,6 +2880,7 @@ class WorkoutCrudTests(TestCase):
                 "started_at": self.datetime_local(inizio),
                 "ended_at": self.datetime_local(inizio + timedelta(minutes=75)),
                 "notes": "",
+                **self.formset_payload([]),
             },
         )
         self.assertRedirects(

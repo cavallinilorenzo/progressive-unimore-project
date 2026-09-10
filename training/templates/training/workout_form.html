@@ -14,6 +14,12 @@ I due campi orario sono `<input type="datetime-local">`, l'unico modo di
 chiedere data e ora senza JavaScript. Il formato che quel campo parla non è
 quello italiano di `DATETIME_INPUT_FORMATS`: la conversione sta in
 `training.forms.LocalDateTimeField`, non qui.
+
+`formset` compare solo in `WorkoutUpdateView`: è la presenza di `blocchi` a
+distinguere «Modifica» da «Nuovo allenamento» nel template, non
+`form.instance.pk` da solo. I blocchi ricalcano `workout_detail.html` — stessa
+card per esercizio, stesso ordine cronologico — coi valori dentro un
+`<input>` al posto del testo.
 {% endcomment %}
 
 {% block title %}{% if form.instance.pk %}Modifica allenamento{% else %}Nuovo allenamento{% endif %} — Progressive{% endblock %}
@@ -129,6 +135,118 @@ quello italiano di `DATETIME_INPUT_FORMATS`: la conversione sta in
         <div style="color:var(--red);font-size:.82rem">{{ errore }}</div>
         {% endfor %}
       </div>
+
+      {% if formset %}
+      {{ formset.management_form }}
+
+      {% if formset.non_form_errors %}
+      <div class="rail mb-3" style="border-color:var(--red)">
+        {% for errore in formset.non_form_errors %}
+        <div style="color:var(--red);font-size:.85rem">{{ errore }}</div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      <hr style="border-color:var(--line)" class="my-4">
+      <div class="eyebrow mb-3">Serie</div>
+
+      {% if blocchi %}
+      <div class="row g-3 mb-3">
+        {% for esercizio, righe in blocchi %}
+        <div class="col-12 col-lg-6">
+          <div class="card-ink p-3 h-100" style="background:var(--surface-2)">
+            <div class="d-flex align-items-baseline justify-content-between mb-2">
+              <span class="h6 fw-bold mb-0" style="color:var(--t1)">{{ esercizio.name }}</span>
+              <span class="eyebrow" style="color:var(--t3)">{{ esercizio.equipment }}</span>
+            </div>
+
+            {% for riga in righe %}
+            <div class="row g-2 align-items-end mb-2">
+              {% for nascosto in riga.hidden_fields %}{{ nascosto }}{% endfor %}
+              {{ riga.exercise.as_hidden }}
+              <div class="col-3 col-lg-2">
+                <label class="eyebrow d-block mb-1">N&deg;</label>
+                {{ riga.set_number }}
+              </div>
+              <div class="col-4 col-lg-3">
+                <label class="eyebrow d-block mb-1">Carico kg</label>
+                {{ riga.weight }}
+              </div>
+              <div class="col-3 col-lg-2">
+                <label class="eyebrow d-block mb-1">Rip.</label>
+                {{ riga.reps }}
+              </div>
+              <div class="col-12 col-lg-3">
+                <label class="eyebrow d-block mb-1">Tipo</label>
+                {{ riga.set_type }}
+              </div>
+              <div class="col-6 col-lg-1">
+                <div class="form-check mb-2">
+                  {{ riga.is_completed }}
+                  <label class="form-check-label eyebrow" style="font-size:.7rem">Fatta</label>
+                </div>
+              </div>
+              <div class="col-6 col-lg-1">
+                <div class="form-check mb-2">
+                  {{ riga.DELETE }}
+                  <label class="form-check-label eyebrow" style="color:var(--red);font-size:.7rem">Togli</label>
+                </div>
+              </div>
+              {% for campo in riga.visible_fields %}
+              {% for errore in campo.errors %}
+              <div class="col-12" style="color:var(--red);font-size:.8rem">{{ campo.label }}: {{ errore }}</div>
+              {% endfor %}
+              {% endfor %}
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% endif %}
+
+      {% if extra_forms %}
+      <div class="eyebrow mb-2">Nuova serie, esercizio fuori programma</div>
+      {% for riga in extra_forms %}
+      <div class="card-ink p-3 mb-3">
+        {% for nascosto in riga.hidden_fields %}{{ nascosto }}{% endfor %}
+        <div class="row g-2 align-items-end">
+          <div class="col-12 col-lg-4">
+            <label class="eyebrow d-block mb-1">Esercizio</label>
+            {{ riga.exercise }}
+          </div>
+          <div class="col-4 col-lg-1">
+            <label class="eyebrow d-block mb-1">N&deg;</label>
+            {{ riga.set_number }}
+          </div>
+          <div class="col-4 col-lg-2">
+            <label class="eyebrow d-block mb-1">Carico kg</label>
+            {{ riga.weight }}
+          </div>
+          <div class="col-4 col-lg-1">
+            <label class="eyebrow d-block mb-1">Rip.</label>
+            {{ riga.reps }}
+          </div>
+          <div class="col-8 col-lg-2">
+            <label class="eyebrow d-block mb-1">Tipo</label>
+            {{ riga.set_type }}
+          </div>
+          <div class="col-4 col-lg-1">
+            <div class="form-check mb-2">
+              {{ riga.is_completed }}
+              <label class="form-check-label eyebrow">Eseguita</label>
+            </div>
+          </div>
+        </div>
+        {% for campo in riga.visible_fields %}
+        {% for errore in campo.errors %}
+        <div class="mt-1" style="color:var(--red);font-size:.82rem">{{ campo.label }}: {{ errore }}</div>
+        {% endfor %}
+        {% endfor %}
+      </div>
+      {% endfor %}
+      {% endif %}
+      {% endif %}
 
       <div class="d-flex gap-3 align-items-center mt-4">
         <button type="submit" class="btn btn-volt px-4 py-2">

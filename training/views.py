@@ -25,7 +25,7 @@ from django.core.files.storage import FileSystemStorage
 from django.db import transaction
 from django.db.models import Avg, Count, F, Prefetch, Q, Sum
 from django.http import Http404, HttpResponse
-from django.shortcuts import get_object_or_404, redirect
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse, reverse_lazy
 from django.utils import timezone
 from django.utils.formats import date_format
@@ -877,11 +877,14 @@ class WorkoutListView(LoginRequiredMixin, ListView):
 class WorkoutDetailView(OwnerRequiredMixin, DetailView):
     """`/allenamenti/<pk>/` — le serie eseguite, raggruppate per esercizio.
 
-    L'ordinamento è `(esercizio, numero di serie)` e non `set_number` secco:
-    `Meta.ordering` del modello ordina le serie dentro un esercizio, ma qui
-    servono i blocchi — tre righe di panca, poi tre di rematore — e il
-    `regroup` del template li può formare solo su una lista già ordinata per
-    la chiave di raggruppamento.
+    I blocchi si susseguono nell'ordine **in cui gli esercizi sono stati
+    davvero affrontati**, non alfabetico: `serie_in_ordine` arriva ordinato
+    per `pk`, cioè per ordine di creazione, e `get_context_data` costruisce
+    `blocchi` scorrendolo una volta sola — un dict Python preserva l'ordine di
+    prima comparsa, quindi la chiave (l'esercizio) entra nel blocco solo alla
+    sua prima serie. Dentro il blocco le serie tornano ordinate per
+    `set_number`, perché lì l'ordine che conta è «serie 1, 2, 3», non quello
+    di inserimento.
     """
 
     model = Workout
@@ -894,10 +897,20 @@ class WorkoutDetailView(OwnerRequiredMixin, DetailView):
                 "sets",
                 queryset=WorkoutSet.objects.select_related(
                     "exercise__equipment"
-                ).order_by("exercise__name", "set_number"),
+                ).order_by("pk"),
                 to_attr="serie_in_ordine",
             )
         )
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        blocchi = {}
+        for serie in self.object.serie_in_ordine:
+            blocchi.setdefault(serie.exercise, []).append(serie)
+        for lista in blocchi.values():
+            lista.sort(key=lambda serie: serie.set_number)
+        context["blocchi"] = list(blocchi.items())
+        return context
 
 
 class WorkoutCreateView(LoginRequiredMixin, CreateView):
@@ -1099,22 +1112,71 @@ class WorkoutCreateView(LoginRequiredMixin, CreateView):
         return reverse("training:workoutset-manage", args=[self.object.pk])
 
 
-class WorkoutUpdateView(OwnerRequiredMixin, SuccessMessageMixin, UpdateView):
-    """`/allenamenti/<pk>/modifica/` — titolo, orari e note.
+class WorkoutUpdateView(OwnerRequiredMixin, SingleObjectMixin, View):
+    """`/allenamenti/<pk>/modifica/` — titolo *e* serie, sulla stessa pagina.
 
-    Le serie non stanno qui: sono la pagina `workoutset-manage`. Un
-    allenamento è un log e le sue due parti si correggono in momenti diversi —
-    l'orario sbagliato si aggiusta a freddo, i numeri delle serie si aggiustano
-    mentre si allena.
+    È la vista di correzione unica: la stessa disposizione a card per
+    esercizio di `WorkoutDetailView`, ma coi valori dentro un `<input>` invece
+    che in testo. `form` porta titolo, orari e note; `WorkoutSetFormSet`
+    porta le serie. Sono due form indipendenti sulla stessa `<form>` HTML e si
+    salvano solo se **entrambi** sono validi — altrimenti l'allenamento
+    finirebbe con un titolo nuovo e serie scartate, o viceversa.
+
+    Il raggruppamento in `blocchi` ricalca quello della vista di lettura:
+    stesso ordine cronologico di prima comparsa, stesso ordinamento per
+    `set_number` dentro il blocco, così chi clicca «Modifica» ritrova
+    esattamente la pagina che stava guardando, solo editabile. Le righe senza
+    `pk` — quelle in coda del formset, per l'esercizio aggiunto fuori
+    programma — non hanno ancora un esercizio con cui raggrupparle, e restano
+    a parte in `extra_forms`.
     """
 
     model = Workout
-    form_class = WorkoutForm
     template_name = "training/workout_form.html"
-    success_message = "L'allenamento è aggiornato."
 
-    def get_success_url(self):
-        return reverse("training:workout-detail", args=[self.object.pk])
+    def get(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        form = WorkoutForm(instance=self.object)
+        formset = WorkoutSetFormSet(
+            instance=self.object,
+            queryset=self.object.sets.select_related("exercise__equipment").order_by(
+                "pk"
+            ),
+        )
+        return self.render_to_response(form, formset)
+
+    def post(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        form = WorkoutForm(request.POST, instance=self.object)
+        formset = WorkoutSetFormSet(request.POST, instance=self.object)
+
+        if form.is_valid() and formset.is_valid():
+            form.save()
+            formset.save()
+            messages.success(request, "L'allenamento è aggiornato.")
+            return redirect("training:workout-detail", pk=self.object.pk)
+
+        return self.render_to_response(form, formset)
+
+    def render_to_response(self, form, formset):
+        blocchi = {}
+        extra_forms = []
+        for riga in formset.forms:
+            if riga.instance.pk:
+                blocchi.setdefault(riga.instance.exercise, []).append(riga)
+            else:
+                extra_forms.append(riga)
+        for righe in blocchi.values():
+            righe.sort(key=lambda riga: riga.instance.set_number)
+
+        context = {
+            "allenamento": self.object,
+            "form": form,
+            "formset": formset,
+            "blocchi": list(blocchi.items()),
+            "extra_forms": extra_forms,
+        }
+        return render(self.request, self.template_name, context)
 
 
 class WorkoutDeleteView(OwnerRequiredMixin, DeleteView):
