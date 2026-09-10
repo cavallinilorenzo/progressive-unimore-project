@@ -2829,10 +2829,18 @@ class WorkoutCrudTests(TestCase):
             user=self.user, title="Spinta A", started_at=timezone.now()
         )
 
-    #: Il formato che `<input type="datetime-local">` invia. Non è quello
-    #: italiano, ed è tutto il punto di `LocalDateTimeField`.
-    def datetime_local(self, quando):
-        return timezone.localtime(quando).strftime("%Y-%m-%dT%H:%M")
+    #: Il payload di `giorno`/`ora_inizio`/`ora_fine` che il form si aspetta.
+    #: `fine` resta sullo stesso `giorno` di `inizio`: è il vincolo del form.
+    def payload_orario(self, inizio, fine=None):
+        quando = timezone.localtime(inizio)
+        payload = {
+            "giorno": quando.strftime("%Y-%m-%d"),
+            "ora_inizio": quando.strftime("%H:%M"),
+            "ora_fine": "",
+        }
+        if fine is not None:
+            payload["ora_fine"] = timezone.localtime(fine).strftime("%H:%M")
+        return payload
 
     def formset_payload(self, righe, iniziali=0):
         """Il `management_form` più le righe. Prefisso `sets`, da `related_name`."""
@@ -2856,9 +2864,8 @@ class WorkoutCrudTests(TestCase):
             reverse("training:workout-create"),
             {
                 "title": "Spinta B",
-                "started_at": self.datetime_local(inizio),
-                "ended_at": "",
                 "notes": "Spalla destra un po' rigida.",
+                **self.payload_orario(inizio),
             },
         )
         nuovo = Workout.objects.get(title="Spinta B")
@@ -2877,9 +2884,8 @@ class WorkoutCrudTests(TestCase):
             reverse("training:workout-update", args=[nuovo.pk]),
             {
                 "title": "Spinta B — pesante",
-                "started_at": self.datetime_local(inizio),
-                "ended_at": self.datetime_local(inizio + timedelta(minutes=75)),
                 "notes": "",
+                **self.payload_orario(inizio, fine=inizio + timedelta(minutes=75)),
                 **self.formset_payload([]),
             },
         )
@@ -2977,10 +2983,9 @@ class WorkoutCrudTests(TestCase):
             reverse("training:workout-create"),
             {
                 "title": "Provo a intestarlo a un altro",
-                "started_at": self.datetime_local(timezone.now()),
-                "ended_at": "",
                 "notes": "",
                 "user": self.altro.pk,
+                **self.payload_orario(timezone.now()),
             },
         )
 
@@ -2989,45 +2994,36 @@ class WorkoutCrudTests(TestCase):
 
     # --- Le regole che il form deve dire prima del database -------------
 
-    def test_the_datetime_local_format_is_accepted_and_read_back(self):
-        """Il progetto è in `it-it`, l'input nativo parla ISO: la coppia va tradotta.
-
-        Senza `LocalDateTimeField` questo POST tornerebbe indietro con
-        «Inserisci una data/ora valida» su un valore che ha composto il
-        browser, e la modifica aprirebbe il campo vuoto.
-        """
+    def test_the_day_and_hours_are_read_back_on_edit(self):
+        """Il form si riapre con lo stesso giorno e le stesse ore appena scritti."""
         quando = timezone.now().replace(second=0, microsecond=0)
+        payload = self.payload_orario(quando)
 
         creazione = self.client.post(
             reverse("training:workout-create"),
-            {
-                "title": "Orario ISO",
-                "started_at": self.datetime_local(quando),
-                "ended_at": "",
-                "notes": "",
-            },
+            {"title": "Orario esatto", "notes": "", **payload},
         )
         self.assertEqual(creazione.status_code, 302)
 
-        nuovo = Workout.objects.get(title="Orario ISO")
+        nuovo = Workout.objects.get(title="Orario esatto")
         self.assertEqual(
-            timezone.localtime(nuovo.started_at).strftime("%Y-%m-%dT%H:%M"),
-            self.datetime_local(quando),
+            timezone.localtime(nuovo.started_at).strftime("%Y-%m-%d %H:%M"),
+            f"{payload['giorno']} {payload['ora_inizio']}",
         )
 
         modifica = self.client.get(reverse("training:workout-update", args=[nuovo.pk]))
-        self.assertContains(modifica, f'value="{self.datetime_local(quando)}"')
+        self.assertContains(modifica, f'value="{payload["giorno"]}"')
+        self.assertContains(modifica, f'value="{payload["ora_inizio"]}"')
 
     def test_a_workout_that_ends_before_it_starts_is_a_form_error_not_a_500(self):
-        inizio = timezone.now()
+        inizio = timezone.localtime().replace(hour=12, minute=0, second=0, microsecond=0)
 
         response = self.client.post(
             reverse("training:workout-create"),
             {
                 "title": "Al contrario",
-                "started_at": self.datetime_local(inizio),
-                "ended_at": self.datetime_local(inizio - timedelta(hours=2)),
                 "notes": "",
+                **self.payload_orario(inizio, fine=inizio - timedelta(hours=2)),
             },
         )
 
@@ -3036,21 +3032,25 @@ class WorkoutCrudTests(TestCase):
         self.assertFalse(Workout.objects.filter(title="Al contrario").exists())
 
     def test_absurd_durations_still_go_through_the_form(self):
-        """Zero minuti e venticinque ore restano ammessi: lo storico vero ne ha."""
-        inizio = timezone.now()
+        """Zero minuti e ventidue ore, nello stesso giorno, restano ammessi.
+
+        Una durata che scavalla la mezzanotte non è più esprimibile da qui —
+        `giorno` è una cella sola — ma resta rappresentabile sul modello
+        (import, seed): è il modello a garantirla, non questo form.
+        """
+        inizio = timezone.localtime().replace(hour=1, minute=0, second=0, microsecond=0)
 
         for etichetta, fine in (
             ("Zero minuti", inizio),
-            ("Venticinque ore", inizio + timedelta(hours=25)),
+            ("Ventidue ore", inizio + timedelta(hours=22)),
         ):
             with self.subTest(durata=etichetta):
                 response = self.client.post(
                     reverse("training:workout-create"),
                     {
                         "title": etichetta,
-                        "started_at": self.datetime_local(inizio),
-                        "ended_at": self.datetime_local(fine),
                         "notes": "",
+                        **self.payload_orario(inizio, fine=fine),
                     },
                 )
                 self.assertEqual(response.status_code, 302)
@@ -3297,12 +3297,14 @@ class StartWorkoutFromRoutineTests(TestCase):
         return base if scheda is None else f"{base}?scheda={scheda.pk}"
 
     def avvia(self, scheda=None, titolo="Spinta A"):
+        adesso = timezone.localtime()
         return self.client.post(
             self.url_avvio(scheda),
             {
                 "title": titolo,
-                "started_at": timezone.localtime().strftime("%Y-%m-%dT%H:%M"),
-                "ended_at": "",
+                "giorno": adesso.strftime("%Y-%m-%d"),
+                "ora_inizio": adesso.strftime("%H:%M"),
+                "ora_fine": "",
                 "notes": "",
             },
         )
@@ -5735,7 +5737,7 @@ class ObjectOwnershipTests(TestCase):
 
     def rotte(self):
         """Le sei view della spec, ognuna col POST che tenterebbe la scrittura."""
-        inizio = timezone.localtime(self.workout.started_at).strftime("%Y-%m-%dT%H:%M")
+        inizio = timezone.localtime(self.workout.started_at)
         return (
             ("routine-update", self.routine.pk,
              {"name": "Rubata", "notes": "", "is_public": "on"}),
@@ -5752,7 +5754,8 @@ class ObjectOwnershipTests(TestCase):
                 "exercises-0-notes": "",
             }),
             ("workout-update", self.workout.pk,
-             {"title": "Rubato", "started_at": inizio, "ended_at": "", "notes": ""}),
+             {"title": "Rubato", "giorno": inizio.strftime("%Y-%m-%d"),
+              "ora_inizio": inizio.strftime("%H:%M"), "ora_fine": "", "notes": ""}),
             ("workout-delete", self.workout.pk, {}),
             ("workoutset-manage", self.workout.pk, {
                 "sets-TOTAL_FORMS": "1",

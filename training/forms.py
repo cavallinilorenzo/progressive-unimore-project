@@ -8,8 +8,11 @@ conseguenza pratica del custom user model in fase 1, quella da saper spiegare
 all'orale insieme alla riga `AUTH_USER_MODEL` di `config/settings.py`.
 """
 
+from datetime import datetime
+
 from django import forms
 from django.contrib.auth.forms import UserCreationForm
+from django.utils import timezone
 from django.utils.functional import cached_property
 
 from training import importer
@@ -273,39 +276,6 @@ RoutineExerciseFormSet = forms.inlineformset_factory(
 )
 
 
-class LocalDateTimeField(forms.DateTimeField):
-    """Un `datetime` che sopravvive al viaggio dentro `<input type="datetime-local">`.
-
-    Il campo HTML nativo è l'unico modo di chiedere data e ora senza
-    JavaScript, ma parla un formato solo — `2026-09-08T18:30` — mentre il
-    progetto è in `it-it`, e i `DATETIME_INPUT_FORMATS` italiani sono
-    `08/09/2026 18:30` e compagnia. Senza questa coppia di formati il POST
-    dell'input nativo tornerebbe indietro con «Inserisci una data/ora valida»
-    su un valore che il browser ha appena composto lui: un errore di form su un
-    campo che l'utente non ha nemmeno digitato a mano.
-
-    Il formato del widget serve alla direzione opposta — rendere il valore
-    esistente in modo che il browser lo riconosca in `UpdateView` — e senza di
-    esso la modifica di un allenamento aprirebbe il campo vuoto.
-    """
-
-    #: I secondi ci sono perché alcuni browser li includono se il valore
-    #: iniziale li porta; il minuto è quanto il dominio ha davvero bisogno.
-    INPUT_FORMATS = ("%Y-%m-%dT%H:%M", "%Y-%m-%dT%H:%M:%S")
-    WIDGET_FORMAT = "%Y-%m-%dT%H:%M"
-
-    def __init__(self, *args, **kwargs):
-        kwargs.setdefault("input_formats", self.INPUT_FORMATS)
-        kwargs.setdefault(
-            "widget",
-            forms.DateTimeInput(
-                format=self.WIDGET_FORMAT,
-                attrs={"type": "datetime-local", "class": "form-control"},
-            ),
-        )
-        super().__init__(*args, **kwargs)
-
-
 class WorkoutForm(forms.ModelForm):
     """`/allenamenti/nuovo/` e `/allenamenti/<pk>/modifica/`.
 
@@ -319,14 +289,54 @@ class WorkoutForm(forms.ModelForm):
     `title` è quindi un `CharField` normale e modificabile: rinominarlo cambia
     il nome di *questo* allenamento e non tocca la scheda, che è esattamente
     il verso in cui ADR-0002 vuole che l'informazione non scorra.
+
+    **`giorno` più due orari, non due `datetime-local`.** Chi si allena pensa
+    «oggi, dalle 18 alle 19», non in due timestamp indipendenti: il giorno è
+    una sola cella e le due ore restano sole, senza trascinarsi dietro una
+    data che per l'allenamento è quasi sempre la stessa. `started_at` e
+    `ended_at` restano `DateTimeField` sul modello — li ricompone `clean()` —
+    perché è lì che vive il resto del progetto (ordinamenti, finestre,
+    l'export).
+
+    Le due ore condividono lo stesso `giorno` di proposito: un allenamento
+    che scavalla la mezzanotte, o che dura più di un giorno, resta
+    rappresentabile sul modello (`started_at`/`ended_at` restano due
+    `DateTimeField` indipendenti) ma non attraverso questo form — è il prezzo
+    della cella unica, e un caso raro rispetto a chi scrive «oggi, dalle 18
+    alle 19».
     """
 
-    started_at = LocalDateTimeField(label="Iniziato il")
-    ended_at = LocalDateTimeField(label="Finito il", required=False)
+    #: Gli stessi formati ISO di `LocalDateTimeField` di prima: gli input nativi
+    #: `date`/`time` parlano solo questo, mentre il progetto è in `it-it` e i
+    #: `DATE_INPUT_FORMATS`/`TIME_INPUT_FORMATS` italiani sono un altro paio di
+    #: maniche. Senza questa coppia esplicita il POST del browser tornerebbe
+    #: indietro con «Inserisci una data valida» su un valore che ha composto lui.
+    giorno = forms.DateField(
+        label="Giorno",
+        input_formats=("%Y-%m-%d",),
+        widget=forms.DateInput(
+            format="%Y-%m-%d", attrs={"type": "date", "class": "form-control"}
+        ),
+    )
+    ora_inizio = forms.TimeField(
+        label="Iniziato",
+        input_formats=("%H:%M",),
+        widget=forms.TimeInput(
+            format="%H:%M", attrs={"type": "time", "class": "form-control"}
+        ),
+    )
+    ora_fine = forms.TimeField(
+        label="Finito",
+        required=False,
+        input_formats=("%H:%M",),
+        widget=forms.TimeInput(
+            format="%H:%M", attrs={"type": "time", "class": "form-control"}
+        ),
+    )
 
     class Meta:
         model = Workout
-        fields = ("title", "started_at", "ended_at", "notes")
+        fields = ("title", "notes")
         widgets = {
             "title": forms.TextInput(
                 attrs={"class": "form-control", "placeholder": "Spinta A"}
@@ -334,25 +344,52 @@ class WorkoutForm(forms.ModelForm):
             "notes": forms.Textarea(attrs={"class": "form-control", "rows": 3}),
         }
 
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        if not self.is_bound and self.instance.pk:
+            inizio = timezone.localtime(self.instance.started_at)
+            self.initial.setdefault("giorno", inizio.date())
+            self.initial.setdefault("ora_inizio", inizio.time())
+            if self.instance.ended_at:
+                self.initial.setdefault(
+                    "ora_fine", timezone.localtime(self.instance.ended_at).time()
+                )
+
     def clean(self):
-        """`workout_ended_after_started`, detto prima che lo dica SQLite.
+        """Ricompone `started_at`/`ended_at` da `giorno` e le due ore, poi dice
+        `workout_ended_after_started` prima che lo dica SQLite.
 
         Il `CheckConstraint` è la garanzia vera e resta al suo posto; qui
         serve a trasformare un `IntegrityError` — cioè un 500 — in un errore
-        di form sul campo giusto. Le durate assurde (zero minuti, venticinque
-        ore) restano ammesse di proposito: lo storico reale ne contiene, e
-        l'unico caso davvero impossibile è una fine prima dell'inizio.
+        di form sul campo giusto. Le durate assurde restano ammesse di
+        proposito: lo storico reale ne contiene, e l'unico caso davvero
+        impossibile è una fine prima dell'inizio.
         """
         cleaned = super().clean()
-        inizio = cleaned.get("started_at")
-        fine = cleaned.get("ended_at")
+        giorno = cleaned.get("giorno")
+        ora_inizio = cleaned.get("ora_inizio")
+        ora_fine = cleaned.get("ora_fine")
+
+        inizio = fine = None
+        if giorno is not None and ora_inizio is not None:
+            inizio = timezone.make_aware(datetime.combine(giorno, ora_inizio))
+        if giorno is not None and ora_fine is not None:
+            fine = timezone.make_aware(datetime.combine(giorno, ora_fine))
+
+        cleaned["started_at"] = inizio
+        cleaned["ended_at"] = fine
 
         if inizio is not None and fine is not None and fine < inizio:
             self.add_error(
-                "ended_at", "Un allenamento non può finire prima di cominciare."
+                "ora_fine", "Un allenamento non può finire prima di cominciare."
             )
 
         return cleaned
+
+    def save(self, commit=True):
+        self.instance.started_at = self.cleaned_data.get("started_at")
+        self.instance.ended_at = self.cleaned_data.get("ended_at")
+        return super().save(commit=commit)
 
 
 class WorkoutSetForm(forms.ModelForm):
