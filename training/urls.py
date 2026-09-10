@@ -110,6 +110,14 @@ urlpatterns = [
         views.WorkoutSetsView.as_view(),
         name="workoutset-manage",
     ),
+    # «Vuoi aggiungerlo in scheda?» — solo `POST`, genera una scheda nuova
+    # dalle serie di un allenamento libero. Non tocca l'allenamento di
+    # partenza: vedi `WorkoutSaveAsRoutineView`.
+    path(
+        "allenamenti/<int:pk>/scheda/",
+        views.WorkoutSaveAsRoutineView.as_view(),
+        name="workout-save-as-routine",
+    ),
     # Esercizi — e qui l'avvertenza di sopra si vede all'opera: `<slug:slug>`
     # cattura anche «panca-piana», quindi nessuna rotta letterale può stargli
     # sotto. Lo slug è generato una volta da `load_catalog`, non a runtime,

@@ -53,6 +53,24 @@ distingue «non l'ho fatta» da «non l'avevo prevista», ed è tutto il senso d
 </div>
 {% endif %}
 
+{% if not allenamento.routine and allenamento.serie_in_ordine %}
+<div class="card-ink p-3 mb-4">
+  <div class="rail">
+    <div class="eyebrow mb-1" style="color:var(--volt)">Vuoi aggiungerlo in scheda?</div>
+    <div style="color:var(--t2);font-size:.9rem" class="mb-2">
+      Questo è un allenamento libero. Se lo rifai spesso così, puoi salvarne le
+      serie di lavoro come scheda permanente: la prossima volta la trovi tra
+      «Da una scheda» quando inizi un nuovo allenamento.
+    </div>
+    <form method="post" action="{% url 'training:workout-save-as-routine' allenamento.pk %}" class="d-flex gap-2 flex-wrap">
+      {% csrf_token %}
+      <input type="text" name="nome" value="{{ allenamento.title }}" class="form-control" style="max-width:16rem" aria-label="Nome della scheda">
+      <button type="submit" class="btn btn-volt px-3">Sì, crea la scheda</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
 {% if allenamento.notes %}
 <div class="card-ink p-3 mb-4">
   <div class="eyebrow mb-1">Note</div>
