@@ -32,6 +32,7 @@ from django.utils.formats import date_format
 from django.utils.functional import cached_property
 from django.views import View
 from django.views.generic import DetailView, ListView, TemplateView
+from django.views.generic.detail import SingleObjectMixin
 from django.views.generic.edit import CreateView, DeleteView, FormView, UpdateView
 
 from training import querysets, rankings
@@ -61,6 +62,7 @@ from training.models import (
     Muscle,
     MuscleGroup,
     Routine,
+    RoutineExercise,
     Vote,
     Workout,
     WorkoutSet,
@@ -959,7 +961,16 @@ class WorkoutCreateView(LoginRequiredMixin, CreateView):
 
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["scheda"] = self.get_scheda()
+        scheda = self.get_scheda()
+        context["scheda"] = scheda
+        # Il selettore di schede si mostra solo finché non se n'è scelta una:
+        # una volta che `scheda` è valorizzata la pagina è già «Avvia da
+        # scheda X», e rimostrare l'elenco sarebbe un secondo bivio dopo che
+        # il primo è già stato preso.
+        if scheda is None:
+            context["schede_disponibili"] = Routine.objects.filter(
+                user=self.request.user
+            ).order_by("name")
         return context
 
     def form_valid(self, form):
@@ -1144,6 +1155,80 @@ class WorkoutSetsView(OwnerRequiredMixin, UpdateView):
         formset.save()
         messages.success(request, "Le serie dell'allenamento sono aggiornate.")
         return redirect("training:workout-detail", pk=self.object.pk)
+
+
+class WorkoutSaveAsRoutineView(OwnerRequiredMixin, SingleObjectMixin, View):
+    """`/allenamenti/<pk>/scheda/`, `POST` soltanto — «vuoi salvarlo come scheda?»
+
+    Nasce per l'allenamento **libero**: quello scritto a mano, senza `routine`.
+    Da qui esce una scheda nuova, con un `RoutineExercise` per ogni esercizio
+    di lavoro dell'allenamento, nell'ordine in cui compaiono e coi bersagli
+    dedotti dalle serie davvero fatte — le ripetizioni minime e massime
+    osservate, le serie contate.
+
+    Quello che **non** succede è impostare `allenamento.routine` sulla scheda
+    appena nata: significherebbe stabilire il legame *dopo* che l'allenamento
+    è nato, ed è proprio ciò che `WorkoutForm` e `WorkoutCreateView` escludono
+    per ADR-0002 — il legame si stabilisce una volta sola, alla nascita
+    dell'allenamento. Da questa azione esce solo la scheda: un punto di
+    partenza per la prossima volta, non una riscrittura del log.
+    """
+
+    model = Workout
+    http_method_names = ["post"]
+
+    def post(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        allenamento = self.object
+
+        nome = request.POST.get("nome", "").strip() or allenamento.title
+        serie_di_lavoro = list(
+            allenamento.sets.filter(
+                set_type=WorkoutSet.SetType.WORKING, is_completed=True
+            )
+            .select_related("exercise")
+            .order_by("pk")
+        )
+        if not serie_di_lavoro:
+            messages.error(
+                request,
+                "Questo allenamento non ha serie di lavoro completate: non "
+                "c'è niente da mettere in scheda.",
+            )
+            return redirect("training:workout-detail", pk=allenamento.pk)
+
+        # Un dict preserva l'ordine di prima comparsa: è così che l'ordine
+        # degli esercizi nella scheda nuova ricalca quello dell'allenamento,
+        # senza una lista separata a tenerne il conto.
+        per_esercizio = {}
+        for serie in serie_di_lavoro:
+            voce = per_esercizio.setdefault(
+                serie.exercise_id, {"exercise": serie.exercise, "reps": []}
+            )
+            voce["reps"].append(serie.reps)
+
+        with transaction.atomic():
+            scheda = Routine.objects.create(user=request.user, name=nome)
+            RoutineExercise.objects.bulk_create(
+                RoutineExercise(
+                    routine=scheda,
+                    exercise=voce["exercise"],
+                    position=posizione,
+                    target_sets=len(voce["reps"]),
+                    target_reps=min(voce["reps"]),
+                    target_reps_max=(
+                        max(voce["reps"])
+                        if max(voce["reps"]) != min(voce["reps"])
+                        else None
+                    ),
+                )
+                for posizione, voce in enumerate(per_esercizio.values(), start=1)
+            )
+
+        messages.success(
+            request, f"«{scheda.name}» è creata dalle serie di questo allenamento."
+        )
+        return redirect("training:routine-detail", pk=scheda.pk)
 
 
 class RoutinePublicListView(LoginRequiredMixin, ListView):

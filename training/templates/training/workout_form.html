@@ -44,6 +44,35 @@ quello italiano di `DATETIME_INPUT_FORMATS`: la conversione sta in
         </div>
       </div>
     </div>
+    {% elif not form.instance.pk %}
+    {% comment %}
+    Il bivio prima del form: da scheda, da una scheda nuova, o libero. Niente
+    JavaScript e nessuna pagina in più — sono link che ricaricano
+    `/allenamenti/nuovo/` con `?scheda=<pk>` (vedi `WorkoutCreateView`), più
+    un rimando a «Nuova scheda» e il form libero che resta comunque sotto,
+    sempre raggiungibile senza clic in più.
+    {% endcomment %}
+    <div class="card-ink p-3 mb-3">
+      <div class="eyebrow mb-2">Da una scheda</div>
+      {% if schede_disponibili %}
+      <div class="d-flex flex-column gap-2 mb-2">
+        {% for scheda_disponibile in schede_disponibili %}
+        <a href="{% url 'training:workout-create' %}?scheda={{ scheda_disponibile.pk }}"
+           class="d-flex justify-content-between align-items-center px-3 py-2 text-decoration-none rail"
+           style="color:var(--t1)">
+          <span class="fw-bold">{{ scheda_disponibile.name }}</span>
+          <span style="color:var(--t3);font-size:.82rem">
+            {{ scheda_disponibile.exercises.count }} esercizi{{ scheda_disponibile.exercises.count|pluralize:"o,i" }}
+          </span>
+        </a>
+        {% endfor %}
+      </div>
+      {% else %}
+      <div class="mb-2" style="color:var(--t2);font-size:.9rem">Non hai ancora nessuna scheda.</div>
+      {% endif %}
+      <a href="{% url 'training:routine-create' %}" style="color:var(--volt);font-size:.9rem">+ Nuova scheda</a>
+    </div>
+    <div class="eyebrow mb-2" style="color:var(--t3)">Oppure, allenamento libero</div>
     {% endif %}
 
     <form method="post" novalidate class="card-ink p-4">
