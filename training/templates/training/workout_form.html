@@ -21,7 +21,7 @@ quello italiano di `DATETIME_INPUT_FORMATS`: la conversione sta in
 {% block content %}
 
 <div class="row justify-content-center">
-  <div class="{% if not scheda and not form.instance.pk %}col-12 col-xl-10{% else %}col-12 col-lg-7{% endif %}">
+  <div class="{% if not mostra_form and not form.instance.pk %}col-12 col-xl-10{% else %}col-12 col-lg-7{% endif %}">
 
     <div class="mb-4">
       <div class="eyebrow">Storico</div>
@@ -44,13 +44,13 @@ quello italiano di `DATETIME_INPUT_FORMATS`: la conversione sta in
         </div>
       </div>
     </div>
-    {% elif not form.instance.pk %}
+    {% elif not form.instance.pk and not mostra_form %}
     {% comment %}
-    Il bivio prima del form: da scheda, a card, o libero. Niente JavaScript e
-    nessuna pagina in più — le card sono link che ricaricano
+    Il bivio, **senza** il form sotto: da scheda, a card, o libero. Niente
+    JavaScript e nessuna pagina in più — le card sono link che ricaricano
     `/allenamenti/nuovo/` con `?scheda=<pk>` (vedi `WorkoutCreateView`), e
-    «Allenamento libero» è un'ancora verso il form che resta comunque sotto,
-    sempre raggiungibile senza clic in più.
+    «Allenamento libero» è lo stesso link con `?libero=1`. Il form compare
+    solo dopo una di queste due scelte esplicite, mai qui.
     {% endcomment %}
     <div class="eyebrow mb-2">Da una scheda</div>
     {% if schede_disponibili %}
@@ -71,7 +71,7 @@ quello italiano di `DATETIME_INPUT_FORMATS`: la conversione sta in
     {% else %}
     <div class="mb-3" style="color:var(--t2);font-size:.9rem">Non hai ancora nessuna scheda.</div>
     {% endif %}
-    <a href="#libero" class="card-ink d-block text-center text-decoration-none p-4 mb-4"
+    <a href="{% url 'training:workout-create' %}?libero=1" class="card-ink d-block text-center text-decoration-none p-4"
        style="border:2px solid var(--volt)">
       <div class="h5 fw-bold mb-1" style="color:var(--volt)">Allenamento libero</div>
       <div style="color:var(--t2);font-size:.85rem">
@@ -80,7 +80,8 @@ quello italiano di `DATETIME_INPUT_FORMATS`: la conversione sta in
     </a>
     {% endif %}
 
-    <form method="post" novalidate class="card-ink p-4" id="libero">
+    {% if mostra_form or form.instance.pk %}
+    <form method="post" novalidate class="card-ink p-4">
       {% csrf_token %}
 
       {% if form.non_field_errors %}
@@ -133,10 +134,11 @@ quello italiano di `DATETIME_INPUT_FORMATS`: la conversione sta in
         <button type="submit" class="btn btn-volt px-4 py-2">
           {% if form.instance.pk %}Salva{% elif scheda %}Avvia l'allenamento{% else %}Crea l'allenamento{% endif %}
         </button>
-        <a href="{% if form.instance.pk %}{% url 'training:workout-detail' form.instance.pk %}{% elif scheda %}{% url 'training:routine-detail' scheda.pk %}{% else %}{% url 'training:workout-list' %}{% endif %}"
+        <a href="{% if form.instance.pk %}{% url 'training:workout-detail' form.instance.pk %}{% elif scheda %}{% url 'training:routine-detail' scheda.pk %}{% elif libero %}{% url 'training:workout-create' %}{% else %}{% url 'training:workout-list' %}{% endif %}"
            style="color:var(--t2);font-size:.9rem">Annulla</a>
       </div>
     </form>
+    {% endif %}
 
   </div>
 </div>
