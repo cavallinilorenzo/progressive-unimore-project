@@ -21,7 +21,7 @@ quello italiano di `DATETIME_INPUT_FORMATS`: la conversione sta in
 {% block content %}
 
 <div class="row justify-content-center">
-  <div class="col-12 col-lg-7">
+  <div class="{% if not scheda and not form.instance.pk %}col-12 col-xl-10{% else %}col-12 col-lg-7{% endif %}">
 
     <div class="mb-4">
       <div class="eyebrow">Storico</div>
@@ -46,36 +46,41 @@ quello italiano di `DATETIME_INPUT_FORMATS`: la conversione sta in
     </div>
     {% elif not form.instance.pk %}
     {% comment %}
-    Il bivio prima del form: da scheda, da una scheda nuova, o libero. Niente
-    JavaScript e nessuna pagina in più — sono link che ricaricano
-    `/allenamenti/nuovo/` con `?scheda=<pk>` (vedi `WorkoutCreateView`), più
-    un rimando a «Nuova scheda» e il form libero che resta comunque sotto,
+    Il bivio prima del form: da scheda, a card, o libero. Niente JavaScript e
+    nessuna pagina in più — le card sono link che ricaricano
+    `/allenamenti/nuovo/` con `?scheda=<pk>` (vedi `WorkoutCreateView`), e
+    «Allenamento libero» è un'ancora verso il form che resta comunque sotto,
     sempre raggiungibile senza clic in più.
     {% endcomment %}
-    <div class="card-ink p-3 mb-3">
-      <div class="eyebrow mb-2">Da una scheda</div>
-      {% if schede_disponibili %}
-      <div class="d-flex flex-column gap-2 mb-2">
-        {% for scheda_disponibile in schede_disponibili %}
+    <div class="eyebrow mb-2">Da una scheda</div>
+    {% if schede_disponibili %}
+    <div class="row row-cols-2 row-cols-md-4 g-3 mb-3">
+      {% for scheda_disponibile in schede_disponibili %}
+      <div class="col">
         <a href="{% url 'training:workout-create' %}?scheda={{ scheda_disponibile.pk }}"
-           class="d-flex justify-content-between align-items-center px-3 py-2 text-decoration-none rail"
+           class="card-ink p-3 h-100 d-flex flex-column justify-content-between text-decoration-none"
            style="color:var(--t1)">
           <span class="fw-bold">{{ scheda_disponibile.name }}</span>
           <span style="color:var(--t3);font-size:.82rem">
             {{ scheda_disponibile.exercises.count }} esercizi{{ scheda_disponibile.exercises.count|pluralize:"o,i" }}
           </span>
         </a>
-        {% endfor %}
       </div>
-      {% else %}
-      <div class="mb-2" style="color:var(--t2);font-size:.9rem">Non hai ancora nessuna scheda.</div>
-      {% endif %}
-      <a href="{% url 'training:routine-create' %}" style="color:var(--volt);font-size:.9rem">+ Nuova scheda</a>
+      {% endfor %}
     </div>
-    <div class="eyebrow mb-2" style="color:var(--t3)">Oppure, allenamento libero</div>
+    {% else %}
+    <div class="mb-3" style="color:var(--t2);font-size:.9rem">Non hai ancora nessuna scheda.</div>
+    {% endif %}
+    <a href="#libero" class="card-ink d-block text-center text-decoration-none p-4 mb-4"
+       style="border:2px solid var(--volt)">
+      <div class="h5 fw-bold mb-1" style="color:var(--volt)">Allenamento libero</div>
+      <div style="color:var(--t2);font-size:.85rem">
+        Parti da zero: scrivi le serie mentre ti alleni, senza nessuna scheda dietro.
+      </div>
+    </a>
     {% endif %}
 
-    <form method="post" novalidate class="card-ink p-4">
+    <form method="post" novalidate class="card-ink p-4" id="libero">
       {% csrf_token %}
 
       {% if form.non_field_errors %}
