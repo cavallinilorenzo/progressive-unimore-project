@@ -1235,12 +1235,29 @@ class WorkoutSetsView(OwnerRequiredMixin, UpdateView):
     default del modello (`set_number`) le rimescolerebbe — prima tutte le
     serie 1 di ogni esercizio, poi tutte le serie 2. `order_by("pk")` qui sotto
     tiene l'ordine di creazione, che è l'ordine della scheda.
+
+    A differenza di `WorkoutUpdateView` questa pagina non mostra «Eseguita»:
+    qui una serie o si registra (con le sue ripetizioni) o si toglie col
+    cestino, e «saltata ma ancora pianificata» — il terzo stato che
+    «Eseguita» rappresenta altrove — non è un caso che passi da qui. Il campo
+    resta nel modello e nel form, solo nascosto (`is_completed.as_hidden`):
+    le righe già salvate mantengono il loro valore vero, quelle nuove nascono
+    a `True` come sempre.
+
+    Il bottone «+» di un blocco è un secondo submit sulla stessa `<form>`,
+    gestito da `_dati_con_riga_extra`: senza JavaScript un «aggiungi riga»
+    dinamico non esiste, ma un giro di pagina che aggiunge una riga ai dati
+    del POST e ricostruisce il formset — senza salvarlo — sì.
     """
 
     model = Workout
     fields = []
     context_object_name = "allenamento"
     template_name = "training/workout_sets.html"
+
+    #: Il nome del bottone «+ Aggiungi serie» di un blocco: il valore è il pk
+    #: dell'esercizio a cui la riga nuova appartiene.
+    PARAMETRO_AGGIUNGI = "aggiungi_serie"
 
     def get_formset_queryset(self):
         return self.object.sets.select_related("exercise__equipment").order_by("pk")
@@ -1253,13 +1270,49 @@ class WorkoutSetsView(OwnerRequiredMixin, UpdateView):
             instance=self.object, queryset=self.get_formset_queryset()
         )
         context["formset"] = formset
-        context["blocchi"], context["extra_forms"] = raggruppa_serie_del_formset(
-            formset
+        context.setdefault("mostra_errori", True)
+        blocchi, extra_forms = raggruppa_serie_del_formset(formset)
+        context["blocchi"], context["extra_forms"] = self._assegna_extra_ai_blocchi(
+            blocchi, extra_forms
         )
         return context
 
+    @staticmethod
+    def _assegna_extra_ai_blocchi(blocchi, extra_forms):
+        """Le righe extra il cui `exercise` punta già a un blocco tornano lì.
+
+        È il caso di una riga nata dal bottone «+»: non ha `pk`, quindi
+        `raggruppa_serie_del_formset` la vedrebbe come «fuori programma», ma
+        il suo `exercise` è già quello di un blocco esistente, ed è lì che
+        deve comparire — non in coda insieme alle righe davvero senza
+        esercizio.
+        """
+        per_esercizio = {esercizio.pk: (esercizio, righe) for esercizio, righe in blocchi}
+        rimaste = []
+        for riga in extra_forms:
+            valore = riga["exercise"].value()
+            pk_scelto = int(valore) if valore else None
+            if pk_scelto in per_esercizio:
+                per_esercizio[pk_scelto][1].append(riga)
+            else:
+                rimaste.append(riga)
+        return list(per_esercizio.values()), rimaste
+
     def post(self, request, *args, **kwargs):
         self.object = self.get_object()
+
+        if self.PARAMETRO_AGGIUNGI in request.POST:
+            formset = WorkoutSetFormSet(
+                self._dati_con_riga_extra(request.POST), instance=self.object
+            )
+            # Non è un tentativo di salvataggio: mostrare gli errori qui
+            # segnalerebbe alla riga appena nata, ancora vuota, che le
+            # mancano le ripetizioni prima che l'utente abbia potuto
+            # scriverle.
+            return self.render_to_response(
+                self.get_context_data(formset=formset, mostra_errori=False)
+            )
+
         formset = WorkoutSetFormSet(request.POST, instance=self.object)
 
         if not formset.is_valid():
@@ -1268,6 +1321,45 @@ class WorkoutSetsView(OwnerRequiredMixin, UpdateView):
         formset.save()
         messages.success(request, "Le serie dell'allenamento sono aggiornate.")
         return redirect("training:workout-detail", pk=self.object.pk)
+
+    def _dati_con_riga_extra(self, post):
+        """I dati del POST con una riga vuota in più per l'esercizio del «+».
+
+        Non salva niente: prende gli stessi dati che l'utente ha già scritto
+        nelle altre righe, ci aggiunge una riga nuova numerata dopo l'ultima
+        serie di quell'esercizio e col carico dell'ultima come punto di
+        partenza, e alza `TOTAL_FORMS` di conseguenza. Il formset che nasce
+        da questi dati è bound ma non viene mai validato né salvato qui: la
+        pagina si limita a ridisegnarsi con la riga in più, e il salvataggio
+        vero resta un giro di «Salva le serie» a parte.
+        """
+        prefix = WorkoutSetFormSet.get_default_prefix()
+        dati = post.copy()
+        esercizio_id = post[self.PARAMETRO_AGGIUNGI]
+        totale = int(dati[f"{prefix}-TOTAL_FORMS"])
+
+        numeri = []
+        pesi = []
+        for indice in range(totale):
+            if dati.get(f"{prefix}-{indice}-exercise") != esercizio_id:
+                continue
+            numero = dati.get(f"{prefix}-{indice}-set_number", "")
+            if numero.isdigit():
+                numeri.append(int(numero))
+            peso = dati.get(f"{prefix}-{indice}-weight")
+            if peso:
+                pesi.append(peso)
+
+        nuovo = totale
+        dati[f"{prefix}-{nuovo}-id"] = ""
+        dati[f"{prefix}-{nuovo}-exercise"] = esercizio_id
+        dati[f"{prefix}-{nuovo}-set_number"] = str(max(numeri, default=0) + 1)
+        dati[f"{prefix}-{nuovo}-reps"] = ""
+        dati[f"{prefix}-{nuovo}-weight"] = pesi[-1] if pesi else ""
+        dati[f"{prefix}-{nuovo}-set_type"] = WorkoutSet.SetType.WORKING
+        dati[f"{prefix}-{nuovo}-is_completed"] = "on"
+        dati[f"{prefix}-TOTAL_FORMS"] = str(totale + 1)
+        return dati
 
 
 class WorkoutSaveAsRoutineView(OwnerRequiredMixin, SingleObjectMixin, View):
