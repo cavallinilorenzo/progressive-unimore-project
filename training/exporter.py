@@ -21,9 +21,11 @@ passare da un upload per ogni caso.
 """
 
 import csv
+import io
+import zipfile
 
-from training.importer import FILE_SERIE, FILE_SESSIONI, nome_pubblico
-from training.models import Workout, WorkoutSet
+from training.importer import FILE_ESERCIZI, FILE_SERIE, FILE_SESSIONI, nome_pubblico
+from training.models import Exercise, Workout, WorkoutSet
 
 #: `user_id` e `routine_id` escono anche se l'import li ignora: il file è lo
 #: stesso formato, non un suo sottoinsieme, e chi lo riceve deve poterlo
@@ -49,10 +51,18 @@ INTESTAZIONE_SERIE = (
     "is_completed",
 )
 
-#: I due file che l'export produce, col nome con cui l'import li chiede.
+INTESTAZIONE_ESERCIZI = ("id", "name")
+
+#: `storico.zip` contiene i due file uniti: uno senza l'altro non basta a
+#: reimportare niente, quindi non ha senso scaricarli separati. Il catalogo è
+#: un file a parte perché non è storico dell'utente — è lo stesso per tutti —
+#: e resta comunque **facoltativo** all'import (`FILE_ESERCIZI`).
+FILE_ZIP = "storico.zip"
+
+#: I file che l'export produce, col nome con cui l'utente li scarica.
 FILE = {
-    "allenamenti": FILE_SESSIONI,
-    "serie": FILE_SERIE,
+    "storico": FILE_ZIP,
+    "esercizi": FILE_ESERCIZI,
 }
 
 
@@ -129,8 +139,39 @@ def esporta_serie(uscita, user):
     return scritte
 
 
-def esporta(uscita, quale, user):
-    """Scrive in `uscita` il file `quale` (`allenamenti` o `serie`)."""
-    if quale == "allenamenti":
-        return esporta_sessioni(uscita, user)
-    return esporta_serie(uscita, user)
+def esporta_esercizi(uscita):
+    """`exercises.csv`: il catalogo intero, `id` e `name`.
+
+    Non è mai lo storico di nessuno — è lo stesso file per ogni utente — e non
+    serve al giro Progressive → Progressive: `esporta_serie` scrive già
+    `exercise_name`, non un `exercise_id` da tradurre. Esiste per chi vuole
+    vedere il dizionario che il terzo campo dell'import accetta quando il file
+    arriva da un altro software, e per completezza: un catalogo che si può
+    solo importare (da amministratore, `load_catalog`) e non guardare da
+    utente sarebbe un buco nel giro export → import.
+    """
+    writer = csv.writer(uscita)
+    writer.writerow(INTESTAZIONE_ESERCIZI)
+    for esercizio in Exercise.objects.order_by("name"):
+        writer.writerow([esercizio.pk, esercizio.name])
+
+
+def esporta_zip(user):
+    """`storico.zip`: `workout_sessions.csv` e `session_sets.csv` insieme.
+
+    L'import li vuole entrambi nello stesso POST — le serie senza le loro
+    sessioni non si leggono nemmeno — e separare l'export in due download non
+    guadagnava niente: un file senza l'altro non basta a reimportare nulla.
+    Restituisce i byte dello zip, non scrive su `uscita`, perché a differenza
+    dei due CSV qui il contenuto è binario dall'inizio.
+    """
+    sessioni = io.StringIO()
+    esporta_sessioni(sessioni, user)
+    serie = io.StringIO()
+    esporta_serie(serie, user)
+
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archivio:
+        archivio.writestr(FILE_SESSIONI, sessioni.getvalue())
+        archivio.writestr(FILE_SERIE, serie.getvalue())
+    return buffer.getvalue()

@@ -170,10 +170,12 @@ urlpatterns = [
     ),
     path("import/esito/", views.ImportResultView.as_view(), name="import-result"),
     # Export — la seconda metà del giro, e la ragione per cui l'import non è
-    # «il formato di un'altra app»: Progressive produce i due file che sa
-    # leggere. Il nome del file sta **nell'URL** e non in query string, perché
-    # qui il parametro identifica davvero la risorsa — `allenamenti` e `serie`
-    # sono due file con due intestazioni — al contrario di `?scheda=<pk>` su
-    # «avvia allenamento», che lascia la pagina la stessa.
+    # «il formato di un'altra app»: Progressive produce ciò che sa leggere.
+    # `storico` è uno zip con dentro i due CSV: l'import li vuole sempre
+    # insieme, e scaricarli con due click separati non pagava niente.
+    # `esercizi` è il catalogo, a parte perché non è storico di nessuno. Il
+    # nome del file sta **nell'URL** e non in query string perché qui il
+    # parametro identifica davvero la risorsa, al contrario di
+    # `?scheda=<pk>` su «avvia allenamento», che lascia la pagina la stessa.
     path("export/<slug:quale>/", views.ExportCsvView.as_view(), name="export-csv"),
 ]
