@@ -20,6 +20,66 @@ l'ordine e non si può ispezionare chiede di fidarsi, e qui la differenza fra
 
 {% include "training/_classifiche_schede.html" with attiva="schede" %}
 
+{% if mie_schede %}
+<div class="mb-3">
+  <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="collapse"
+          data-bs-target="#le-mie-schede-pubbliche">
+    Le mie schede pubbliche
+  </button>
+</div>
+
+<div class="collapse mb-4" id="le-mie-schede-pubbliche">
+  {% comment %}
+  Qui dentro la posizione viene da `schede_pubbliche_di`, che valuta
+  `classifica_sociale()` per intero e filtra in Python — non con un
+  `.filter(user=...)` in coda alla query, che sposterebbe il filtro prima
+  della `Window(Rank())` e renderebbe la posizione relativa alle sole schede
+  dell'utente invece che alla classifica vera.
+  {% endcomment %}
+  <div class="card-ink p-3">
+    <div class="eyebrow mb-2">Le tue {{ mie_schede|length }} scheda{{ mie_schede|length|pluralize:",e" }} pubblic{{ mie_schede|length|pluralize:"a,he" }}</div>
+    <div class="table-responsive">
+      <table class="table table-sm align-middle mb-0">
+        <thead>
+          <tr class="eyebrow" style="color:var(--t3)">
+            <th style="width:3.5rem">#</th>
+            <th>Scheda</th>
+            <th class="text-end">Punteggio</th>
+            <th class="text-end d-none d-md-table-cell">Media</th>
+            <th class="text-end d-none d-md-table-cell">Voti</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for riga in mie_schede %}
+          <tr>
+            <td class="fw-bold" style="color:var(--t2)">
+              {% if riga.in_classifica %}{{ riga.posizione }}{% else %}—{% endif %}
+            </td>
+            <td>
+              <a href="{% url 'training:routine-public-detail' riga.routine.pk %}"
+                 class="fw-bold text-decoration-none" style="color:var(--t1)">{{ riga.routine.name }}</a>
+              {% if not riga.in_classifica %}
+              <div style="color:var(--t3);font-size:.82rem">
+                {% if riga.motivo == "esercizi" %}
+                Fuori classifica: {{ riga.n_esercizi }} esercizi su {{ min_esercizi }} richiesti.
+                {% else %}
+                Fuori classifica: nessun voto ricevuto ancora.
+                {% endif %}
+              </div>
+              {% endif %}
+            </td>
+            <td class="text-end fw-bold">{% if riga.in_classifica %}{{ riga.punteggio|floatformat:2 }}{% else %}—{% endif %}</td>
+            <td class="text-end d-none d-md-table-cell" style="color:var(--t2)">{% if riga.media %}{{ riga.media|floatformat:2 }}{% else %}—{% endif %}</td>
+            <td class="text-end d-none d-md-table-cell" style="color:var(--t3)">{{ riga.n_voti }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 {% if righe %}
 <div class="card-ink p-3">
   <div class="eyebrow mb-2">{{ paginator.count }} schede in classifica</div>

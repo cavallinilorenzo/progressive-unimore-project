@@ -1753,4 +1753,5 @@ class RankingSocialView(LoginRequiredMixin, ListView):
         contesto["media_globale"] = rankings.media_globale_dei_voti()
         contesto["prior"] = rankings.C_PRIOR_VOTI
         contesto["min_esercizi"] = rankings.MIN_EXERCISES_FOR_RANKING
+        contesto["mie_schede"] = rankings.schede_pubbliche_di(self.request.user)
         return contesto

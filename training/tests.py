@@ -5448,6 +5448,65 @@ class RankingTests(TestCase):
         # Media delle medie sarebbe (5 + 1) / 2 = 3.
         self.assertAlmostEqual(float(rankings.media_globale_dei_voti()), 1.8, places=6)
 
+    # --- «Le mie schede pubbliche» ------------------------------------------
+
+    def test_schede_pubbliche_di_reports_the_real_ranking_position(self):
+        """La posizione dev'essere quella della classifica vera, non quella
+        ricalcolata sulle sole schede dell'utente: `classifica_sociale()` va
+        filtrata dopo, in Python, non con `.filter(user=...)` in coda alla
+        query — quel filtro finirebbe prima della `Window(Rank())`."""
+        migliore = self.scheda_pubblica("Migliore", autore=self.popolazione[1])
+        self.vota(migliore, [5, 5, 5])
+        mia = self.scheda_pubblica("Mia")
+        self.vota(mia, [4, 4, 4])
+
+        righe = rankings.schede_pubbliche_di(self.io)
+
+        self.assertEqual(len(righe), 1)
+        riga = righe[0]
+        self.assertTrue(riga["in_classifica"])
+        self.assertEqual(riga["posizione"], 2)
+
+    def test_schede_pubbliche_di_explains_why_a_routine_is_not_ranked(self):
+        pochi_esercizi = self.scheda_pubblica("Pochi esercizi", esercizi=1)
+        self.vota(pochi_esercizi, [5, 5])
+        mai_votata = self.scheda_pubblica("Mai votata")
+
+        righe = {
+            riga["routine"].name: riga for riga in rankings.schede_pubbliche_di(self.io)
+        }
+
+        self.assertEqual(righe["Pochi esercizi"]["motivo"], "esercizi")
+        self.assertEqual(righe["Mai votata"]["motivo"], "voti")
+        self.assertFalse(righe["Pochi esercizi"]["in_classifica"])
+        self.assertFalse(righe["Mai votata"]["in_classifica"])
+
+    def test_schede_pubbliche_di_ignores_other_users_and_private_routines(self):
+        self.scheda_pubblica("Di un altro", autore=self.popolazione[1])
+        privata = self.scheda_pubblica("Bozza")
+        privata.is_public = False
+        privata.save()
+
+        righe = rankings.schede_pubbliche_di(self.io)
+
+        self.assertEqual(righe, [])
+
+    def test_the_ranking_social_page_offers_a_button_for_my_own_routines(self):
+        mai_votata = self.scheda_pubblica("Total Body leggero")
+
+        response = self.client.get(reverse("training:ranking-social"))
+
+        self.assertContains(response, "Le mie schede pubbliche")
+        self.assertContains(response, mai_votata.name)
+        self.assertContains(response, "nessun voto ricevuto ancora")
+
+    def test_the_button_is_absent_without_public_routines(self):
+        Routine.objects.create(user=self.io, name="Privata", is_public=False)
+
+        response = self.client.get(reverse("training:ranking-social"))
+
+        self.assertNotContains(response, "Le mie schede pubbliche")
+
     # --- Le pagine ---------------------------------------------------------
 
     def test_both_rankings_render(self):
