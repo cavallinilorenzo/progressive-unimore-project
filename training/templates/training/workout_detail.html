@@ -20,7 +20,8 @@ distingue «non l'ho fatta» da «non l'avevo prevista», ed è tutto il senso d
     <div class="eyebrow"><a href="{% url 'training:workout-list' %}" style="color:var(--t3)">Storico</a></div>
     <h1 class="h4 fw-bold mb-0">{{ allenamento.title }}</h1>
     <div class="mt-1" style="color:var(--t2);font-size:.9rem">
-      {{ allenamento.started_at|date:"l j F Y, H:i" }}
+      {{ allenamento.started_at|date:"l j F Y" }}
+      &middot; iniziato alle {{ allenamento.started_at|date:"H:i" }}
       {% if allenamento.ended_at %}&middot; finito alle {{ allenamento.ended_at|date:"H:i" }}{% endif %}
     </div>
   </div>
