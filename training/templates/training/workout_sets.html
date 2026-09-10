@@ -18,15 +18,17 @@ l'allenamento sta scrivendo cosa ha fatto, non correggendo un piano vecchio.
 Il campo resta nel modello e nel form (`is_completed.as_hidden`): le righe
 già salvate mantengono il loro valore vero, quelle nuove nascono a `True`.
 
-IL CESTINO è lo stesso `riga.DELETE` di sempre, solo senza l'etichetta
-«Togli»: per una riga già salvata significa cancellarla al prossimo «Salva le
-serie», per una riga appena aggiunta col «+» significa lasciarla da parte
-senza scriverla.
+IL CESTINO è un bottone `submit`, non una casella `DELETE` da spuntare: preme,
+la riga sparisce subito dalla pagina (`WorkoutSetsView._togli_le_marcate`), ma
+resta nel formset come campi `hidden` finché non arriva un «Salva le serie»
+vero — è lì che `DELETE=True` cancella davvero la riga sul database, o fa sì
+che una riga mai salvata non venga scritta.
 
 IL «+» di un blocco è un secondo bottone `submit` sulla stessa `<form>`
-(`WorkoutSetsView.PARAMETRO_AGGIUNGI`): senza JavaScript un «aggiungi riga»
-dinamico non esiste, ma un giro di pagina che aggiunge una riga ai dati del
-POST e ridisegna il formset — senza salvarlo — sì. Le cinque righe vuote in
+(`WorkoutSetsView.PARAMETRO_AGGIUNGI`), e il cestino è un terzo bottone dello
+stesso tipo (`PARAMETRO_RIMUOVI`): senza JavaScript un «aggiungi/togli riga»
+dinamico non esiste, ma un giro di pagina che modifica i dati del POST e
+ridisegna il formset — senza salvarlo — sì. Le cinque righe vuote in
 coda (`extra_forms`) restano il modo di registrare un esercizio fuori
 programma, cioè uno che non ha ancora un blocco.
 {% endcomment %}
@@ -104,11 +106,11 @@ programma, cioè uno che non ha ancora un blocco.
       </div>
       <div class="col-8 col-sm-3 d-none">{{ riga.set_type }}</div>
       <div class="col-4 col-sm-1 d-flex align-items-center justify-content-end">
-        <div class="form-check mb-0">
-          {{ riga.DELETE }}
-          <label class="form-check-label" for="{{ riga.DELETE.id_for_label }}"
-                 title="Togli questa serie" style="color:var(--red);font-size:1.1rem">🗑</label>
-        </div>
+        <button type="submit" name="rimuovi_serie" value="{{ riga.prefix }}"
+                class="btn btn-sm" title="Togli questa serie"
+                style="color:var(--red);border:1px solid var(--red);background:transparent">
+          🗑
+        </button>
       </div>
 
       {% if mostra_errori %}
@@ -171,6 +173,23 @@ programma, cioè uno che non ha ancora un blocco.
   </div>
   {% endfor %}
   {% endif %}
+
+  {% comment %}
+  Le righe già tolte col cestino: non compaiono più, ma restano nel formset
+  come soli campi nascosti, `DELETE` compreso — è così che «Salva le serie»
+  le cancella davvero, ed è così che un secondo giro di pagina (un altro «+»,
+  un altro cestino) non le fa riapparire né le perde.
+  {% endcomment %}
+  {% for riga in righe_nascoste %}
+  {% for nascosto in riga.hidden_fields %}{{ nascosto }}{% endfor %}
+  {{ riga.exercise.as_hidden }}
+  {{ riga.is_completed.as_hidden }}
+  {{ riga.set_number.as_hidden }}
+  {{ riga.weight.as_hidden }}
+  {{ riga.reps.as_hidden }}
+  {{ riga.set_type.as_hidden }}
+  {{ riga.DELETE.as_hidden }}
+  {% endfor %}
 
   <div class="card-ink p-3 mb-3">
     <div class="rail">
