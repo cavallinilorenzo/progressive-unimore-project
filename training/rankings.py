@@ -244,3 +244,59 @@ def classifica_sociale():
         .annotate(posizione=Window(Rank(), order_by=F("punteggio").desc()))
         .order_by("-punteggio", "-n_voti", "pk")
     )
+
+
+def schede_pubbliche_di(user):
+    """Le schede pubbliche di `user`, con la posizione se sono in classifica.
+
+    `classifica_sociale()` va **valutata per intero e filtrata qui in
+    Python**, non con un `.filter(user=user)` in coda alla query: quel filtro
+    finirebbe nel `WHERE`, cioè prima del `GROUP BY` e della `Window(Rank())`,
+    e la posizione risultante sarebbe relativa alle sole schede dell'utente
+    invece che alla classifica vera — lo stesso errore silenzioso descritto
+    sopra, in una forma nuova.
+
+    Per le schede *non* in classifica il motivo si distingue in due: pochi
+    esercizi o zero voti, perché sono due difetti diversi e chi legge deve
+    sapere quale correggere.
+    """
+    classificate = {r.pk: r for r in classifica_sociale() if r.user_id == user.pk}
+
+    righe = []
+    for scheda in (
+        Routine.objects.filter(user=user, is_public=True)
+        .annotate(
+            n_esercizi=Count("exercises", distinct=True),
+            n_voti=Count("votes", distinct=True),
+            media=Avg("votes__score"),
+        )
+        .order_by("-created_at")
+    ):
+        classificata = classificate.get(scheda.pk)
+        if classificata is not None:
+            righe.append(
+                {
+                    "routine": scheda,
+                    "in_classifica": True,
+                    "posizione": classificata.posizione,
+                    "punteggio": classificata.punteggio,
+                    "media": classificata.media,
+                    "n_voti": classificata.n_voti,
+                }
+            )
+        else:
+            righe.append(
+                {
+                    "routine": scheda,
+                    "in_classifica": False,
+                    "motivo": (
+                        "esercizi"
+                        if scheda.n_esercizi < MIN_EXERCISES_FOR_RANKING
+                        else "voti"
+                    ),
+                    "n_esercizi": scheda.n_esercizi,
+                    "n_voti": scheda.n_voti,
+                    "media": scheda.media,
+                }
+            )
+    return righe
