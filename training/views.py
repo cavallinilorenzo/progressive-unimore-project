@@ -925,6 +925,15 @@ class WorkoutCreateView(LoginRequiredMixin, CreateView):
     #: link `/allenamenti/nuovo/?scheda=3` si legge da solo.
     PARAMETRO_SCHEDA = "scheda"
 
+    #: `?libero=1` è la scelta esplicita «parto senza scheda»: senza uno dei
+    #: due parametri la pagina mostra solo il bivio (le card), mai il form —
+    #: altrimenti chi arriva su `/allenamenti/nuovo/` per guardare le proprie
+    #: schede si troverebbe comunque un form vuoto premuto lì sotto.
+    PARAMETRO_LIBERO = "libero"
+
+    def vuole_libero(self):
+        return self.request.GET.get(self.PARAMETRO_LIBERO) == "1"
+
     def get_scheda(self):
         """La scheda da cui partire, se il link ne porta una.
 
@@ -963,11 +972,20 @@ class WorkoutCreateView(LoginRequiredMixin, CreateView):
         context = super().get_context_data(**kwargs)
         scheda = self.get_scheda()
         context["scheda"] = scheda
-        # Il selettore di schede si mostra solo finché non se n'è scelta una:
-        # una volta che `scheda` è valorizzata la pagina è già «Avvia da
-        # scheda X», e rimostrare l'elenco sarebbe un secondo bivio dopo che
-        # il primo è già stato preso.
-        if scheda is None:
+        context["libero"] = self.vuole_libero()
+        # Il form si mostra per una scelta esplicita — una scheda, «libero» —
+        # o perché la pagina **è già** un POST: un errore di validazione deve
+        # tornare sul form coi suoi messaggi, mai regredire al bivio.
+        context["mostra_form"] = (
+            scheda is not None
+            or context["libero"]
+            or self.request.method == "POST"
+        )
+        # Il bivio si mostra solo finché non se n'è presa una delle due
+        # strade — una scheda scelta o «allenamento libero» esplicito: una
+        # volta scelta, la pagina è già sul form e rimostrare le card sarebbe
+        # un secondo bivio dopo che il primo è già stato preso.
+        if not context["mostra_form"]:
             context["schede_disponibili"] = Routine.objects.filter(
                 user=self.request.user
             ).order_by("name")
