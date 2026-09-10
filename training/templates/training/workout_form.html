@@ -151,55 +151,52 @@ card per esercizio, stesso ordine cronologico — coi valori dentro un
       <div class="eyebrow mb-3">Serie</div>
 
       {% if blocchi %}
-      <div class="row g-3 mb-3">
+      <div class="mb-3">
         {% for esercizio, righe in blocchi %}
-        <div class="col-12 col-lg-6">
-          <div class="card-ink p-3 h-100" style="background:var(--surface-2)">
-            <div class="d-flex align-items-baseline justify-content-between mb-2">
-              <span class="h6 fw-bold mb-0" style="color:var(--t1)">{{ esercizio.name }}</span>
-              <span class="eyebrow" style="color:var(--t3)">{{ esercizio.equipment }}</span>
-            </div>
+        <div class="card-ink p-3 mb-3" style="background:var(--surface-2)">
+          <div class="d-flex align-items-baseline justify-content-between mb-3">
+            <span class="h6 fw-bold mb-0" style="color:var(--t1)">{{ esercizio.name }}</span>
+            <span class="eyebrow" style="color:var(--t3)">{{ esercizio.equipment }}</span>
+          </div>
 
-            {% for riga in righe %}
-            <div class="row g-2 align-items-end mb-2">
-              {% for nascosto in riga.hidden_fields %}{{ nascosto }}{% endfor %}
-              {{ riga.exercise.as_hidden }}
-              <div class="col-3 col-lg-2">
-                <label class="eyebrow d-block mb-1">N&deg;</label>
-                {{ riga.set_number }}
-              </div>
-              <div class="col-4 col-lg-3">
-                <label class="eyebrow d-block mb-1">Carico kg</label>
-                {{ riga.weight }}
-              </div>
-              <div class="col-3 col-lg-2">
-                <label class="eyebrow d-block mb-1">Rip.</label>
-                {{ riga.reps }}
-              </div>
-              <div class="col-12 col-lg-3">
-                <label class="eyebrow d-block mb-1">Tipo</label>
-                {{ riga.set_type }}
-              </div>
-              <div class="col-6 col-lg-1">
-                <div class="form-check mb-2">
-                  {{ riga.is_completed }}
-                  <label class="form-check-label eyebrow" style="font-size:.7rem">Fatta</label>
-                </div>
-              </div>
-              <div class="col-6 col-lg-1">
-                <div class="form-check mb-2">
-                  {{ riga.DELETE }}
-                  <label class="form-check-label eyebrow" style="color:var(--red);font-size:.7rem">Togli</label>
-                </div>
-              </div>
-              {% for campo in riga.visible_fields %}
-              {% for errore in campo.errors %}
-              <div class="col-12" style="color:var(--red);font-size:.8rem">{{ campo.label }}: {{ errore }}</div>
-              {% endfor %}
-              {% endfor %}
+          {% for riga in righe %}
+          <div class="row g-2 align-items-end mb-2 pb-2"
+               {% if not forloop.last %}style="border-bottom:1px solid var(--line)"{% endif %}>
+            {% for nascosto in riga.hidden_fields %}{{ nascosto }}{% endfor %}
+            {{ riga.exercise.as_hidden }}
+            <div class="col-6 col-sm-3 col-md-2">
+              <label class="eyebrow d-block mb-1">N&deg;</label>
+              {{ riga.set_number }}
             </div>
+            <div class="col-6 col-sm-3 col-md-2">
+              <label class="eyebrow d-block mb-1">Carico kg</label>
+              {{ riga.weight }}
+            </div>
+            <div class="col-6 col-sm-3 col-md-2">
+              <label class="eyebrow d-block mb-1">Rip.</label>
+              {{ riga.reps }}
+            </div>
+            <div class="col-6 col-sm-3 col-md-2">
+              <label class="eyebrow d-block mb-1">Tipo</label>
+              {{ riga.set_type }}
+            </div>
+            <div class="col-12 col-md-4 d-flex align-items-center gap-4 mt-2 mt-md-0">
+              <div class="form-check mb-0">
+                {{ riga.is_completed }}
+                <label class="form-check-label eyebrow">Eseguita</label>
+              </div>
+              <div class="form-check mb-0">
+                {{ riga.DELETE }}
+                <label class="form-check-label eyebrow" style="color:var(--red)">Togli</label>
+              </div>
+            </div>
+            {% for campo in riga.visible_fields %}
+            {% for errore in campo.errors %}
+            <div class="col-12" style="color:var(--red);font-size:.8rem">{{ campo.label }}: {{ errore }}</div>
+            {% endfor %}
             {% endfor %}
           </div>
+          {% endfor %}
         </div>
         {% endfor %}
       </div>
