@@ -104,12 +104,14 @@ Scartata la **tabella di staging** (`ImportBatch`/`ImportRow`): due modelli che 
 | `/import/` | `import-upload` | `FormView` — i due file |
 | `/import/anteprima/` | `import-preview` | `FormView` — il formset degli abbinamenti |
 | `/import/esito/` | `import-result` | `TemplateView` |
-| `/export/allenamenti/` | `export-csv` | `View` — scarica `workout_sessions.csv` |
-| `/export/serie/` | `export-csv` | `View` — scarica `session_sets.csv` |
+| `/export/storico/` | `export-csv` | `View` — scarica `storico.zip` (i due CSV insieme) |
+| `/export/esercizi/` | `export-csv` | `View` — scarica `exercises.csv`, il catalogo |
 
 Tre template che estendono `base.html`; l'export non ne ha nessuno, ed è la sua natura — restituisce un file, non una pagina. I link stanno nel menu utente accanto a «Importa storico» e nella pagina di import, che è dove serve a chi un file non ce l'ha.
 
-**Un solo `/export/` è diventato due URL** (#74): i file sono due, e comprimerli in uno ZIP avrebbe obbligato a spacchettarli prima di ricaricarli, cioè a toccare i dati **fuori** dall'app — la stessa ragione per cui è stato scartato il CSV unico denormalizzato. Il nome del file sta nel percorso e non in query string perché qui il parametro *identifica la risorsa*, al contrario di `?scheda=<pk>` su «avvia allenamento», che lascia la pagina la stessa.
+**Storico in un unico file, non due.** La prima versione scaricava `workout_sessions.csv` e `session_sets.csv` con due URL separati (#74): due risorse, due intestazioni, quindi due indirizzi — ma l'import li vuole comunque insieme nello stesso POST, e un file senza l'altro non basta a reimportare nulla. Due click al posto di uno non pagavano nessun caso d'uso reale, e la scelta è tornata su uno `.zip` che li contiene entrambi — non un CSV unico denormalizzato, che resta scartato per la stessa ragione di sempre (obbligherebbe a ripulire i dati fuori dall'app prima di ricaricarli). Il catalogo (`exercises.csv`, id → nome, tutto il database) resta un file a parte: non è storico di nessuno, è lo stesso per ogni utente, e all'import continua a servire solo quando il file arriva da un altro software.
+
+Il nome del file sta nel percorso e non in query string perché qui il parametro *identifica la risorsa*, al contrario di `?scheda=<pk>` su «avvia allenamento», che lascia la pagina la stessa.
 
 ## Due decisioni minori
 

@@ -54,7 +54,7 @@ from training.forms import (
     WorkoutSetFormSet,
 )
 from training.exporter import FILE as FILE_EXPORT
-from training.exporter import esporta
+from training.exporter import esporta_esercizi, esporta_zip
 from training.importer import FormatoNonValido, leggi, ricorda, risolvi, scrivi
 from training.models import (
     Equipment,
@@ -1854,21 +1854,20 @@ class ImportResultView(LoginRequiredMixin, TemplateView):
 
 
 class ExportCsvView(LoginRequiredMixin, View):
-    """`/export/<quale>/` — i due CSV che l'import sa leggere.
+    """`/export/<quale>/` — `storico` (uno zip) ed `esercizi` (il catalogo).
 
     **Il giro si chiude qui.** Finché Progressive sapeva solo leggere quel
     formato, il formato era di un'altra app e nessuno tranne Lorenzo poteva
     produrne uno; da qui in avanti Progressive è **uno dei produttori** del
     proprio formato, e chi si iscrive oggi ha qualcosa da reimportare domani.
 
-    **Perché il file sta nell'URL e non in query string.** `02`-e-dintorni
-    tengono in query string ciò che *non* identifica la risorsa — `?scheda=`
-    su «avvia allenamento» lascia la pagina la stessa — e qui vale il
-    contrario: `allenamenti` e `serie` sono due risorse diverse, due file con
-    due intestazioni. Due link e non un solo `/export/` perché l'import ne
-    vuole due, e uno ZIP obbligherebbe a spacchettare prima di ricaricare —
-    cioè a trasformare i dati **fuori** dall'app, che è esattamente ciò che
-    `03-import-ed-export.md` rifiuta quando scarta il CSV denormalizzato.
+    **Un solo file per lo storico, non due.** `workout_sessions.csv` e
+    `session_sets.csv` sono due risorse diverse — due tabelle, due
+    intestazioni — ma l'import le vuole sempre insieme nello stesso POST, e
+    uno senza l'altro non basta a reimportare niente: due download separati
+    non pagavano nessun caso d'uso reale, solo un click in più. `storico`
+    quindi è uno `.zip` con entrambi dentro; il catalogo resta un file a
+    parte perché non è storico di nessuno, è lo stesso per ogni utente.
 
     L'export **non scrive niente**: il `nome_pubblico` di una riga nata in-app
     si calcola, quindi qui non c'è nessun effetto da nascondere dietro una GET.
@@ -1878,11 +1877,17 @@ class ExportCsvView(LoginRequiredMixin, View):
         if quale not in FILE_EXPORT:
             raise Http404("Non c'è nessun file con questo nome.")
 
-        risposta = HttpResponse(content_type="text/csv; charset=utf-8")
+        if quale == "storico":
+            risposta = HttpResponse(
+                esporta_zip(request.user), content_type="application/zip"
+            )
+        else:
+            risposta = HttpResponse(content_type="text/csv; charset=utf-8")
+            esporta_esercizi(risposta)
+
         risposta["Content-Disposition"] = (
             f'attachment; filename="{FILE_EXPORT[quale]}"'
         )
-        esporta(risposta, quale, request.user)
         return risposta
 
 

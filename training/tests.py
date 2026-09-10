@@ -14,6 +14,7 @@ import re
 import shutil
 import statistics
 import tempfile
+import zipfile
 from collections import Counter
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -46,9 +47,13 @@ from training.analytics import plateau as analytics_plateau
 from training.analytics import progressione as analytics_progressione
 from training.analytics import volume as analytics_volume
 from training.exporter import (
+    INTESTAZIONE_ESERCIZI,
     INTESTAZIONE_SERIE,
     INTESTAZIONE_SESSIONI,
-    esporta,
+    esporta_esercizi,
+    esporta_sessioni,
+    esporta_serie,
+    esporta_zip,
 )
 from training.importer import (
     COLONNE_SERIE,
@@ -4308,9 +4313,14 @@ class CsvFixtureAndExportTests(TestCase):
         self.client.get(reverse("training:import-preview"))
         return self.conferma([("RDL", self.stacco)])
 
-    def esporta(self, quale):
+    def esporta_sessioni(self):
         uscita = StringIO()
-        esporta(uscita, quale, self.user)
+        esporta_sessioni(uscita, self.user)
+        return uscita.getvalue()
+
+    def esporta_serie(self):
+        uscita = StringIO()
+        esporta_serie(uscita, self.user)
         return uscita.getvalue()
 
     # --------------------------------------------- i sette casi, uno per test
@@ -4490,18 +4500,32 @@ class CsvFixtureAndExportTests(TestCase):
         self.assertIn("exercise_name", INTESTAZIONE_SERIE)
         self.assertNotIn("exercise_id", INTESTAZIONE_SERIE)
 
-    def test_lexport_e_un_csv_scaricabile_coi_nomi_del_formato(self):
+    def test_lexport_e_uno_zip_scaricabile_coi_due_file_dentro(self):
+        """Un solo download, e dentro i due CSV che l'import rivuole insieme
+        — non due URL, perché uno senza l'altro non basta a reimportare
+        niente."""
         self.importa_le_fixture()
-        risposta = self.client.get(
-            reverse("training:export-csv", args=["allenamenti"])
-        )
+        risposta = self.client.get(reverse("training:export-csv", args=["storico"]))
 
         self.assertEqual(risposta.status_code, 200)
-        self.assertTrue(risposta["Content-Type"].startswith("text/csv"))
-        self.assertIn("workout_sessions.csv", risposta["Content-Disposition"])
-        righe = risposta.content.decode("utf-8").splitlines()
-        self.assertEqual(righe[0], ",".join(INTESTAZIONE_SESSIONI))
-        self.assertEqual(len(righe), 4)
+        self.assertEqual(risposta["Content-Type"], "application/zip")
+        self.assertIn("storico.zip", risposta["Content-Disposition"])
+        with zipfile.ZipFile(BytesIO(risposta.content)) as archivio:
+            self.assertEqual(set(archivio.namelist()), {"workout_sessions.csv", "session_sets.csv"})
+            righe = archivio.read("workout_sessions.csv").decode("utf-8").splitlines()
+            self.assertEqual(righe[0], ",".join(INTESTAZIONE_SESSIONI))
+            self.assertEqual(len(righe), 4)
+
+    def test_lexport_degli_esercizi_e_il_catalogo_intero(self):
+        """`exercises.csv` non è mai lo storico di nessuno: è lo stesso file
+        per ogni utente, e non serve al giro Progressive → Progressive."""
+        uscita = StringIO()
+        esporta_esercizi(uscita)
+        righe = uscita.getvalue().splitlines()
+
+        self.assertEqual(righe[0], ",".join(INTESTAZIONE_ESERCIZI))
+        self.assertEqual(len(righe) - 1, Exercise.objects.count())
+        self.assertIn(self.panca.name, uscita.getvalue())
 
     def test_lexport_porta_via_solo_le_proprie_righe(self):
         """Lo storico è dell'utente, e l'export non è una scorciatoia per
@@ -4512,7 +4536,7 @@ class CsvFixtureAndExportTests(TestCase):
             user=self.altro, title="Roba di Martina", started_at=timezone.now()
         )
 
-        testo = self.esporta("allenamenti")
+        testo = self.esporta_sessioni()
 
         self.assertNotIn("Roba di Martina", testo)
         self.assertNotIn(str(nome_pubblico("workout", estraneo.pk)), testo)
@@ -4527,7 +4551,7 @@ class CsvFixtureAndExportTests(TestCase):
         self.importa_le_fixture()
         allenamenti, serie = Workout.objects.count(), WorkoutSet.objects.count()
 
-        self.carica(self.esporta("allenamenti"), self.esporta("serie"))
+        self.carica(self.esporta_sessioni(), self.esporta_serie())
         anteprima = self.client.get(reverse("training:import-preview"))
         # Niente da abbinare: i nomi sono quelli del catalogo, e si risolvono
         # per nome esatto. È il caso che `risolvi` chiama «il file esportato da
@@ -4564,7 +4588,7 @@ class CsvFixtureAndExportTests(TestCase):
             workout=allenamento, exercise=self.trazioni, set_number=1, reps=6,
         )
 
-        sessioni, serie = self.esporta("allenamenti"), self.esporta("serie")
+        sessioni, serie = self.esporta_sessioni(), self.esporta_serie()
         self.assertIn(str(nome_pubblico("workout", allenamento.pk)), sessioni)
 
         self.carica(sessioni, serie)
@@ -4584,17 +4608,18 @@ class CsvFixtureAndExportTests(TestCase):
             user=self.user, title="Serata a mano", started_at=timezone.now()
         )
 
-        self.assertEqual(self.esporta("allenamenti"), self.esporta("allenamenti"))
-        self.assertEqual(self.esporta("serie"), self.esporta("serie"))
+        self.assertEqual(self.esporta_sessioni(), self.esporta_sessioni())
+        self.assertEqual(self.esporta_serie(), self.esporta_serie())
+        self.assertEqual(esporta_zip(self.user), esporta_zip(self.user))
 
     def test_lexport_vuole_il_login_e_un_nome_di_file_che_esiste(self):
-        risposta = self.client.get(reverse("training:export-csv", args=["allenamenti"]))
+        risposta = self.client.get(reverse("training:export-csv", args=["storico"]))
         self.assertEqual(risposta.status_code, 200)
 
         self.assertEqual(self.client.get("/export/tutto/").status_code, 404)
 
         self.client.logout()
-        risposta = self.client.get(reverse("training:export-csv", args=["serie"]))
+        risposta = self.client.get(reverse("training:export-csv", args=["esercizi"]))
         self.assertEqual(risposta.status_code, 302)
         self.assertIn("/accounts/login/", risposta["Location"])
 
