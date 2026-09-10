@@ -40,8 +40,7 @@ sarebbe una query per riga su una lista che cresce senza limite.
         <th class="ps-3">Data</th>
         <th>Allenamento</th>
         <th>Esercizi</th>
-        <th>Serie</th>
-        <th class="pe-3"></th>
+        <th class="pe-3">Serie</th>
       </tr>
     </thead>
     <tbody>
@@ -63,10 +62,7 @@ sarebbe una query per riga su una lista che cresce senza limite.
           {% endif %}
         </td>
         <td style="color:var(--t2)">{{ allenamento.n_esercizi }}</td>
-        <td style="color:var(--volt)">{{ allenamento.n_serie }}</td>
-        <td class="pe-3 text-end">
-          <a href="{% url 'training:workoutset-manage' allenamento.pk %}" style="color:var(--t2);font-size:.85rem">Serie</a>
-        </td>
+        <td class="pe-3" style="color:var(--volt)">{{ allenamento.n_serie }}</td>
       </tr>
       {% endfor %}
     </tbody>
