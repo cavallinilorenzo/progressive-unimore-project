@@ -971,10 +971,12 @@ class WorkoutCreateView(LoginRequiredMixin, CreateView):
 
     def get_initial(self):
         initial = super().get_initial()
-        # `localtime` e non `now`: il campo `datetime-local` mostra l'ora del
+        # `localtime` e non `now`: i campi `date`/`time` mostrano l'ora del
         # fuso corrente, e proporre l'UTC significherebbe proporre due ore
         # sbagliate d'estate.
-        initial["started_at"] = timezone.localtime()
+        adesso = timezone.localtime()
+        initial["giorno"] = adesso.date()
+        initial["ora_inizio"] = adesso.time()
 
         scheda = self.get_scheda()
         if scheda is not None:

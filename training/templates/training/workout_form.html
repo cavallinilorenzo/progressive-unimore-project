@@ -10,10 +10,11 @@ la scheda in query string — `/allenamenti/nuovo/?scheda=3` — e un form senza
 invece di uno precompilato: un guasto silenzioso, perché la pagina risponde
 comunque 302 e sembra aver funzionato.
 
-I due campi orario sono `<input type="datetime-local">`, l'unico modo di
-chiedere data e ora senza JavaScript. Il formato che quel campo parla non è
-quello italiano di `DATETIME_INPUT_FORMATS`: la conversione sta in
-`training.forms.LocalDateTimeField`, non qui.
+Il giorno è un'unica cella (`type="date"`), e «Iniziato»/«Finito» sono due
+`<input type="time">`: un allenamento ha quasi sempre un solo giorno, e
+scriverlo due volte — una per l'inizio, una per la fine — sarebbe ridondanza,
+non informazione. `started_at`/`ended_at` restano `DateTimeField` sul
+modello; è `training.forms.WorkoutForm.clean()` a ricomporli.
 
 `formset` compare solo in `WorkoutUpdateView`: è la presenza di `blocchi` a
 distinguere «Modifica» da «Nuovo allenamento» nel template, non
@@ -107,17 +108,24 @@ card per esercizio, stesso ordine cronologico — coi valori dentro un
       </div>
 
       <div class="row g-3 mb-3">
-        <div class="col-12 col-md-6">
-          <label for="{{ form.started_at.id_for_label }}" class="eyebrow d-block mb-1">Iniziato il</label>
-          {{ form.started_at }}
-          {% for errore in form.started_at.errors %}
+        <div class="col-12 col-md-4">
+          <label for="{{ form.giorno.id_for_label }}" class="eyebrow d-block mb-1">Giorno</label>
+          {{ form.giorno }}
+          {% for errore in form.giorno.errors %}
           <div style="color:var(--red);font-size:.82rem">{{ errore }}</div>
           {% endfor %}
         </div>
-        <div class="col-12 col-md-6">
-          <label for="{{ form.ended_at.id_for_label }}" class="eyebrow d-block mb-1">Finito il</label>
-          {{ form.ended_at }}
-          {% for errore in form.ended_at.errors %}
+        <div class="col-6 col-md-4">
+          <label for="{{ form.ora_inizio.id_for_label }}" class="eyebrow d-block mb-1">Iniziato</label>
+          {{ form.ora_inizio }}
+          {% for errore in form.ora_inizio.errors %}
+          <div style="color:var(--red);font-size:.82rem">{{ errore }}</div>
+          {% endfor %}
+        </div>
+        <div class="col-6 col-md-4">
+          <label for="{{ form.ora_fine.id_for_label }}" class="eyebrow d-block mb-1">Finito</label>
+          {{ form.ora_fine }}
+          {% for errore in form.ora_fine.errors %}
           <div style="color:var(--red);font-size:.82rem">{{ errore }}</div>
           {% endfor %}
         </div>
@@ -125,7 +133,7 @@ card per esercizio, stesso ordine cronologico — coi valori dentro un
       <div class="mb-3" style="color:var(--t3);font-size:.8rem">
         La fine è facoltativa: un allenamento in corso non ce l'ha ancora, e si
         aggiunge dopo. L'unica cosa che non può succedere è che finisca prima
-        di cominciare.
+        di cominciare, nello stesso giorno.
       </div>
 
       <div class="mb-3">
