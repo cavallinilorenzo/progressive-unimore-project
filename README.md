@@ -11,15 +11,6 @@ contorno. Erede concettuale di *Overload*, un'app iOS scritta in precedenza
 dallo stesso autore: da lì vengono lo schema dati, la tassonomia muscolare e
 la figura anatomica usata dalla heatmap (vedi *Crediti*, sotto).
 
-> ⚠️ **La fase 4 (machine learning) non è stata sviluppata.** Era prevista
-> come estensione facoltativa dello stallo — un modello che sostituisse la
-> regola a soglia di `training/analytics/plateau.py` — ma è stata **scartata**
-> per mancanza di tempo. La spec (`docs/spec/00-indice.md`, §Fase 4) la
-> definiva esplicitamente «l'unica cosa tagliabile»: la pagina dello stallo
-> mostra il baseline a soglia, ed è la risposta prevista in questo caso, non
-> un lavoro incompiuto lasciato a metà. Tutto ciò che segue in questo README
-> descrive solo le fasi 1–3, effettivamente costruite.
-
 ---
 
 ## Indice
